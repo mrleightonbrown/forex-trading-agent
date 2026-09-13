@@ -30,11 +30,11 @@ TEST_INSTRUMENT = Instrument(base_currency="ZZZ", quote_currency="YYY")
 START = UtcTimestamp(datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC))
 
 
-def _candle(*, bid_close: str, is_finalized: bool) -> Candle:
+def _candle(*, bid_close: str, is_finalized: bool, start_time: UtcTimestamp = START) -> Candle:
     return Candle(
         instrument=TEST_INSTRUMENT,
         granularity=Granularity.M1,
-        start_time=START,
+        start_time=start_time,
         bid=Ohlc(
             open=Decimal("1.0000"),
             high=Decimal("1.0010"),
@@ -110,3 +110,34 @@ async def test_upsert_many_updates_existing_candle_in_place(session: AsyncSessio
     row = result.scalar_one()
     assert row.bid_close == Decimal("1.0009")
     assert row.is_finalized is True
+
+
+@pytest.mark.asyncio
+async def test_get_range_filters_and_orders_by_start_time(session: AsyncSession) -> None:
+    repo = SqlAlchemyCandleRepository(session)
+    t0, t1, t2 = (
+        START,
+        UtcTimestamp(START.value.replace(minute=1)),
+        UtcTimestamp(START.value.replace(minute=2)),
+    )
+    await repo.upsert_many(
+        [
+            _candle(bid_close="1.0002", is_finalized=True, start_time=t2),
+            _candle(bid_close="1.0000", is_finalized=True, start_time=t0),
+            _candle(bid_close="1.0001", is_finalized=True, start_time=t1),
+        ]
+    )
+
+    result = await repo.get_range(TEST_INSTRUMENT, Granularity.M1, t0, t2)
+
+    assert [c.start_time for c in result] == [t0, t1]  # end is exclusive
+    assert [c.bid.close for c in result] == [Decimal("1.0000"), Decimal("1.0001")]
+
+
+@pytest.mark.asyncio
+async def test_get_range_returns_empty_list_when_nothing_matches(session: AsyncSession) -> None:
+    repo = SqlAlchemyCandleRepository(session)
+
+    result = await repo.get_range(TEST_INSTRUMENT, Granularity.M1, START, START)
+
+    assert result == []

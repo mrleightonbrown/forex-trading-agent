@@ -1,6 +1,9 @@
 from typing import Protocol
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.granularity import Granularity
+from forex_agent.domain.instrument import Instrument
+from forex_agent.domain.timestamps import UtcTimestamp
 
 
 class CandleRepository(Protocol):
@@ -17,4 +20,15 @@ class CandleRepository(Protocol):
         regression coverage against "duplicate events"/"provider
         duplication". Returns the number of candles written.
         """
+        ...
+
+    async def get_range(
+        self,
+        instrument: Instrument,
+        granularity: Granularity,
+        start: UtcTimestamp,
+        end: UtcTimestamp,
+    ) -> list[Candle]:
+        """Candles for `instrument` at `granularity` within [start, end),
+        ordered by `start_time` ascending."""
         ...

@@ -27,8 +27,8 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
      candles) — pagination for larger backfills is explicit future work,
      not yet its own story.
 7. ~~Candle aggregation~~ — complete (FX-7): pure `aggregate_candles`
-   domain function (no persistence wiring — reading source candles back
-   out and upserting aggregates is a future story).
+   domain function, plus `CandleRepository.get_range` and the
+   `AggregateCandles` use case wiring read → aggregate → persist.
 8. Data quality.
 9. Strategy framework.
 10. Backtester (must prevent look-ahead bias, evaluate only finalized

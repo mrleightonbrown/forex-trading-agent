@@ -1,9 +1,14 @@
-"""SQLAlchemy implementation of `CandleRepository` (FX-5)."""
+"""SQLAlchemy implementation of `CandleRepository` (FX-5, `get_range` FX-7)."""
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.granularity import Granularity
+from forex_agent.domain.instrument import Instrument
+from forex_agent.domain.ohlc import Ohlc
+from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.candle import CandleRow
 
 _CONFLICT_KEY = ("instrument", "granularity", "start_time")
@@ -41,6 +46,38 @@ class SqlAlchemyCandleRepository:
         await self._session.execute(stmt)
         await self._session.commit()
         return len(candles)
+
+    async def get_range(
+        self,
+        instrument: Instrument,
+        granularity: Granularity,
+        start: UtcTimestamp,
+        end: UtcTimestamp,
+    ) -> list[Candle]:
+        stmt = (
+            select(CandleRow)
+            .where(
+                CandleRow.instrument == instrument.symbol,
+                CandleRow.granularity == granularity.value,
+                CandleRow.start_time >= start.value,
+                CandleRow.start_time < end.value,
+            )
+            .order_by(CandleRow.start_time)
+        )
+        result = await self._session.execute(stmt)
+        return [_to_domain(instrument, granularity, row) for row in result.scalars().all()]
+
+
+def _to_domain(instrument: Instrument, granularity: Granularity, row: CandleRow) -> Candle:
+    return Candle(
+        instrument=instrument,
+        granularity=granularity,
+        start_time=UtcTimestamp(row.start_time),
+        bid=Ohlc(open=row.bid_open, high=row.bid_high, low=row.bid_low, close=row.bid_close),
+        ask=Ohlc(open=row.ask_open, high=row.ask_high, low=row.ask_low, close=row.ask_close),
+        volume=row.volume,
+        is_finalized=row.is_finalized,
+    )
 
 
 def _row_values(candle: Candle) -> dict[str, object]:

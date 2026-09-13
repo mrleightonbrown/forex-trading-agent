@@ -72,7 +72,11 @@ _Last updated: 2026-09-13 (FX-7)_
 
 - `aggregate_candles` (`forex_agent.domain.candle_aggregation`): pure
   function grouping same-instrument/same-source-granularity candles into
-  higher-timeframe buckets (e.g. M1→M5/H1/D). No persistence wiring.
+  higher-timeframe buckets (e.g. M1→M5/H1/D).
+- `CandleRepository.get_range` (+ `SqlAlchemyCandleRepository`
+  implementation) and `AggregateCandles` use case: reads source candles
+  back out of `candles`, aggregates, upserts the result — the persistence
+  half of FX-7 that the pure function alone didn't cover.
 
 ## What does not exist yet
 
