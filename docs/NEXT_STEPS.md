@@ -17,7 +17,14 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
    implements `BrokerPort` via `httpx` against the real practice API,
    refuses any non-practice host, verified against both a mocked transport
    and the live practice API.
-6. Historical data ingestion.
+6. Historical data ingestion — split into two stories:
+   - ~~FX-5: Candle domain primitive + persistence~~ — complete.
+     `Granularity`/`Ohlc`/`Candle`, `candles` table (unique constraint on
+     instrument/granularity/start_time), `CandleRepository` port +
+     idempotent SQLAlchemy upsert implementation.
+   - FX-6: OANDA historical candle fetching — extend `BrokerPort` (or add a
+     new port) for `get_candles`, implement in `OandaBrokerAdapter`, wire
+     it to `CandleRepository.upsert_many` as the actual ingestion path.
 7. Candle aggregation.
 8. Data quality.
 9. Strategy framework.

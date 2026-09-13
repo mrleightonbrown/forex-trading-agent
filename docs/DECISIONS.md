@@ -154,3 +154,40 @@ unset, so CI (which has no OANDA secrets) skips it cleanly rather than
 failing, while a developer machine with `.env` populated runs it for real.
 Adding OANDA secrets to GitHub Actions so CI exercises this too is a
 reasonable future improvement, not done here.
+
+## 2026-09-13 — FX-5: Candle domain primitive and persistence
+
+**Decision:** `Candle` carries `bid: Ohlc` and `ask: Ohlc` (two full OHLC
+sets), not a single mid-price OHLC. `Ohlc` validates that `high`/`low` are
+actually the max/min of open-high-low-close, rejecting bad data before it
+reaches storage. `Granularity` values match OANDA's own naming (`M1`,
+`H4`, `D`, ...) — same reasoning as `Instrument.symbol` already matching
+OANDA's instrument format, no translation table needed when FX-6 fetches
+candles.
+
+**Why bid+ask, not mid:** CLAUDE.md: "Backtests must include spread."
+Collapsing to a single mid price at ingestion time would make that
+impossible to recover later — the backtester (item 10) needs both sides
+available from the start.
+
+**Persistence:** `candles` table has a unique constraint on `(instrument,
+granularity, start_time)`. `CandleRepository.upsert_many` (application
+port) is implemented via Postgres `ON CONFLICT DO UPDATE` keyed on that
+constraint — this is what makes re-running ingestion safe: the same
+candle upserted twice produces one row, and a forming candle later
+finalizing (same key, new values) updates in place rather than erroring or
+duplicating. Verified by dedicated regression tests, since CLAUDE.md
+explicitly calls out "duplicate events" and "provider duplication" as
+required test coverage.
+
+**Also decided:** the repository commits its own transaction inside
+`upsert_many` rather than leaving commit control to a caller. Reasonable
+for now since nothing yet composes multiple repository calls into one
+transaction — FX-6's ingestion logic will just call this once per batch.
+Worth reconsidering if a future story needs multi-repository atomicity.
+
+**Also decided:** used `alembic revision --autogenerate` (previous
+migrations were hand-written) now that a real ORM model exists to diff
+against — reviewed the generated DDL before applying, per CLAUDE.md's
+"review the diff" rule; only cosmetic changes made (docstring, import
+order/formatting).

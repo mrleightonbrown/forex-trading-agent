@@ -8,8 +8,8 @@ from forex_agent.apps.settings import get_settings
 from forex_agent.infrastructure.db.base import Base
 
 # Import all model modules here so they register on Base.metadata before
-# autogenerate compares against it, e.g.:
-#   from forex_agent.infrastructure.db import models as _models
+# autogenerate compares against it.
+from forex_agent.infrastructure.db.models.candle import CandleRow  # noqa: F401
 
 config = context.config
 

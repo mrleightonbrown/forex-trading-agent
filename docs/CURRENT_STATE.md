@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-4)_
+_Last updated: 2026-09-13 (FX-5)_
 
 ## What exists
 
@@ -50,15 +50,21 @@ _Last updated: 2026-09-13 (FX-4)_
   OANDA credentials aren't configured — e.g. in CI).
 - A local `.env` with real OANDA practice credentials (gitignored, never
   committed) — connectivity confirmed working.
+- `Granularity`, `Ohlc`, `Candle` domain value objects (FX-5) — bid *and*
+  ask OHLC per candle (spread, per CLAUDE.md), `is_finalized` flag.
+- `candles` table (migration `91c1293c5760`) with a unique constraint on
+  `(instrument, granularity, start_time)`, plus `CandleRepository`
+  (application port) and `SqlAlchemyCandleRepository` — an idempotent
+  `upsert_many` via Postgres `ON CONFLICT DO UPDATE`. Verified: repeated
+  upsert of the same candle produces one row, not two; a candle finalizing
+  (same key, new values) updates in place.
 
 ## What does not exist yet
 
-- Any actual domain *tables* — only the extension migration and the
-  test-only throwaway table exist in the schema so far.
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
-- Historical candle fetching — `OandaBrokerAdapter` only does live
-  price/balance quotes so far.
+- Actually fetching candles from OANDA — FX-5 built the storage; FX-6 will
+  fill it from OANDA's candles endpoint.
 - OANDA Practice API connectivity.
 - Historical data ingestion, candle aggregation, data quality checks.
 - Strategy framework, backtester, regime detection.
