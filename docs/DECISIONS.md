@@ -191,3 +191,55 @@ migrations were hand-written) now that a real ORM model exists to diff
 against — reviewed the generated DDL before applying, per CLAUDE.md's
 "review the diff" rule; only cosmetic changes made (docstring, import
 order/formatting).
+
+## 2026-09-13 — FX-6: MarketDataPort as a separate port; OANDA candle fetching
+
+**Decision:** `MarketDataPort` (`get_candles`) is a new, separate `Protocol`
+from `BrokerPort` (FX-3), not a method added to `BrokerPort`. Implemented
+by `OandaMarketDataAdapter` against OANDA's
+`/v3/instruments/{instrument}/candles`.
+
+**Why separate from BrokerPort:** live quote/balance connectivity and
+historical/bulk candle fetching are different shapes of concern (ranged,
+potentially backfill-heavy) even though one provider (OANDA) implements
+both for now. Confirmed live that this endpoint needs no account ID at
+all, unlike `BrokerPort`'s two methods — a further sign it's a genuinely
+different capability, not an extension of the same one.
+
+**Confirmed live against the practice API before writing any adapter
+code** (same discipline as FX-4):
+- The endpoint takes no account ID — just `granularity`/`from`/`to`/`price`.
+- Its `time` field (nanosecond-precision, e.g.
+  `"2026-09-11T20:57:00.000000000Z"`) parses directly with Python 3.12's
+  `datetime.fromisoformat` — no manual truncation/reformatting needed.
+- OANDA caps `count` at 5000 and returns HTTP 400
+  (`"Maximum value for 'count' exceeded"`) for a `from`/`to` range
+  implying more, rather than silently truncating the response. Confirmed
+  the distinct error text for an invalid instrument
+  (`"Invalid value specified for 'instrument'"`) so the adapter can tell
+  the two 400 cases apart and raise the right exception for each.
+
+**Decision:** `get_candles` is bounded to one request and raises
+`CandleRangeTooLargeError` if the range would exceed OANDA's cap, rather
+than silently truncating or auto-paginating. Pagination for backfills
+larger than 5000 candles at a given granularity is explicit future work,
+not built here — keeps this story to one coherent piece.
+
+**Decision:** ingestion stores every candle OANDA returns, finalized or
+not. A still-forming candle gets `is_finalized=False` and updates in place
+once OANDA later reports it complete, via FX-5's upsert-on-conflict.
+CLAUDE.md's "strategies must only evaluate finalized candles" is a filter
+applied when *reading* candles later, not a reason to withhold forming
+ones from storage now.
+
+**Decision:** reused FX-3's `BrokerPortError` hierarchy (adding one new
+member, `CandleRangeTooLargeError`) rather than a parallel hierarchy for
+`MarketDataPort` — same failure shapes. Renamed the module docstring to
+reflect both ports use it. Worth revisiting the "Broker" naming if a
+third, differently-shaped port ever needs its own failure modes.
+
+**Also decided:** extracted `OandaBrokerAdapter` and `OandaMarketDataAdapter`'s
+shared plumbing (the practice-host guard, JSON parsing/error-message
+extraction) into `infrastructure/broker_oanda/_shared.py` rather than
+duplicating it in the new adapter — refactored `OandaBrokerAdapter` to use
+it too; all 19 of its existing tests still pass unchanged.

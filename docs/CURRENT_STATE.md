@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-5)_
+_Last updated: 2026-09-13 (FX-6)_
 
 ## What exists
 
@@ -59,12 +59,25 @@ _Last updated: 2026-09-13 (FX-5)_
   upsert of the same candle produces one row, not two; a candle finalizing
   (same key, new values) updates in place.
 
+- `MarketDataPort` (`get_candles`), separate from `BrokerPort`, implemented
+  by `OandaMarketDataAdapter` against OANDA's `/v3/instruments/.../candles`
+  endpoint (no account ID needed for this one). Bounded to what a single
+  request can return (OANDA's own 5000-candle cap) — raises
+  `CandleRangeTooLargeError` rather than silently truncating; pagination
+  for larger backfills isn't built yet.
+- `IngestCandles` (`application/use_cases/`) — the first real use case,
+  wiring `MarketDataPort.get_candles` to `CandleRepository.upsert_many`.
+  Verified against the live OANDA practice API and, separately, that its
+  output actually lands in the `candles` table.
+
 ## What does not exist yet
 
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
-- Actually fetching candles from OANDA — FX-5 built the storage; FX-6 will
-  fill it from OANDA's candles endpoint.
+- Pagination for candle backfills larger than 5000 candles at a given
+  granularity — `IngestCandles`/`get_candles` cover one bounded request.
+- Anything that actually calls `IngestCandles` on a schedule or via a
+  CLI/API trigger — it exists and is tested, but nothing invokes it yet.
 - OANDA Practice API connectivity.
 - Historical data ingestion, candle aggregation, data quality checks.
 - Strategy framework, backtester, regime detection.
