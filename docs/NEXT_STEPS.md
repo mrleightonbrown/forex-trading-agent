@@ -2,9 +2,9 @@
 
 Per CLAUDE.md's current phase (M0-M4) priority order:
 
-1. ~~Repository foundation~~ — scaffolding complete (this commit).
-2. **PostgreSQL** — first Alembic migration; confirm `docker compose up -d db`
-   + `uv run alembic upgrade head` works end to end.
+1. ~~Repository foundation~~ — scaffolding complete (FX-0).
+2. ~~PostgreSQL~~ — complete (FX-1): first migration (`pgcrypto`), UUID PK +
+   tz-aware timestamp mixins, verified up/down/up against live Postgres.
 3. **Domain primitives** — value objects for instrument, price (bid/ask,
    Decimal), units (Decimal), timestamps (tz-aware UTC only, reject naive).
 4. Broker adapter abstraction — define the `application/ports` interface a

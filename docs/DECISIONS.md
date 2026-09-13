@@ -41,3 +41,29 @@ install uv` falls back to building from source, which requires Xcode Command
 Line Tools. Installed via `uv`'s own standalone installer script instead,
 which ships a prebuilt binary — no compiler needed. Installed to
 `~/.local/bin`, added to `PATH` via `~/.zprofile`.
+
+## 2026-09-12 — FX-1: PostgreSQL primary key and timestamp conventions
+
+**Decision:** every future table's primary key is a server-generated UUID
+(`gen_random_uuid()`, requiring the `pgcrypto` extension), via a shared
+`UUIDPrimaryKeyMixin`. Every table also gets `created_at`/`updated_at` as
+`TIMESTAMPTZ`, populated server-side by Postgres, via a shared
+`TimestampMixin`. Both live in
+`forex_agent.infrastructure.db.mixins`.
+
+**Why:** UUIDs avoid leaking row-count/ordering information (relevant for a
+financial system) and need no coordination across services or replayed
+backtests. Server-side, tz-aware timestamps directly enforce CLAUDE.md's
+"All persisted timestamps use timezone-aware UTC values. Naive datetimes
+must be rejected." — the column type is `TIMESTAMPTZ` and the value is never
+supplied by application code, so a naive datetime can't reach the column in
+the first place.
+
+**Also recorded:** `asyncio_default_fixture_loop_scope` /
+`asyncio_default_test_loop_scope` are both set to `"session"` in
+`pyproject.toml`. Without this, pytest-asyncio's default per-test-function
+event loop breaks `get_engine()`'s cached singleton engine (correct in
+production, where one event loop lives for the process's whole lifetime) —
+its asyncpg connections stay bound to whichever loop created them, so the
+next test's loop can't use them. A session-scoped test loop matches
+production's actual loop lifetime.

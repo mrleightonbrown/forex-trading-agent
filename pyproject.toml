@@ -88,6 +88,13 @@ disallow_untyped_defs = false
 minversion = "8.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Session-scoped loop: matches production, where one event loop lives for the
+# whole process. Without this, pytest-asyncio's per-function loop breaks any
+# cached singleton holding asyncpg connections (e.g. get_engine()) — its
+# connections stay bound to the loop that created them. Both settings must
+# agree, or fixtures and test functions still end up on different loops.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 addopts = "--cov=forex_agent --cov-report=term-missing"
 
 [tool.coverage.run]
