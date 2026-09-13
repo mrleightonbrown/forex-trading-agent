@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-8)_
+_Last updated: 2026-09-13 (FX-9)_
 
 ## What exists
 
@@ -86,7 +86,16 @@ _Last updated: 2026-09-13 (FX-8)_
   market-calendar awareness (weekends/holidays) — callers pass ranges
   already known to be within a trading session.
 
+- `TradeHypothesis`, `Strategy` Protocol, `run_strategy`
+  (`forex_agent.domain.strategy`) — the strategy framework. No I/O; lives
+  in `domain/` alongside `aggregate_candles`/`find_gaps`. `run_strategy`
+  structurally enforces "strategies must only evaluate finalized candles"
+  before delegating to a strategy, rather than trusting each
+  implementation to check it.
+
 ## What does not exist yet
+
+- Any concrete strategy implementation — FX-9 built the framework only.
 
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).

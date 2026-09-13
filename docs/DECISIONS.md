@@ -266,3 +266,28 @@ this cuts rather than approximating badly. Callers must pass ranges
 already known to be within a trading session (e.g. filter out weekends
 themselves). A future story can add that filtering if it's actually
 needed.
+
+## 2026-09-13 — FX-9: strategy framework — domain, not application; runner enforces finalized-only
+
+**Decision:** `Strategy` (Protocol) and `TradeHypothesis` live in
+`domain/`, not `application/ports/` alongside `BrokerPort`/
+`CandleRepository`/`MarketDataPort`. Those three cross a real I/O boundary
+something in `infrastructure/` implements; a strategy is a pure
+computation over already-fetched candle data, no I/O at all — same
+category as `aggregate_candles`/`find_gaps`.
+
+**Decision:** CLAUDE.md's "strategies must only evaluate finalized
+candles" is enforced by `run_strategy`, not left to each strategy
+implementation to check itself. `run_strategy(strategy, candles)` raises
+if any candle isn't finalized, before ever calling `strategy.evaluate(...)`
+— every future concrete strategy gets this protection automatically.
+Same reasoning as the architecture-boundary contract tests: turn a rule
+into something structural rather than trusting every future
+implementation to remember it.
+
+**Explicitly out of scope:** any concrete strategy implementation (a
+separate future story), and any execution-intent/order type —
+`TradeHypothesis` carries zero authority on its own; CLAUDE.md's pipeline
+requires a risk decision and approved execution intent first, neither of
+which exists yet (Risk Engine / Paper Trading Execution aren't in the
+current M0–M4 phase).

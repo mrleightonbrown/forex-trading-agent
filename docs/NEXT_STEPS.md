@@ -34,7 +34,10 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
    `find_gaps` + `DetectDataGaps` use case for missing-candle detection.
    No market-calendar awareness (weekends/holidays) — callers pass ranges
    already known to be within a trading session.
-9. Strategy framework.
+9. ~~Strategy framework~~ — complete (FX-9): `TradeHypothesis`, `Strategy`
+   Protocol, `run_strategy` (enforces finalized-candles-only structurally,
+   not left to each strategy implementation). No concrete strategy yet —
+   that's a separate future story.
 10. Backtester (must prevent look-ahead bias, evaluate only finalized
     candles, include spread, use bid/ask correctly per side).
 11. Regime detection.
