@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-3)_
+_Last updated: 2026-09-13 (FX-4)_
 
 ## What exists
 
@@ -42,13 +42,23 @@ _Last updated: 2026-09-13 (FX-3)_
   depending on this port is testable before FX-4's real OANDA adapter
   lands. Same import-boundary enforcement as domain, via
   `tests/contract/test_application_boundary.py`.
+- `OandaBrokerAdapter` (`forex_agent.infrastructure.broker_oanda`): the real
+  `BrokerPort` implementation against OANDA's v20 REST practice API, via
+  `httpx`. Refuses to operate against anything but the practice host.
+  Verified against both a mocked HTTP transport (19 unit tests) and the
+  real OANDA practice API (2 live integration tests, auto-skipped when
+  OANDA credentials aren't configured — e.g. in CI).
+- A local `.env` with real OANDA practice credentials (gitignored, never
+  committed) — connectivity confirmed working.
 
 ## What does not exist yet
 
 - Any actual domain *tables* — only the extension migration and the
   test-only throwaway table exist in the schema so far.
-- A real (OANDA) implementation of `BrokerPort` — only the port and a fake
-  exist so far.
+- Order placement of any kind — `BrokerPort` is read-only by design; see
+  `docs/DECISIONS.md` (FX-3).
+- Historical candle fetching — `OandaBrokerAdapter` only does live
+  price/balance quotes so far.
 - OANDA Practice API connectivity.
 - Historical data ingestion, candle aggregation, data quality checks.
 - Strategy framework, backtester, regime detection.

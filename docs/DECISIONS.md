@@ -99,3 +99,58 @@ instance guarding `application/` the same way
 import FastAPI/SQLAlchemy/httpx/the OANDA SDK either, since
 `infrastructure` depends on `application` (to implement its ports), never
 the reverse.
+
+## 2026-09-13 — FX-4: OANDA practice account access
+
+**Decision:** created a personal OANDA fxTrade Practice account and a
+personal access token (My Account → My Services → Manage API Access).
+Credentials live only in the local, gitignored `.env` — never shared in
+chat, never committed. Connectivity confirmed directly against
+`GET /v3/accounts/{id}/summary` before any adapter code was written.
+
+**Also confirmed against OANDA's own docs:** practice REST base URL
+`https://api-fxpractice.oanda.com` (already in `.env.example` since FX-0);
+live is `https://api-fxtrade.oanda.com`. OANDA returns balance/price fields
+as JSON *strings*, so `OandaBrokerAdapter` converts straight to `Decimal`
+from the string — never via `float`.
+
+## 2026-09-13 — FX-4: OandaBrokerAdapter design
+
+**Decision:** `OandaBrokerAdapter` takes `api_key`/`account_id`/`base_url`
+as explicit constructor parameters (plus an optional injectable
+`httpx.AsyncClient`) rather than reading `Settings` itself. The `apps`
+composition root is responsible for pulling those three values out of
+`Settings` when it wires the adapter up.
+
+**Why:** keeps `infrastructure/broker_oanda` fully decoupled and trivially
+testable in isolation (a mocked `httpx.AsyncClient` is enough — see
+`tests/unit/infrastructure/broker_oanda/test_adapter.py`). Note this is a
+mild inconsistency with FX-1's `infrastructure/db/session.py`, which *does*
+import `apps.settings` directly for its process-lifetime singleton engine.
+Not fixing that now — flagging it as a pre-existing wrinkle, not repeating
+it here, since this adapter doesn't need a singleton the way the DB engine
+does.
+
+**Also decided:** the `Authorization` header is attached per-request
+(`self._headers`, passed to every `.get()` call), not baked into the
+client at construction time. This was forced by a real bug an early test
+caught: when a test injects its own `httpx.AsyncClient` (as
+`test_get_price_success` etc. do), a client-level default header set only
+in the "adapter builds its own client" branch never reaches that injected
+client, so the request left the auth header off entirely. Per-request
+headers fixed it and are more correct regardless of test/production use.
+
+**Also decided:** a defensive host check independent of `Settings`' own
+PAPER/PRACTICE validation — `OandaBrokerAdapter` refuses to construct
+against any host other than `api-fxpractice.oanda.com`
+(`NonPracticeHostError`), since `OANDA_API_BASE_URL` is a separately
+configurable value that could be pointed at the live host by mistake even
+while `TRADING_MODE`/`BROKER_ENVIRONMENT` stay correct.
+
+**Also decided:** the live integration test
+(`tests/integration/test_oanda_broker_adapter.py`) auto-skips via
+`pytest.mark.skipif` when `Settings.oanda_api_key`/`oanda_account_id` are
+unset, so CI (which has no OANDA secrets) skips it cleanly rather than
+failing, while a developer machine with `.env` populated runs it for real.
+Adding OANDA secrets to GitHub Actions so CI exercises this too is a
+reasonable future improvement, not done here.
