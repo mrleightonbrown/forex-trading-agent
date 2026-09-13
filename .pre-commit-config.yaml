@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Local hook, not mirrors-mypy: mirrors-mypy runs in its own isolated env
+  # with none of the project's dependencies installed, which produces false
+  # "has type Any" errors for every third-party base class (SQLAlchemy,
+  # pydantic-settings, FastAPI, ...). Running through `uv run` reuses the
+  # project's own environment, matching what CI runs.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: scripts/run-mypy.sh
+        language: script
+        types: [python]
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: detect-private-key
+      - id: mixed-line-ending
