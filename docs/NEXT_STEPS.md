@@ -45,10 +45,13 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
       instrument/granularity, non-ascending timestamps, and a hypothesis
       timestamped anywhere but the current bar. Finalized-only inherited
       from `run_strategy`.
-    - FX-11: trade/P&L simulation — spread-aware entry/exit per
-      `TradeSide` (already built), P&L via `Money`. Needs its own design
-      decision first: how does a backtest position get closed with no
-      live risk/execution engine?
+    - ~~FX-11: trade/P&L simulation~~ — complete. Exit rule: close-and-
+      reverse on an opposite-direction hypothesis; same-direction repeat
+      is a no-op; still-open position force-closed at the end.
+      `simulate_trades` prices entry/exit via `Price.entry_price`/
+      `exit_price` (FX-2, not reimplemented). `pnl` is a raw price delta
+      per unit of base-currency notional — no position sizing (Risk
+      Engine territory, not decided yet).
 11. Regime detection.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live

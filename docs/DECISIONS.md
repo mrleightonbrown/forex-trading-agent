@@ -329,3 +329,27 @@ step, O(n²) overall. Fine for now (tests, small backtests); a real
 year-long M1 backtest would be far too slow this way. A windowed/
 incremental approach is future work once real strategies exist and
 performance actually matters — premature optimization avoided here.
+
+## 2026-09-13 — FX-11: backtest exit rule — close-and-reverse
+
+**Decision (user's call, not mine):** a backtest position stays open
+until the strategy emits a hypothesis in the *opposite* direction, which
+closes it and immediately opens the reverse position. A same-direction
+repeat while already in a position is a no-op. Anything still open when
+the hypothesis list ends is force-closed at the last candle's price.
+
+**Why this over the alternatives considered:** self-contained — needs no
+new parameter (unlike a fixed holding period, which would need an
+arbitrary N with nothing in the domain model to derive it from) and uses
+only what `TradeHypothesis` already carries. "Close-only, no auto-reverse"
+was the other real option (sits out one signal every direction change);
+close-and-reverse was preferred as always-in-the-market between signals.
+
+**Decision:** `SimulatedTrade.pnl` is the raw price delta in the quote
+currency — P&L per single unit of base-currency notional, not multiplied
+by any position size. Multiplying by real position size is a Risk Engine
+concern that doesn't exist yet; not invented here to fill the gap.
+`simulate_trades` reuses FX-2's `Price.entry_price`/`exit_price` for the
+correctly-sided price rather than reimplementing that rule — prices come
+from each hypothesis's matching candle's `bid.close`/`ask.close`
+(matched via FX-10's `generated_at == candle.start_time` invariant).

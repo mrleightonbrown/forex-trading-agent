@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-10)_
+_Last updated: 2026-09-13 (FX-11)_
 
 ## What exists
 
@@ -101,11 +101,19 @@ _Last updated: 2026-09-13 (FX-10)_
   hypothesis is timestamped at the current bar. `O(n²)` reslicing,
   known and accepted for now.
 
+- `SimulatedTrade` + `simulate_trades` (`forex_agent.domain.
+  trade_simulation`): turns FX-10's hypotheses into simulated round-trip
+  trades. Exit rule: close-and-reverse on an opposite-direction
+  hypothesis, same-direction repeat is a no-op, still-open position
+  force-closed at the end. `pnl` is a raw price delta per unit of
+  base-currency notional — no position sizing yet.
+
 ## What does not exist yet
 
 - Any concrete strategy implementation — FX-9 built the framework only.
-- Trade/P&L simulation from backtest hypotheses — FX-10 produces
-  hypotheses only; turning them into simulated trades is FX-11.
+- Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
+  per-unit only; multiplying by real position size is Risk Engine
+  territory, not decided yet.
 
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
