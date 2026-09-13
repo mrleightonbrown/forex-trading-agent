@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-12 (FX-1)_
+_Last updated: 2026-09-13 (FX-2)_
 
 ## What exists
 
@@ -27,13 +27,17 @@ _Last updated: 2026-09-12 (FX-1)_
 - Pre-commit hooks (ruff, mypy, hygiene, secret detection) and a GitHub
   Actions CI workflow (lint, type-check, pytest against a Postgres service
   container).
+- Domain primitives (`forex_agent.domain`): `Instrument`, `Price` (bid/ask,
+  with `entry_price`/`exit_price` per `TradeSide`), `Units`, `Money`,
+  `UtcTimestamp` — all `Decimal`-based, all immutable, zero dependency on
+  FastAPI/SQLAlchemy/OANDA/HTTP clients/environment variables. That boundary
+  is enforced by an automated contract test
+  (`tests/contract/test_domain_boundary.py`), not just review discipline.
 
 ## What does not exist yet
 
-- Any actual domain/business tables — only the extension migration and the
+- Any actual domain *tables* — only the extension migration and the
   test-only throwaway table exist in the schema so far.
-- Domain primitives (instruments, prices, orders, positions as
-  Decimal/UTC-safe value objects).
 - Broker adapter abstraction / port definitions.
 - OANDA Practice API connectivity.
 - Historical data ingestion, candle aggregation, data quality checks.

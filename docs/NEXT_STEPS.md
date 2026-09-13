@@ -5,8 +5,10 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
 1. ~~Repository foundation~~ — scaffolding complete (FX-0).
 2. ~~PostgreSQL~~ — complete (FX-1): first migration (`pgcrypto`), UUID PK +
    tz-aware timestamp mixins, verified up/down/up against live Postgres.
-3. **Domain primitives** — value objects for instrument, price (bid/ask,
-   Decimal), units (Decimal), timestamps (tz-aware UTC only, reject naive).
+3. ~~Domain primitives~~ — complete (FX-2): `Instrument`, `Price` (bid/ask,
+   entry/exit per side), `Units`, `Money`, `UtcTimestamp`, all `Decimal`/UTC
+   as required; domain-boundary purity enforced by an automated contract
+   test.
 4. Broker adapter abstraction — define the `application/ports` interface a
    broker adapter must implement (place order, get price, get account
    state), independent of any specific broker.
