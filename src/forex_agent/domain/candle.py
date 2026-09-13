@@ -38,3 +38,16 @@ class Candle:
             raise TypeError(f"ask must be an Ohlc, got {type(self.ask).__name__}")
         if self.volume < 0:
             raise ValueError(f"volume must not be negative, got {self.volume}")
+
+        # At a given instant, ask >= bid always holds — open and close are
+        # each a single instant (unlike high/low, which can occur at
+        # different moments for each side), so this is safe to check
+        # exactly. A violation means corrupt/crossed provider data.
+        if self.ask.open < self.bid.open:
+            raise ValueError(
+                f"crossed market at open: ask ({self.ask.open}) < bid ({self.bid.open})"
+            )
+        if self.ask.close < self.bid.close:
+            raise ValueError(
+                f"crossed market at close: ask ({self.ask.close}) < bid ({self.bid.close})"
+            )

@@ -70,6 +70,31 @@ def test_rejects_negative_volume() -> None:
         _candle(volume=-1)
 
 
+# --- FX-8: crossed-market data quality checks. Ask >= bid always holds at
+# a given instant — open and close are each a single instant, so this is
+# safe to check exactly. A violation means corrupt/crossed provider data.
+
+
+def test_rejects_ask_open_below_bid_open() -> None:
+    crossed_ask = Ohlc(
+        open=Decimal("1.0990"), high=ASK.high, low=Decimal("1.0990"), close=ASK.close
+    )
+    with pytest.raises(ValueError, match="crossed market at open"):
+        _candle(ask=crossed_ask)
+
+
+def test_rejects_ask_close_below_bid_close() -> None:
+    crossed_ask = Ohlc(open=ASK.open, high=ASK.high, low=Decimal("1.0985"), close=Decimal("1.0990"))
+    with pytest.raises(ValueError, match="crossed market at close"):
+        _candle(ask=crossed_ask)
+
+
+def test_equal_bid_and_ask_open_close_is_allowed() -> None:
+    # A momentarily zero spread is unusual but not itself invalid.
+    flat_ask = Ohlc(open=BID.open, high=ASK.high, low=ASK.low, close=BID.close)
+    _candle(ask=flat_ask)  # does not raise
+
+
 def test_candle_is_immutable_and_hashable() -> None:
     candle = _candle()
 

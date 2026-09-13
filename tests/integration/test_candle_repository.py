@@ -30,7 +30,11 @@ TEST_INSTRUMENT = Instrument(base_currency="ZZZ", quote_currency="YYY")
 START = UtcTimestamp(datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC))
 
 
+_SPREAD = Decimal("0.0002")
+
+
 def _candle(*, bid_close: str, is_finalized: bool, start_time: UtcTimestamp = START) -> Candle:
+    bid_close_decimal = Decimal(bid_close)
     return Candle(
         instrument=TEST_INSTRUMENT,
         granularity=Granularity.M1,
@@ -39,13 +43,13 @@ def _candle(*, bid_close: str, is_finalized: bool, start_time: UtcTimestamp = ST
             open=Decimal("1.0000"),
             high=Decimal("1.0010"),
             low=Decimal("0.9990"),
-            close=Decimal(bid_close),
+            close=bid_close_decimal,
         ),
         ask=Ohlc(
             open=Decimal("1.0002"),
             high=Decimal("1.0012"),
             low=Decimal("0.9992"),
-            close=Decimal("1.0007"),
+            close=bid_close_decimal + _SPREAD,
         ),
         volume=10,
         is_finalized=is_finalized,

@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-7)_
+_Last updated: 2026-09-13 (FX-8)_
 
 ## What exists
 
@@ -77,6 +77,14 @@ _Last updated: 2026-09-13 (FX-7)_
   implementation) and `AggregateCandles` use case: reads source candles
   back out of `candles`, aggregates, upserts the result — the persistence
   half of FX-7 that the pure function alone didn't cover.
+
+- `Candle` now rejects crossed-market data (ask below bid at open or
+  close) — a real gap closed: nothing previously stopped bad provider
+  data with `ask < bid` from being persisted.
+- `find_gaps` (`forex_agent.domain.candle_gaps`) + `DetectDataGaps` use
+  case: reports missing expected candle timestamps in a stored range. No
+  market-calendar awareness (weekends/holidays) — callers pass ranges
+  already known to be within a trading session.
 
 ## What does not exist yet
 

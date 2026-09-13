@@ -243,3 +243,26 @@ shared plumbing (the practice-host guard, JSON parsing/error-message
 extraction) into `infrastructure/broker_oanda/_shared.py` rather than
 duplicating it in the new adapter — refactored `OandaBrokerAdapter` to use
 it too; all 19 of its existing tests still pass unchanged.
+
+## 2026-09-13 — FX-8: crossed-market validation and gap detection
+
+**Decision:** `Candle` now rejects `ask.open < bid.open` and
+`ask.close < bid.close` at construction. Deliberately *not* checking
+high/low the same way: `bid.high` and `ask.low` can occur at different
+instants within the same candle, so `bid.high > ask.low` doesn't imply
+anything is wrong — only open and close are each a single instant, where
+ask ≥ bid is a hard market-structure guarantee. One existing test fixture
+(`tests/integration/test_candle_repository.py`'s `_candle` helper) had a
+fixed `ask.close` independent of its varying `bid_close` parameter and
+would have violated this the moment `bid_close` exceeded it — fixed to
+derive `ask.close` from `bid_close` with a consistent spread, same pattern
+already used elsewhere.
+
+**Decision:** `find_gaps` (pure, domain) and `DetectDataGaps` (use case,
+wired to `CandleRepository.get_range`) detect missing expected candles in
+a stored range. Deliberately no market-calendar awareness — forex session
+boundaries shift with daylight saving and vary by broker, real complexity
+this cuts rather than approximating badly. Callers must pass ranges
+already known to be within a trading session (e.g. filter out weekends
+themselves). A future story can add that filtering if it's actually
+needed.

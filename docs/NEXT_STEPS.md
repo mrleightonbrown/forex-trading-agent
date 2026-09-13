@@ -29,7 +29,11 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
 7. ~~Candle aggregation~~ — complete (FX-7): pure `aggregate_candles`
    domain function, plus `CandleRepository.get_range` and the
    `AggregateCandles` use case wiring read → aggregate → persist.
-8. Data quality.
+8. ~~Data quality~~ — complete (FX-8): crossed-market validation on
+   `Candle` (ask must not be below bid at open/close), plus pure
+   `find_gaps` + `DetectDataGaps` use case for missing-candle detection.
+   No market-calendar awareness (weekends/holidays) — callers pass ranges
+   already known to be within a trading session.
 9. Strategy framework.
 10. Backtester (must prevent look-ahead bias, evaluate only finalized
     candles, include spread, use bid/ask correctly per side).
