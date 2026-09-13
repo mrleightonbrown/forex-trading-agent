@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-9)_
+_Last updated: 2026-09-13 (FX-10)_
 
 ## What exists
 
@@ -93,9 +93,19 @@ _Last updated: 2026-09-13 (FX-9)_
   before delegating to a strategy, rather than trusting each
   implementation to check it.
 
+- `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
+  `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
+  collects the `TradeHypothesis` values produced — the actual look-ahead
+  prevention CLAUDE.md requires. Validates one instrument, one
+  granularity, strictly ascending timestamps, and that every returned
+  hypothesis is timestamped at the current bar. `O(n²)` reslicing,
+  known and accepted for now.
+
 ## What does not exist yet
 
 - Any concrete strategy implementation — FX-9 built the framework only.
+- Trade/P&L simulation from backtest hypotheses — FX-10 produces
+  hypotheses only; turning them into simulated trades is FX-11.
 
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).

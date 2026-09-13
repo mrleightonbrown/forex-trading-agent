@@ -38,8 +38,17 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
    Protocol, `run_strategy` (enforces finalized-candles-only structurally,
    not left to each strategy implementation). No concrete strategy yet —
    that's a separate future story.
-10. Backtester (must prevent look-ahead bias, evaluate only finalized
-    candles, include spread, use bid/ask correctly per side).
+10. Backtester — split into two stories:
+    - ~~FX-10: backtest engine~~ — complete. `run_backtest` walks candles
+      to a `Strategy` one bar at a time (the actual look-ahead-bias
+      prevention, not just a naming convention); rejects mixed
+      instrument/granularity, non-ascending timestamps, and a hypothesis
+      timestamped anywhere but the current bar. Finalized-only inherited
+      from `run_strategy`.
+    - FX-11: trade/P&L simulation — spread-aware entry/exit per
+      `TradeSide` (already built), P&L via `Money`. Needs its own design
+      decision first: how does a backtest position get closed with no
+      live risk/execution engine?
 11. Regime detection.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live

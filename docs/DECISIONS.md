@@ -291,3 +291,41 @@ separate future story), and any execution-intent/order type —
 requires a risk decision and approved execution intent first, neither of
 which exists yet (Risk Engine / Paper Trading Execution aren't in the
 current M0–M4 phase).
+
+## 2026-09-13 — FX-10: backtest engine, split from trade/P&L simulation
+
+**Decision:** split CLAUDE.md's "backtester" item into two stories, same
+pattern as FX-3/4 and FX-5/6/7. FX-10 (this one) is the look-ahead-safe
+engine: `run_backtest(strategy, candles) -> list[TradeHypothesis]`.
+Trade/P&L simulation (spread-aware entry/exit, `Money`-based P&L) is
+FX-11, deliberately deferred — closing a backtest position needs its own
+design decision (next opposite signal? fixed holding period? end of
+window?) with no live risk/execution engine to do it, and that decision
+shouldn't be bundled into the engine story.
+
+**How look-ahead bias is actually prevented:** `run_backtest` walks
+`candles` one bar at a time; at step `i`, `strategy.evaluate(...)` (via
+`run_strategy`, so finalized-only enforcement is inherited, not
+duplicated) is only ever given `candles[0:i+1]`. Verified by a test whose
+fake strategy raises immediately if it can see a value that's only
+supposed to appear in the final bar, before the step where that's
+supposed to happen — not just a length check.
+
+**Decision:** a returned hypothesis's `generated_at` must equal the
+current bar's `start_time`, or `run_backtest` raises. Catches a strategy
+fabricating a hypothesis timestamped outside the window it was actually
+shown — a real look-ahead bug class. Consequence: every future concrete
+strategy must derive its hypothesis's timestamp from the last candle it
+was given, never wall-clock time.
+
+**Also decided (input validation):** candles must be one instrument, one
+granularity, and strictly ascending by `start_time` — out-of-order input
+is rejected, not silently sorted, since silent reordering could mask a
+caller bug that let future-dated data leak into the series in the first
+place.
+
+**Known, accepted limitation:** `candles[:i+1]` reslicing is O(n) per
+step, O(n²) overall. Fine for now (tests, small backtests); a real
+year-long M1 backtest would be far too slow this way. A windowed/
+incremental approach is future work once real strategies exist and
+performance actually matters — premature optimization avoided here.
