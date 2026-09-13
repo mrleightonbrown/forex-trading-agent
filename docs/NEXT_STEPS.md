@@ -26,7 +26,9 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
      `CandleRepository.upsert_many`. Bounded to one request (≤5000
      candles) — pagination for larger backfills is explicit future work,
      not yet its own story.
-7. Candle aggregation.
+7. ~~Candle aggregation~~ — complete (FX-7): pure `aggregate_candles`
+   domain function (no persistence wiring — reading source candles back
+   out and upserting aggregates is a future story).
 8. Data quality.
 9. Strategy framework.
 10. Backtester (must prevent look-ahead bias, evaluate only finalized

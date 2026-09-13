@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-6)_
+_Last updated: 2026-09-13 (FX-7)_
 
 ## What exists
 
@@ -69,6 +69,10 @@ _Last updated: 2026-09-13 (FX-6)_
   wiring `MarketDataPort.get_candles` to `CandleRepository.upsert_many`.
   Verified against the live OANDA practice API and, separately, that its
   output actually lands in the `candles` table.
+
+- `aggregate_candles` (`forex_agent.domain.candle_aggregation`): pure
+  function grouping same-instrument/same-source-granularity candles into
+  higher-timeframe buckets (e.g. M1→M5/H1/D). No persistence wiring.
 
 ## What does not exist yet
 
