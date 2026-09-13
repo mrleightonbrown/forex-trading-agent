@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-2)_
+_Last updated: 2026-09-13 (FX-3)_
 
 ## What exists
 
@@ -33,12 +33,22 @@ _Last updated: 2026-09-13 (FX-2)_
   FastAPI/SQLAlchemy/OANDA/HTTP clients/environment variables. That boundary
   is enforced by an automated contract test
   (`tests/contract/test_domain_boundary.py`), not just review discipline.
+- `BrokerPort` (`forex_agent.application.ports.broker_port`): a `Protocol`
+  for broker connectivity — `get_price`/`get_account_balance` only, no
+  order placement (out of scope until Risk Engine/Paper Trading Execution
+  is assigned). A typed exception hierarchy
+  (`application/ports/exceptions.py`) and an in-memory
+  `FakeBrokerPort` (`tests/fakes/broker_port.py`) exist so anything
+  depending on this port is testable before FX-4's real OANDA adapter
+  lands. Same import-boundary enforcement as domain, via
+  `tests/contract/test_application_boundary.py`.
 
 ## What does not exist yet
 
 - Any actual domain *tables* — only the extension migration and the
   test-only throwaway table exist in the schema so far.
-- Broker adapter abstraction / port definitions.
+- A real (OANDA) implementation of `BrokerPort` — only the port and a fake
+  exist so far.
 - OANDA Practice API connectivity.
 - Historical data ingestion, candle aggregation, data quality checks.
 - Strategy framework, backtester, regime detection.

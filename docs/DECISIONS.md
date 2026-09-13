@@ -67,3 +67,35 @@ production, where one event loop lives for the process's whole lifetime) —
 its asyncpg connections stay bound to whichever loop created them, so the
 next test's loop can't use them. A session-scoped test loop matches
 production's actual loop lifetime.
+
+## 2026-09-13 — FX-3: BrokerPort scoped to read-only, as a Protocol
+
+**Decision:** `BrokerPort` (`application/ports/broker_port.py`) defines only
+`get_price(instrument) -> Price` and `get_account_balance() -> Money`. No
+order-placement/execution-intent method. Implemented as a `typing.Protocol`,
+not an ABC.
+
+**Why no order placement yet:** CLAUDE.md's current M0–M4 priority list
+(items 1–11) stops at regime detection — Risk Engine, Decision Engine, and
+Paper Trading Execution (Jira epics 10–12) are not part of the current
+phase. CLAUDE.md is also explicit that no code may reach an order without
+first going through risk approval and execution-intent creation, neither of
+which exists yet. Adding a `place_order` method now would be a capability
+with no safety mechanism behind it — easy for future code to call directly
+and bypass the risk pipeline entirely by construction, simply because
+nothing else exists yet to stop it. Add it deliberately when Risk
+Engine/Paper Trading Execution is actually assigned, alongside whatever
+execution-intent type gates it.
+
+**Why `Protocol` over `ABC`:** structural typing means FX-4's real OANDA
+adapter and any test double (`tests/fakes/broker_port.py`) only need to
+match the method shapes, not inherit from a shared base. Verified working:
+`FakeBrokerPort` satisfies `BrokerPort` under mypy with zero inheritance.
+
+**Also established:** the domain-boundary contract-test pattern from FX-2
+now has a shared helper (`tests/contract/_boundary.py`) and a second
+instance guarding `application/` the same way
+(`tests/contract/test_application_boundary.py`) — `application` may not
+import FastAPI/SQLAlchemy/httpx/the OANDA SDK either, since
+`infrastructure` depends on `application` (to implement its ports), never
+the reverse.

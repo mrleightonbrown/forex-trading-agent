@@ -6,10 +6,16 @@ module under src/forex_agent/domain/ for forbidden imports and direct
 environment-variable access, rather than relying on catching it in review.
 """
 
-import ast
 from pathlib import Path
 
 import pytest
+
+from tests.contract._boundary import (
+    SRC_ROOT,
+    assert_does_not_read_environ,
+    assert_no_forbidden_imports,
+    python_files,
+)
 
 FORBIDDEN_TOP_LEVEL_MODULES = {
     "fastapi",
@@ -22,42 +28,22 @@ FORBIDDEN_TOP_LEVEL_MODULES = {
     "os",  # environment variables must not be read from domain code
 }
 
-DOMAIN_DIR = Path(__file__).resolve().parents[2] / "src" / "forex_agent" / "domain"
-
-
-def _domain_python_files() -> list[Path]:
-    return sorted(DOMAIN_DIR.rglob("*.py"))
-
-
-def _top_level_imports(tree: ast.Module) -> set[str]:
-    modules: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            modules.add(node.module.split(".")[0])
-    return modules
+DOMAIN_DIR = SRC_ROOT / "domain"
 
 
 @pytest.mark.parametrize(
     "path",
-    _domain_python_files(),
+    python_files(DOMAIN_DIR),
     ids=lambda p: str(p.relative_to(DOMAIN_DIR)),
 )
 def test_domain_module_has_no_forbidden_imports(path: Path) -> None:
-    tree = ast.parse(path.read_text(), filename=str(path))
-    forbidden_found = _top_level_imports(tree) & FORBIDDEN_TOP_LEVEL_MODULES
-
-    assert not forbidden_found, f"{path} imports forbidden module(s): {forbidden_found}"
+    assert_no_forbidden_imports(path, FORBIDDEN_TOP_LEVEL_MODULES)
 
 
 @pytest.mark.parametrize(
     "path",
-    _domain_python_files(),
+    python_files(DOMAIN_DIR),
     ids=lambda p: str(p.relative_to(DOMAIN_DIR)),
 )
 def test_domain_module_does_not_read_environ(path: Path) -> None:
-    source = path.read_text()
-
-    assert "environ" not in source, f"{path} appears to read environment variables directly"
-    assert "getenv(" not in source, f"{path} appears to read environment variables directly"
+    assert_does_not_read_environ(path)
