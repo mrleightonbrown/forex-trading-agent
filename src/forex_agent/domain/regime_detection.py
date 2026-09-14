@@ -3,10 +3,17 @@ Directional Index) — the standard, deterministic technical-analysis
 measure of trend strength. No ML: consistent with the current phase's
 exclusion of AI/ML decision-making.
 
-ADX is computed from MID prices (the bid/ask average of each OHLC point).
-Trend/regime is a market-structure question, not an execution-price one —
-picking one side (bid or ask) would introduce an arbitrary directional
-bias that has nothing to do with the actual indicator.
+ADX is computed from a synthetic midpoint approximation — each OHLC point
+averaged from `Candle`'s separate bid and ask sides (e.g.
+`(bid.high + ask.high) / 2`). Trend/regime is a market-structure question,
+not an execution-price one, so averaging avoids the arbitrary directional
+bias picking one side (bid or ask) would introduce. This is *not* the same
+as a true provider-supplied mid price: bid's high and ask's high can occur
+at different instants within a candle, so the average of the two period
+extrema isn't necessarily what a genuine mid-price series' own high would
+have been over that period (FX-12H). OANDA can supply a true mid OHLC
+directly (its `price=M` component — FX-6 currently only requests `BA`);
+switching to that is deferred, not needed to unblock this story.
 """
 
 from decimal import Decimal
@@ -38,8 +45,15 @@ def classify_regime(
     anything. Also raises via `require_consistent_series` (one
     instrument, one granularity, strictly ascending) and if any candle
     isn't finalized — regime detection, like backtesting, only makes
-    sense over settled history.
+    sense over settled history. Also raises (FX-12H) if `period` is not
+    at least 1, or `threshold` is outside ADX's own valid range of
+    [0, 100].
     """
+    if period < 1:
+        raise ValueError(f"period must be at least 1, got {period}")
+    if not (Decimal(0) <= threshold <= Decimal(100)):
+        raise ValueError(f"threshold must be within [0, 100], got {threshold}")
+
     minimum_required = period * 2
     if len(candles) < minimum_required:
         raise ValueError(
@@ -62,6 +76,8 @@ def classify_regime(
 def _compute_adx(candles: list[Candle], period: int) -> Decimal:
     """Wilder's ADX, as of the last candle in `candles`. Assumes
     `len(candles) >= 2 * period` — checked by the caller."""
+    # Synthetic midpoint approximation, not a true provider mid price —
+    # see this module's docstring.
     highs = [(c.bid.high + c.ask.high) / 2 for c in candles]
     lows = [(c.bid.low + c.ask.low) / 2 for c in candles]
     closes = [(c.bid.close + c.ask.close) / 2 for c in candles]

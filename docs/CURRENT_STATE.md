@@ -119,9 +119,13 @@ _Last updated: 2026-09-13 (FX-12)_
   into one shared helper.
 - `TrendRegime` (`TRENDING`/`RANGING`) + `classify_regime`
   (`forex_agent.domain.regime_detection`): trend-vs-range classification
-  via Wilder's ADX on mid (bid/ask average) OHLC — deterministic
-  technical analysis, no ML. Requires ≥ `2 × period` candles (default
-  period 14, threshold 25 — Wilder's own convention, both configurable).
+  via Wilder's ADX on a synthetic midpoint approximation — bid/ask OHLC
+  averaged, *not* a true provider mid price, since bid's and ask's
+  period-high/low can occur at different instants (FX-12H; a true mid
+  OHLC, e.g. OANDA's `price=M`, is deferred — see `docs/DECISIONS.md`).
+  Deterministic technical analysis, no ML. Requires ≥ `2 × period`
+  candles (default period 14, threshold 25 — Wilder's own convention,
+  both configurable; `period ≥ 1` and `threshold` in [0, 100] validated).
   Cross-checked against an independently written reference
   implementation of the same algorithm, not just qualitative
   trending/ranging behavior. This closes out CLAUDE.md's current M0–M4

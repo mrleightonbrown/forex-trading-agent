@@ -458,13 +458,19 @@ per call (`classify_regime(candles) -> TrendRegime`), mirroring how
 `Strategy.evaluate` consumes candles, rather than producing a full
 historical series the way `aggregate_candles`/`find_gaps` do.
 
-**Decision: ADX computed from mid prices** (bid/ask average of each OHLC
-point), not one side. Trend/regime is a market-structure question, not an
-execution-price one — picking bid or ask arbitrarily would introduce a
-directional bias with nothing to do with the actual indicator. Confirmed
-with the user before implementing, since it's the first domain code to
-use a mid price at all (everything before this used bid/ask directly, on
-purpose — CLAUDE.md's "backtests must include spread").
+**Decision: ADX computed from a synthetic midpoint approximation**
+(bid/ask OHLC averaged — `(bid.high + ask.high) / 2` and so on), not one
+side. Trend/regime is a market-structure question, not an execution-price
+one — picking bid or ask arbitrarily would introduce a directional bias
+with nothing to do with the actual indicator. Confirmed with the user
+before implementing, since it's the first domain code to average bid/ask
+at all (everything before this used them directly, on purpose —
+CLAUDE.md's "backtests must include spread"). **Terminology corrected in
+FX-12H**: this average-of-extrema is not the same as a true provider mid
+price, since bid's high/low and ask's high/low can occur at different
+instants within a candle — the average of the two period extrema isn't
+necessarily what a genuine mid-price series' own high/low would have been
+over that period. See the FX-12H entry below.
 
 **Decision:** binary classification only, per the user's call — `ADX >=
 threshold` (default 25, Wilder's own convention) → `TRENDING`, else
@@ -502,3 +508,42 @@ downstream (fundamentals, news intelligence, AI decision-making, live
 trading, and epics not in the M0–M4 list at all — Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow Trading)
 remains explicitly out of scope until assigned.
+
+## 2026-09-13 — FX-12H: regime detection hardening (external review)
+
+Another external review (ChatGPT, given the FX-12 code) caught missing
+input validation and an imprecise terminology claim — no algorithm or
+architecture change.
+
+**Decision:** `classify_regime` now rejects `period < 1` and `threshold`
+outside `[0, 100]`. Neither was checked before. `period <= 0` would have
+divided by zero (or a negative number) inside Wilder's smoothing
+recurrence without ever raising a clear error; a `threshold` outside
+ADX's own valid range would silently produce an always-TRENDING or
+always-RANGING result with no indication the configuration itself was
+nonsensical.
+
+**Corrected, not changed:** every place describing what ADX is computed
+from previously said "mid prices"/"mid OHLC" — imprecise. `Candle` has no
+true mid OHLC field; the value used is `(bid.X + ask.X) / 2` per OHLC
+point, a *synthetic midpoint approximation*. Bid's high and ask's high
+(same for low) can occur at different instants within one candle, so
+averaging the two period extrema isn't necessarily equal to what a
+genuine mid-price series' own high/low would have been over that period.
+The classification behavior is unaffected — only the documentation and
+comments describing it were wrong. Corrected in
+`regime_detection.py`'s module/function docstrings and in this file's
+own FX-12 entry above.
+
+**Recorded as deferred work, not implemented here:** OANDA's v20 API can
+supply a true mid OHLC directly via its `price` query parameter (`M` for
+mid, or `BAM` for bid+ask+mid together) — FX-6's `OandaMarketDataAdapter`
+currently only requests `BA` (bid+ask), so no true mid price is ingested
+or stored anywhere yet. Switching `classify_regime` (and `candles`
+storage generally) to use a real mid OHLC instead of the bid/ask-average
+approximation is future work, not needed to unblock FX-12/FX-12H's scope.
+
+**Explicitly not touched, per the review's own scope:** the ADX
+algorithm itself, `TrendRegime`, the shared `candle_series` validation
+extracted in FX-12, and every downstream module (`run_backtest`,
+`simulate_trades`, the strategy framework) — none of that changed.

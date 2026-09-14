@@ -109,6 +109,31 @@ def test_threshold_is_configurable() -> None:
 # --- validation -------------------------------------------------------------
 
 
+@pytest.mark.parametrize("period", [0, -1, -14])
+def test_rejects_non_positive_period(period: int) -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(ValueError, match="period"):
+        classify_regime(candles, period=period)
+
+
+@pytest.mark.parametrize(
+    "threshold", [Decimal("-1"), Decimal("-0.0001"), Decimal("100.0001"), Decimal("101")]
+)
+def test_rejects_threshold_outside_valid_range(threshold: Decimal) -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(ValueError, match="threshold"):
+        classify_regime(candles, period=3, threshold=threshold)
+
+
+def test_accepts_threshold_boundary_values() -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    classify_regime(candles, period=3, threshold=Decimal("0"))  # does not raise
+    classify_regime(candles, period=3, threshold=Decimal("100"))  # does not raise
+
+
 def test_rejects_insufficient_candles() -> None:
     candles = _candles([str(100 + i) for i in range(10)])  # need 2*14=28
 
