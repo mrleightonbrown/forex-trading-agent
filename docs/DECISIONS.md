@@ -410,3 +410,38 @@ close-and-reverse exit rule, still `pnl` as a per-unit price delta, still
 no position sizing/concrete strategies/regime detection — all of that
 remains exactly as decided. This story only corrected execution timing
 and added missing input validation.
+
+## 2026-09-13 — FX-11H.1: small follow-ups from FX-11H review
+
+**Decision:** `simulate_trades` now raises if given a non-empty
+`hypotheses` list alongside empty `candles` — previously returned `[]`
+silently, which could mask a real caller bug (hypotheses that can't be
+matched to any candle at all, not even a wrong one).
+
+**Documented, not changed:** the end-of-dataset forced close's
+`exit_time` is the *identifying timestamp* of the candle that produced
+the exit price (its `start_time`, consistent with every other timestamp
+in this module) — not the precise instant that candle closed
+(`start_time` + the granularity's duration). `Candle` carries no separate
+close-instant field to use instead. Noted inline at the one call site
+this applies to.
+
+**Softened:** the OANDA live-test flakiness note in `CURRENT_STATE.md`
+previously asserted "an apparent rate limit... not a code defect" — that
+was an inference, not a confirmed diagnosis. Now reads "root cause
+undetermined."
+
+**Deferred design note (user's, recorded for later — not blocking
+FX-12):** `TradeHypothesis.generated_at` is actually the *start*
+timestamp of the candle that produced the decision, not the real instant
+the decision became computable (which is closer to that candle's close,
+i.e. `start_time` + the granularity's duration). FX-11H's next-bar
+execution logic makes the simulator correct despite this — the hypothesis
+is never executed before a realistic price exists — but the distinction
+between "which bar produced this" (`decision_bar_start`) and "when the
+decision was actually available" (`decision_time`) is currently
+collapsed into one field. This will matter once technical signals need
+to be combined with timed macro/news events, which have their own
+precise availability times unrelated to any candle boundary. Revisit
+when that work starts; `TradeHypothesis`'s single-timestamp shape is
+correct for now.

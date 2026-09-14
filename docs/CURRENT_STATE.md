@@ -48,8 +48,8 @@ _Last updated: 2026-09-13 (FX-11H)_
   real OANDA practice API (2 live integration tests, auto-skipped when
   OANDA credentials aren't configured — e.g. in CI). Note: these live
   tests are occasionally flaky when the full suite runs back-to-back
-  (an apparent OANDA-side rate limit surfaces as an intermittent 401) —
-  they pass reliably in isolation; not a code defect.
+  (an intermittent 401 from OANDA) — they pass reliably in isolation.
+  Root cause undetermined.
 - A local `.env` with real OANDA practice credentials (gitignored, never
   committed) — connectivity confirmed working.
 - `Granularity`, `Ohlc`, `Candle` domain value objects — bid *and* ask

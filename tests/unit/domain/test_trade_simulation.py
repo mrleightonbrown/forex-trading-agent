@@ -62,13 +62,21 @@ def _hypothesis(minute: int, side: TradeSide, instrument: Instrument = EUR_USD) 
     )
 
 
-def test_empty_candles_returns_empty_trades() -> None:
-    assert simulate_trades([_hypothesis(0, TradeSide.LONG)], []) == []
+def test_empty_candles_and_empty_hypotheses_returns_empty_trades() -> None:
+    assert simulate_trades([], []) == []
 
 
 def test_empty_hypotheses_returns_empty_trades() -> None:
     candles = [_flat(0, "1.1000", "1.1002")]
     assert simulate_trades([], candles) == []
+
+
+def test_rejects_non_empty_hypotheses_when_candles_is_empty() -> None:
+    """FX-11H.1: a non-empty hypotheses list with no candles at all cannot
+    be matched to any execution price — this must raise, not silently
+    return an empty trade list that could mask a real caller bug."""
+    with pytest.raises(ValueError, match="candles"):
+        simulate_trades([_hypothesis(0, TradeSide.LONG)], [])
 
 
 # --- AC1/AC9: next-bar execution, not the decision bar's own close -----

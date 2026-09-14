@@ -70,9 +70,16 @@ def simulate_trades(
     candles' instrument, be strictly ascending by `generated_at`, and each
     `generated_at` must correspond to one of the candles' `start_time`.
 
-    Raises `ValueError` on any violation, with a message identifying which.
+    Raises `ValueError` on any violation, with a message identifying which
+    — including (FX-11H.1) non-empty `hypotheses` with empty `candles`,
+    since there is then no candle any hypothesis could possibly match.
     """
     if not candles:
+        if hypotheses:
+            raise ValueError(
+                "hypotheses were provided but candles is empty; hypotheses cannot "
+                "be matched to any candle's start_time"
+            )
         return []
 
     instrument = candles[0].instrument
@@ -171,6 +178,11 @@ def simulate_trades(
         trades.append(
             open_position.close(
                 exit_price=end_of_data_price.exit_price(open_position.side),
+                # FX-11H.1: exit_time identifies WHICH candle produced this
+                # exit price (its start_time, like every other timestamp in
+                # this module) — it is not the precise instant the candle
+                # closed (start_time + granularity's duration). Candle
+                # carries no separate close-instant field to use instead.
                 exit_time=last_candle.start_time,
             )
         )
