@@ -547,3 +547,26 @@ approximation is future work, not needed to unblock FX-12/FX-12H's scope.
 algorithm itself, `TrendRegime`, the shared `candle_series` validation
 extracted in FX-12, and every downstream module (`run_backtest`,
 `simulate_trades`, the strategy framework) — none of that changed.
+
+## 2026-09-14 — FX-12H.1: regime detection parameter type validation
+
+A follow-up review found FX-12H's new value checks (`period < 1`,
+`threshold` outside `[0, 100]`) didn't check *types* first — `period=3.5`
+passed the range check and failed later with an opaque slice error;
+`period=True` was silently accepted since `bool` is a Python subclass of
+`int`; `threshold=25.0` (a `float`) silently worked despite CLAUDE.md's
+"never use float for prices, balances, units, or P&L," which this
+indicator's threshold is close enough to that the same rule should apply;
+`threshold="25"` (a `str`) failed later with a generic comparison
+`TypeError`.
+
+**Decision:** `classify_regime` now checks types before values —
+`period` must be `int` and explicitly not `bool` (`isinstance(period,
+bool) or not isinstance(period, int)`, since `bool` passes a plain
+`isinstance(x, int)` check), `threshold` must be `Decimal`. Raises
+`TypeError` with the actual type named, before any of the existing
+`ValueError` range checks run. Confirmed via mypy that the `bool` case
+needed no `# type: ignore` in its test — mypy's static type system
+accepts `bool` wherever `int` is expected (that's exactly the dynamic gap
+being guarded against; the static type system doesn't see it as a gap at
+all).

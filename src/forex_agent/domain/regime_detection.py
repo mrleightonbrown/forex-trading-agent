@@ -48,7 +48,19 @@ def classify_regime(
     sense over settled history. Also raises (FX-12H) if `period` is not
     at least 1, or `threshold` is outside ADX's own valid range of
     [0, 100].
+
+    Raises `TypeError` (FX-12H.1) if `period` isn't an `int` (`bool` is a
+    Python subclass of `int` but rejected here too — `True`/`False` are
+    not meaningful periods) or `threshold` isn't a `Decimal` — a `float`
+    threshold would silently work today but contradicts CLAUDE.md's
+    "never use float for prices, balances, units, or P&L" rule, which
+    this indicator's threshold is close enough to that the same
+    discipline applies.
     """
+    if isinstance(period, bool) or not isinstance(period, int):
+        raise TypeError(f"period must be an int, got {type(period).__name__}")
+    if not isinstance(threshold, Decimal):
+        raise TypeError(f"threshold must be a Decimal, got {type(threshold).__name__}")
     if period < 1:
         raise ValueError(f"period must be at least 1, got {period}")
     if not (Decimal(0) <= threshold <= Decimal(100)):

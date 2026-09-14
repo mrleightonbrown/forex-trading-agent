@@ -109,6 +109,36 @@ def test_threshold_is_configurable() -> None:
 # --- validation -------------------------------------------------------------
 
 
+def test_rejects_non_int_period() -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(TypeError, match="period"):
+        classify_regime(candles, period=3.5)  # type: ignore[arg-type]
+
+
+def test_rejects_bool_period() -> None:
+    # bool is a Python subclass of int, but True/False are not meaningful
+    # periods and must not be silently accepted as 1/0.
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(TypeError, match="period"):
+        classify_regime(candles, period=True)
+
+
+def test_rejects_float_threshold() -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(TypeError, match="threshold"):
+        classify_regime(candles, period=3, threshold=25.0)  # type: ignore[arg-type]
+
+
+def test_rejects_non_decimal_threshold() -> None:
+    candles = _candles([str(100 + i) for i in range(6)])
+
+    with pytest.raises(TypeError, match="threshold"):
+        classify_regime(candles, period=3, threshold="25")  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("period", [0, -1, -14])
 def test_rejects_non_positive_period(period: int) -> None:
     candles = _candles([str(100 + i) for i in range(6)])
