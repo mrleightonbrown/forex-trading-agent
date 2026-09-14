@@ -52,6 +52,15 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
       `exit_price` (FX-2, not reimplemented). `pnl` is a raw price delta
       per unit of base-currency notional — no position sizing (Risk
       Engine territory, not decided yet).
+    - ~~FX-11H: backtest correctness hardening~~ — complete. Fixed a real
+      look-ahead-adjacent bug ChatGPT's review caught: `simulate_trades`
+      was executing at the *same* candle's close that generated the
+      signal — unrealistic, since that price is only known once the
+      candle has already closed. Now executes at the *next* candle's open.
+      Also added defensive input validation `simulate_trades` was missing,
+      an instrument-mismatch guard on `run_backtest`, and an
+      instrument-mismatch guard on `find_gaps`. See `docs/DECISIONS.md`
+      for the full reasoning.
 11. Regime detection.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live

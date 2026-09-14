@@ -21,10 +21,11 @@ def run_backtest(strategy: Strategy, candles: list[Candle]) -> list[TradeHypothe
     naming convention.
 
     Raises `ValueError` if the candles span more than one instrument or
-    granularity, aren't strictly ascending by `start_time`, or if a
-    returned hypothesis isn't timestamped at the current bar's
-    `start_time` (a strategy fabricating a hypothesis outside the window it
-    was actually shown is itself a look-ahead bug).
+    granularity, aren't strictly ascending by `start_time`, if a returned
+    hypothesis isn't timestamped at the current bar's `start_time` (a
+    strategy fabricating a hypothesis outside the window it was actually
+    shown is itself a look-ahead bug), or if a returned hypothesis is for a
+    different instrument than the candles being replayed (FX-11H).
 
     Finalized-only enforcement comes from reusing `run_strategy` for each
     step, not a separate check here.
@@ -53,6 +54,11 @@ def run_backtest(strategy: Strategy, candles: list[Candle]) -> list[TradeHypothe
         hypothesis = run_strategy(strategy, candles[: i + 1])
         if hypothesis is None:
             continue
+        if hypothesis.instrument != instrument:
+            raise ValueError(
+                f"strategy hypothesis instrument ({hypothesis.instrument.symbol}) does not "
+                f"match the candle series' instrument ({instrument.symbol})"
+            )
         if hypothesis.generated_at != current_bar.start_time:
             raise ValueError(
                 "strategy hypothesis generated_at "

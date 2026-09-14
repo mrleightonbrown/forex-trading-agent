@@ -71,6 +71,20 @@ class _AlwaysFireStrategy:
         )
 
 
+class _WrongInstrumentStrategy:
+    """Bug: always returns a hypothesis for GBP_USD, regardless of what
+    instrument the candles it was shown actually are."""
+
+    def evaluate(self, candles: list[Candle]) -> TradeHypothesis | None:
+        current = candles[-1]
+        return TradeHypothesis(
+            instrument=GBP_USD,
+            side=TradeSide.LONG,
+            generated_at=current.start_time,
+            rationale="wrong instrument bug",
+        )
+
+
 class _StaleTimestampStrategy:
     """Bug: always timestamps its hypothesis with the very first candle it
     ever saw, not the current bar."""
@@ -152,6 +166,15 @@ def test_rejects_duplicate_start_time() -> None:
 
     with pytest.raises(ValueError, match="ascending"):
         run_backtest(_RecordingStrategy(), candles)
+
+
+def test_rejects_hypothesis_with_wrong_instrument() -> None:
+    """FX-11H (AC5): a strategy evaluating EUR_USD candles must not be able
+    to return a GBP_USD hypothesis."""
+    candles = [_candle(0)]
+
+    with pytest.raises(ValueError, match="instrument"):
+        run_backtest(_WrongInstrumentStrategy(), candles)
 
 
 def test_rejects_hypothesis_with_stale_generated_at() -> None:

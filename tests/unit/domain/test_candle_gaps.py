@@ -11,16 +11,17 @@ from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.timestamps import UtcTimestamp
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
+GBP_USD = Instrument(base_currency="GBP", quote_currency="USD")
 
 
 def _ts(minute: int) -> UtcTimestamp:
     return UtcTimestamp(datetime(2026, 1, 1, 0, minute, 0, tzinfo=UTC))
 
 
-def _m1(minute: int) -> Candle:
+def _m1(minute: int, instrument: Instrument = EUR_USD) -> Candle:
     flat = Ohlc(open=Decimal("1.1"), high=Decimal("1.1"), low=Decimal("1.1"), close=Decimal("1.1"))
     return Candle(
-        instrument=EUR_USD,
+        instrument=instrument,
         granularity=Granularity.M1,
         start_time=_ts(minute),
         bid=flat,
@@ -86,3 +87,12 @@ def test_rejects_candle_with_mismatched_granularity() -> None:
 
     with pytest.raises(ValueError, match="granularity"):
         find_gaps([wrong], Granularity.M1, _ts(0), _ts(5))
+
+
+def test_rejects_mixed_instrument_candles() -> None:
+    # FX-11H (AC8): a GBP/USD candle at minute 1 must not be able to fill
+    # EUR/USD's expected slot at minute 1 and hide a real gap.
+    candles = [_m1(0), _m1(1, instrument=GBP_USD), _m1(2)]
+
+    with pytest.raises(ValueError, match="instrument"):
+        find_gaps(candles, Granularity.M1, _ts(0), _ts(3))

@@ -21,15 +21,22 @@ def find_gaps(
     """Expected candle start times within [start, end) at `granularity`'s
     fixed duration that are *not* present in `candles`, sorted ascending.
 
-    `candles` need not already be filtered to one instrument — this
-    function only looks at `start_time`. Raises `ValueError` if any candle
-    doesn't match `granularity`.
+    `candles` must all belong to one instrument — FX-11H: a candle from a
+    different instrument must never be able to fill another instrument's
+    expected slot. Raises `ValueError` if any candle doesn't match
+    `granularity`, or if the candles span more than one instrument.
     """
+    instrument = candles[0].instrument if candles else None
     for candle in candles:
         if candle.granularity != granularity:
             raise ValueError(
                 f"candle at {candle.start_time.value.isoformat()} has granularity "
                 f"{candle.granularity.value}, expected {granularity.value}"
+            )
+        if candle.instrument != instrument:
+            raise ValueError(
+                "all candles must belong to one instrument; found "
+                f"{candle.instrument.symbol} and {instrument.symbol if instrument else '?'}"
             )
 
     present = {candle.start_time for candle in candles}

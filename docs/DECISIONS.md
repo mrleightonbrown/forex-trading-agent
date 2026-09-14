@@ -353,3 +353,60 @@ concern that doesn't exist yet; not invented here to fill the gap.
 correctly-sided price rather than reimplementing that rule — prices come
 from each hypothesis's matching candle's `bid.close`/`ask.close`
 (matched via FX-10's `generated_at == candle.start_time` invariant).
+
+## 2026-09-13 — FX-11H: backtest correctness hardening (external review)
+
+An external review (ChatGPT, given the FX-10/FX-11 code) caught a real
+bug and several missing defensive checks. Worth recording where it came
+from: this wasn't found by our own tests, which is exactly why the fix
+matters.
+
+**The bug:** `simulate_trades` was executing a hypothesis at the *same*
+candle's close that generated it. A hypothesis generated from bar N's
+finalized close is only known once bar N has already closed — by
+definition, that price is already in the past by the time the decision
+exists. Executing at bar N's own close let a strategy "trade on a price
+it had already seen close," not a realistic fill. This is look-ahead-bias
+adjacent, even though FX-10's own `run_backtest` walk-forward loop was
+never violated (the strategy genuinely never saw future *candles* — the
+bug was in when the resulting *trade* could realistically fill, one layer
+downstream).
+
+**Fix:** `simulate_trades` now executes at the *first* price of bar N+1 —
+`ask.open` for a long entry, `bid.open` for a short entry (and the same
+values, reused, for a reversal's close-then-reopen at bar N+1). A
+hypothesis generated on the final candle in the dataset has no N+1 to
+execute from and is not actionable at all — no fill is invented for it;
+any already-open position simply carries through unaffected to the
+end-of-dataset close.
+
+**End-of-dataset close, decided and documented explicitly:** a position
+still open when the hypothesis list ends is force-closed using the
+*last* candle's **close** (not a next-bar open, since none exists beyond
+the end of the dataset — there's no more realistic price available).
+This is the one place a close price is still used for execution, and
+it's a deliberate, unavoidable exception, not an oversight.
+
+**Also fixed — defensive validation gaps:**
+- `run_backtest` now rejects a hypothesis whose `instrument` doesn't
+  match the candles being replayed (previously unchecked — a buggy
+  strategy could silently return a hypothesis for the wrong pair).
+- `simulate_trades` now validates its own inputs (mixed instrument/
+  granularity, non-ascending or duplicate candle timestamps,
+  non-finalized candles, out-of-order or duplicate hypothesis
+  timestamps, hypothesis/candle instrument mismatch, and a hypothesis
+  timestamp with no matching candle) instead of assuming it's only ever
+  called with `run_backtest`'s own well-formed output — it's a public
+  domain function, callable directly with hand-built data.
+- `find_gaps` now rejects candles spanning more than one instrument.
+  Previously, `present = {candle.start_time for candle in candles}` was
+  built purely from timestamps with no instrument check — a candle from
+  a *different* instrument at the right timestamp could silently mask a
+  real gap in the one being checked.
+
+**Nothing about FX-10/FX-11's core design changed**: still domain-only
+(no infrastructure/FastAPI/SQLAlchemy dependency), still the
+close-and-reverse exit rule, still `pnl` as a per-unit price delta, still
+no position sizing/concrete strategies/regime detection — all of that
+remains exactly as decided. This story only corrected execution timing
+and added missing input validation.
