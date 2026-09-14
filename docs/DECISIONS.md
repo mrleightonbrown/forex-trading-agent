@@ -570,3 +570,44 @@ needed no `# type: ignore` in its test — mypy's static type system
 accepts `bool` wherever `int` is expected (that's exactly the dynamic gap
 being guarded against; the static type system doesn't see it as a gap at
 all).
+
+## 2026-09-14 — Deferred: regime detection beyond trend/range (roadmap only, nothing built)
+
+FX-12/FX-12H built exactly one regime axis: `TrendRegime` (`TRENDING`/
+`RANGING`) via ADX. ChatGPT's review of that work gave two *different*
+lists worth keeping distinct, since they don't map onto each other:
+
+**What ADX itself does not tell you** (a caveat, not a roadmap): trend
+*direction*, volatility regime, risk-on/risk-off, event regime, liquidity
+regime. ADX measures trend *strength* only.
+
+**Independent dimensions actually proposed as a future roadmap** — only
+four, not the same four as above:
+- Trend: `TRENDING`/`RANGING` — done (FX-12).
+- Trend direction: `UP`/`DOWN`/`NEUTRAL` — not built.
+- Volatility: `LOW`/`NORMAL`/`HIGH` — not built.
+- Event state: `NORMAL`/`EVENT_RISK` — not built.
+
+Explicitly **not implemented, and not on this roadmap either** —
+mentioned only in the caveat list above, not proposed as something to
+build: risk-on/risk-off, liquidity regime.
+
+**Decision: none of this is built now.** Two of the four roadmap
+dimensions (trend direction, volatility) are deterministic technical
+indicators computable from candles already stored — same category as
+`classify_regime` itself, genuinely in current-phase scope whenever
+picked up. The other two (event state, and the caveat-list's
+risk-on/risk-off and liquidity regime) depend on data nothing in this
+repo ingests yet — an economic calendar, cross-asset/macro data,
+order-book depth — and map to epics explicitly outside the current
+M0–M4 phase (Economic Event Risk, News Intelligence, Signal Source
+Intelligence). CLAUDE.md: don't start those until assigned.
+
+**Design intent already in place for when this is picked up:** keep each
+dimension an independent, separately-classified value (as `TrendRegime`
+already is) rather than merging them into one combinatorial enum like
+`HIGH_VOL_BEAR_TREND_EVENT_RISK` — the current narrow, single-axis design
+leaves room for that without any rework.
+
+Recording this here specifically so it doesn't get lost — this entry
+exists to be found later, not to be acted on now.
