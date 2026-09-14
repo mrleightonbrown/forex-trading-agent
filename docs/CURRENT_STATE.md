@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-11H)_
+_Last updated: 2026-09-13 (FX-12)_
 
 ## What exists
 
@@ -109,12 +109,27 @@ _Last updated: 2026-09-13 (FX-11H)_
   timestamps, non-finalized candles, out-of-order/duplicate hypothesis
   timestamps, hypothesis/candle instrument mismatches, and a hypothesis
   timestamp with no matching candle — rather than assuming it's only
-  ever called with `run_backtest`'s own well-formed output.
+  ever called with `run_backtest`'s own well-formed output. Also rejects
+  a non-empty `hypotheses` list with empty `candles` (FX-11H.1) rather
+  than silently returning `[]`.
+- `candle_series.require_consistent_series` (`forex_agent.domain.
+  candle_series`): the "one instrument, one granularity, strictly
+  ascending `start_time`" validation, extracted (FX-12) from being
+  duplicated across `run_backtest`/`simulate_trades`/`classify_regime`
+  into one shared helper.
+- `TrendRegime` (`TRENDING`/`RANGING`) + `classify_regime`
+  (`forex_agent.domain.regime_detection`): trend-vs-range classification
+  via Wilder's ADX on mid (bid/ask average) OHLC — deterministic
+  technical analysis, no ML. Requires ≥ `2 × period` candles (default
+  period 14, threshold 25 — Wilder's own convention, both configurable).
+  Cross-checked against an independently written reference
+  implementation of the same algorithm, not just qualitative
+  trending/ranging behavior. This closes out CLAUDE.md's current M0–M4
+  phase (items 1–11).
 
 ## What does not exist yet
 
 - Any concrete strategy implementation — the framework only.
-- Regime detection.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

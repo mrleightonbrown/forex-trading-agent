@@ -10,6 +10,7 @@ fine for now, revisit once real strategies exist and it matters).
 """
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_series import require_consistent_series
 from forex_agent.domain.strategy import Strategy, run_strategy
 from forex_agent.domain.trade_hypothesis import TradeHypothesis
 
@@ -33,21 +34,7 @@ def run_backtest(strategy: Strategy, candles: list[Candle]) -> list[TradeHypothe
     if not candles:
         return []
 
-    instrument = candles[0].instrument
-    granularity = candles[0].granularity
-    previous_start_time = None
-    for candle in candles:
-        if candle.instrument != instrument:
-            raise ValueError("all candles must share the same instrument")
-        if candle.granularity != granularity:
-            raise ValueError("all candles must share the same granularity")
-        if previous_start_time is not None and candle.start_time.value <= previous_start_time.value:
-            raise ValueError(
-                "candles must be strictly ascending by start_time; "
-                f"{candle.start_time.value.isoformat()} does not follow "
-                f"{previous_start_time.value.isoformat()}"
-            )
-        previous_start_time = candle.start_time
+    instrument, _granularity = require_consistent_series(candles)
 
     hypotheses: list[TradeHypothesis] = []
     for i, current_bar in enumerate(candles):

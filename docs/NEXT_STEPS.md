@@ -61,10 +61,24 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
       an instrument-mismatch guard on `run_backtest`, and an
       instrument-mismatch guard on `find_gaps`. See `docs/DECISIONS.md`
       for the full reasoning.
-11. Regime detection.
+11. ~~Regime detection~~ — complete (FX-12): `classify_regime(candles) ->
+    TrendRegime` (`TRENDING`/`RANGING`), via Wilder's ADX on mid (bid/ask
+    average) OHLC. Requires ≥ `2 × period` candles. Threshold defaults to
+    25 (Wilder's own convention), both configurable. Cross-checked
+    against an independently written reference implementation of the
+    same algorithm, not just threshold behavior. Extracted the
+    candle-series validation (one instrument, one granularity, strictly
+    ascending) — previously duplicated in `run_backtest` and
+    `simulate_trades` — into `candle_series.require_consistent_series`,
+    now shared by all three.
+
+This closes out CLAUDE.md's current M0–M4 phase (items 1–11).
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
-trading — out of scope until explicitly assigned per CLAUDE.md.
+trading — out of scope until explicitly assigned per CLAUDE.md. The same
+goes for the downstream epics not in this list at all (Decision Engine,
+Risk Engine, Paper Trading Execution, Performance Analytics, Shadow
+Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

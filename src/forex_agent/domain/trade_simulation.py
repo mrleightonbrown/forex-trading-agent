@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_series import require_consistent_series
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.money import Money
 from forex_agent.domain.price import Price
@@ -82,30 +83,15 @@ def simulate_trades(
             )
         return []
 
-    instrument = candles[0].instrument
-    granularity = candles[0].granularity
+    instrument, _granularity = require_consistent_series(candles)
+
     time_to_index: dict[UtcTimestamp, int] = {}
-    previous_candle_time: UtcTimestamp | None = None
     for i, candle in enumerate(candles):
-        if candle.instrument != instrument:
-            raise ValueError("all candles must share the same instrument")
-        if candle.granularity != granularity:
-            raise ValueError("all candles must share the same granularity")
         if not candle.is_finalized:
             raise ValueError(
                 f"candle at {candle.start_time.value.isoformat()} is not finalized; "
                 "backtests must only use finalized candles"
             )
-        if (
-            previous_candle_time is not None
-            and candle.start_time.value <= previous_candle_time.value
-        ):
-            raise ValueError(
-                "candles must be strictly ascending by start_time; "
-                f"{candle.start_time.value.isoformat()} does not follow "
-                f"{previous_candle_time.value.isoformat()}"
-            )
-        previous_candle_time = candle.start_time
         time_to_index[candle.start_time] = i
 
     trades: list[SimulatedTrade] = []

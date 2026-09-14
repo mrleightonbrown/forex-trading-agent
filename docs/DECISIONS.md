@@ -445,3 +445,60 @@ to be combined with timed macro/news events, which have their own
 precise availability times unrelated to any candle boundary. Revisit
 when that work starts; `TradeHypothesis`'s single-timestamp shape is
 correct for now.
+
+## 2026-09-13 — FX-12: regime detection — trending/ranging via ADX
+
+**Decision (all three confirmed with the user before implementing):**
+regime is a single trending-vs-ranging axis (not also a separate
+volatility axis, and not both combined into one story); classification is
+via Wilder's ADX, the standard deterministic technical-analysis measure
+of trend strength — no ML, consistent with the current phase excluding
+AI/ML decision-making; the function classifies a single trailing window
+per call (`classify_regime(candles) -> TrendRegime`), mirroring how
+`Strategy.evaluate` consumes candles, rather than producing a full
+historical series the way `aggregate_candles`/`find_gaps` do.
+
+**Decision: ADX computed from mid prices** (bid/ask average of each OHLC
+point), not one side. Trend/regime is a market-structure question, not an
+execution-price one — picking bid or ask arbitrarily would introduce a
+directional bias with nothing to do with the actual indicator. Confirmed
+with the user before implementing, since it's the first domain code to
+use a mid price at all (everything before this used bid/ask directly, on
+purpose — CLAUDE.md's "backtests must include spread").
+
+**Decision:** binary classification only, per the user's call — `ADX >=
+threshold` (default 25, Wilder's own convention) → `TRENDING`, else
+`RANGING`. No third "developing trend" state, even though traditional ADX
+interpretation sometimes treats 20–25 as ambiguous.
+
+**Verification approach:** rather than trusting a single implementation
+of a nontrivial recursive algorithm (Wilder smoothing has two different-
+looking but algebraically equivalent forms — a sum-based accumulator for
+TR/+DM/-DM, an average-based one for ADX-from-DX — easy to get subtly
+wrong), wrote a second, independent reference implementation of the same
+standard algorithm (float-based, in a scratch script) against a small
+fixed synthetic price series, and asserted the actual Decimal
+implementation agrees with it to the precision the reference supports.
+This is `test_adx_matches_independent_reference_calculation` — it checks
+the arithmetic itself, not just qualitative trending/ranging behavior
+(which the other tests cover separately, since a wrong-but-monotonic ADX
+calculation could still happen to pass a purely qualitative check).
+
+**Also decided:** extracted the "one instrument, one granularity,
+strictly ascending `start_time`" validation — duplicated across
+`run_backtest` (FX-10) and `simulate_trades` (FX-11) — into
+`candle_series.require_consistent_series`, now shared by those two and
+`classify_regime`. Behavior is unchanged for the first two; confirmed by
+their existing test suites passing unmodified against the refactor.
+
+**Requires ≥ `2 × period` candles**, matching exactly what Wilder's
+smoothing needs to produce one real ADX value (`period` bars to seed
+smoothed TR/+DM/-DM, then `period` more DX values to smooth into the
+first ADX) — raises otherwise rather than computing a number on data too
+thin to mean anything.
+
+This closes out CLAUDE.md's current M0–M4 phase (items 1–11). Everything
+downstream (fundamentals, news intelligence, AI decision-making, live
+trading, and epics not in the M0–M4 list at all — Decision Engine, Risk
+Engine, Paper Trading Execution, Performance Analytics, Shadow Trading)
+remains explicitly out of scope until assigned.
