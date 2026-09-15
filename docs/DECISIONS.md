@@ -921,3 +921,56 @@ land on the final candle) rather than needing one specifically
 engineered for it, as FX-15's edge case did — a good sign the rule
 behaves correctly on realistic, not just contrived, data. Also verified
 against live OANDA practice candles.
+
+## 2026-09-15 — FX-17: backtest performance metrics
+
+The scoreboard, sequenced deliberately before more strategies pile up
+with no way to compare them, per the roadmap. `compute_metrics(trades:
+list[SimulatedTrade]) -> BacktestMetrics` in `domain/backtest_metrics.py`.
+
+**Decision: composable, not a grouping engine** — confirmed before
+implementing. `compute_metrics` takes any `list[SimulatedTrade]` and
+reports full stats for exactly that list; it has no concept of
+instruments, timeframes, or regimes. "Long vs short" is filtering by
+`side` and calling twice; the later regime-conditioned-experiments story
+(FX-21) will filter by an external `classify_regime` result and call
+twice, needing zero changes to this function. Verified directly: a test
+computes metrics on a full trade list and again on a `side`-filtered
+subset, confirming the pattern works as intended.
+
+**Decision: Sharpe/Sortino included, explicitly not annualized
+percentage-return ratios** — confirmed before implementing.
+`SimulatedTrade.pnl` is per-unit notional (no position sizing exists
+yet — FX-11's own decision entry), and trades occur at irregular
+intervals with no clean annualization period, so a textbook Sharpe ratio
+isn't achievable honestly right now. Computed instead as
+`mean(trade P&L) / sample_stdev(trade P&L)` (Sharpe) and `mean(trade
+P&L) / downside_deviation(trade P&L)` (Sortino, using 0 as the minimum
+acceptable return) — same formula shape as the real thing, loudly
+documented as a *relative* comparison tool between strategies on the same
+instrument/timeframe, not a directly-comparable industry figure. `None`
+when undefined: Sharpe needs ≥ 2 trades and nonzero variance; Sortino
+needs nonzero downside deviation (mathematically well-defined even at a
+single trade, an intentional asymmetry from Sharpe's ≥2 requirement, not
+an inconsistency — documented in the docstring).
+
+**Decision: `profit_factor` is `None`, not `Decimal('Infinity')`, when
+there are no losing trades** — confirmed before implementing, matching
+this codebase's established preference for explicit `None`/raise over
+sentinel values.
+
+**Also decided:** `total_pnl`/`average_win`/`average_loss`/`expectancy`/
+`max_drawdown` are `Money` (currency-carrying); `win_rate`/
+`profit_factor`/`sharpe`/`sortino` are plain `Decimal` (genuinely
+unitless ratios). `compute_metrics` raises on an empty trade list (a
+report on zero trades is meaningless, not a valid degenerate case) and on
+mixed-currency trades — discovered during testing that `SimulatedTrade`
+itself already enforces `pnl.currency == instrument.quote_currency`, so a
+mixed-currency scenario can only legitimately arise from trades on
+*different* instruments, not a single instrument with an inconsistent
+currency; the test was adjusted to reflect that, not the implementation.
+
+**Verification:** same rigor as ADX/EMA — an independent reference
+calculation (Sharpe, Sortino, max drawdown, and every other field) on a
+fixed hand-picked trade set, cross-checked against the real
+implementation.

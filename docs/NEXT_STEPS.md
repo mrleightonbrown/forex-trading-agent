@@ -111,9 +111,19 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   through `run_backtest` + `simulate_trades` on an engineered series that
   *naturally* (not contrived) exercised FX-11H's final-bar-not-actionable
   rule, and against live OANDA practice candles.
-- Backtest performance metrics → `TargetPosition`/FLAT semantics → Mean
-  Reversion v1 → Volatility Expansion v1 → regime-conditioned experiments
-  → Multi-timeframe Trend v1. None of this is built yet.
+- ~~Backtest performance metrics~~ — complete (FX-17). `compute_metrics(
+  trades) -> BacktestMetrics` (`domain/backtest_metrics.py`): trade/win/
+  loss/breakeven counts, win rate, average win/loss, expectancy, profit
+  factor, total P&L, max drawdown, Sharpe/Sortino (explicitly *not*
+  annualized percentage-return ratios — per-unit `Money` P&L only, no
+  position sizing yet). Deliberately composable, not a grouping engine:
+  segmentation (long vs short, year/quarter, later trending vs ranging)
+  is filtering the trade list before calling, not a feature of the
+  function itself. Verified against an independent reference calculation
+  for every field, including Sharpe/Sortino/max-drawdown.
+- `TargetPosition`/FLAT semantics → Mean Reversion v1 → Volatility
+  Expansion v1 → regime-conditioned experiments → Multi-timeframe Trend
+  v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

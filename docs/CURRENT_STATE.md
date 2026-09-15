@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-16)_
+_Last updated: 2026-09-15 (FX-17)_
 
 ## What exists
 
@@ -121,6 +121,17 @@ _Last updated: 2026-09-15 (FX-16)_
   final-bar-not-actionable rule — the series' last hypothesis lands on
   the final candle and is correctly dropped — and against live OANDA
   practice candles.
+- `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
+  backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
+  average win/loss, expectancy, profit factor, total P&L, max drawdown,
+  Sharpe/Sortino. Sharpe/Sortino are explicitly *not* annualized
+  percentage-return ratios — computed on raw per-trade `Money` P&L (no
+  position sizing exists yet), useful only for relative comparison
+  between strategies on the same instrument/timeframe. Deliberately
+  composable: no grouping/segmentation built in — "long vs short" etc. is
+  filtering the trade list before calling `compute_metrics`, not a
+  feature of the function itself. Verified against an independent
+  reference calculation for every field.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead
@@ -175,9 +186,8 @@ _Last updated: 2026-09-15 (FX-16)_
   `CloseChannelBreakoutStrategy`, and `TimeSeriesMomentumStrategy` — the
   rest of the roadmap (Mean Reversion, Volatility Expansion,
   Multi-timeframe Trend) is not built yet.
-- Backtest performance metrics — no way yet to measure whether a
-  strategy's output is actually good (win rate, expectancy, Sharpe,
-  etc.), only to produce simulated trades.
+- `TargetPosition`/FLAT semantics — `Mean Reversion v1` needs to explicitly
+  exit rather than wait for the opposite extreme; not built yet.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.
