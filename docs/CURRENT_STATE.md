@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-21H.1)_
+_Last updated: 2026-09-15 (FX-22)_
 
 ## What exists
 
@@ -183,6 +183,21 @@ _Last updated: 2026-09-15 (FX-21H.1)_
   `tests/replay/test_ema_regime_conditioned.py` (a live-OANDA test
   asserting only structural properties, never a specific winner) to
   produce a real empirical finding, recorded in `docs/DECISIONS.md`.
+- `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
+  `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
+  `strategy_key`s `always_long_v1`/`always_short_v1`/
+  `previous_bar_direction_v1`/`no_trade_v1`, FX-22) — control strategies,
+  not trading ideas: a no-skill scoreboard every real strategy's
+  `compute_metrics` output gets compared against on the same sample.
+  Grouped in one file, a deliberate departure from every other
+  strategy's one-file-per-strategy convention, since these are a
+  matched baseline set. Always-long/always-short combine with FX-11's
+  same-direction-no-op rule to become genuine buy-and-hold/sell-and-hold
+  baselines (verified: firing every bar still produces exactly one
+  trade). `PreviousBarDirectionStrategy` has no lookback or threshold
+  (deliberately simpler than FX-16's momentum strategy). `NoTradeStrategy`
+  always returns `None` — `compute_metrics` can't even be called on zero
+  trades, which is the point.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,
@@ -256,19 +271,16 @@ _Last updated: 2026-09-15 (FX-21H.1)_
 
 ## What does not exist yet
 
-- Any strategy besides `EmaCrossoverStrategy`,
+- Any directional strategy besides `EmaCrossoverStrategy`,
   `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`,
   `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
-  Multi-timeframe Trend v1 is not built yet (blocked on H4
-  candle-alignment reconciliation).
-- Control strategies (always-long, always-short, previous-bar-direction,
-  no-trade) — a no-skill baseline for judging whether any strategy's
-  metrics reflect real skill vs. sample noise. Flagged, undated; not a
-  prerequisite for anything built so far. A Mean-Reversion-vs-RANGING
-  entry-regime-attribution experiment (FX-21's own follow-up, same shape
-  as the EMA one already done) is similarly flagged and undated. True
-  regime-*gating* (an entry filter that changes which trades occur,
-  distinct from attribution) is also unbuilt — see FX-21H's entry in
+  Multi-timeframe Trend v1 (`FX-25`) is not built yet (blocked on H4
+  candle-alignment reconciliation, `FX-24`).
+- A Mean-Reversion-vs-RANGING entry-regime-attribution experiment
+  (`FX-23`, same shape as the EMA one already done via
+  `segment_trades_by_regime`) — flagged, undated. True regime-*gating*
+  (an entry filter that changes which trades occur, distinct from
+  attribution) is also unbuilt — see FX-21H's entry in
   `docs/DECISIONS.md`.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine

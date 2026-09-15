@@ -180,10 +180,22 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   at `0`); `compute_metrics` requires one `instrument`, not merely one
   P&L currency (`EUR_USD` + `GBP_USD`, both USD-quoted, previously
   passed unflagged despite being genuinely different instruments).
-- Control strategies, Mean-Reversion-vs-RANGING attribution, then
-  Multi-timeframe Trend v1 (as `FX-22` candle-alignment/OANDA H4
-  reconciliation followed by `FX-23`) — sequenced per the same external
-  review. None of this is built yet.
+- ~~Control strategies~~ — complete (FX-22). `AlwaysLongStrategy`/
+  `AlwaysShortStrategy`/`PreviousBarDirectionStrategy`/`NoTradeStrategy`
+  (`domain/strategies/control.py`, one file for all four — a matched
+  baseline set, not independent trading ideas). Always-long/always-short
+  verified to be genuine buy-and-hold/sell-and-hold baselines (one held
+  trade despite firing every bar); previous-bar-direction verified
+  through an engineered flip-flop series; no-trade verified to produce
+  zero hypotheses always. All four run through the unmodified
+  `run_backtest`/`simulate_trades`/`compute_metrics` pipeline, and
+  against live OANDA practice candles.
+- Mean-Reversion-vs-RANGING entry-regime attribution (`FX-23`), then
+  candle-alignment/OANDA H4 reconciliation (`FX-24`) followed by
+  Multi-timeframe Trend v1 (`FX-25`) — sequenced per the same external
+  review that produced FX-21H (renumbered from that review's original
+  FX-22/FX-23 suggestion to keep FX-N matching actual build order — see
+  FX-22's entry in `docs/DECISIONS.md`). None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

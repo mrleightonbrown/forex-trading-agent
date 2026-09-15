@@ -1317,3 +1317,63 @@ previously-unguarded same-currency/different-instrument case
 **Verification:** 3 new/updated tests (443 total, up from 440), each
 new fix verified to have 100% branch coverage from its own test.
 Full suite, live integration tests, and pre-commit all passed.
+
+## 2026-09-15 — FX-22: control strategies
+
+**Renumbering note:** the external review that produced FX-21H/FX-21H.1
+proposed calling the candle-alignment story `FX-22` and multi-timeframe
+`FX-23`. Renumbered sequentially instead, matching this project's
+existing convention of FX-N always reflecting actual build order:
+control strategies is `FX-22`, Mean-Reversion-vs-RANGING attribution
+(next) is `FX-23`, candle alignment becomes `FX-24`, multi-timeframe
+becomes `FX-25`.
+
+Four minimal `Strategy` implementations in one file,
+`domain/strategies/control.py` — `AlwaysLongStrategy`
+(`always_long_v1`), `AlwaysShortStrategy` (`always_short_v1`),
+`PreviousBarDirectionStrategy` (`previous_bar_direction_v1`),
+`NoTradeStrategy` (`no_trade_v1`). Not trading ideas: a no-skill
+scoreboard every real strategy's `compute_metrics` output should be
+compared against on the same sample, per the roadmap's own original
+flag — without them, a modestly positive Sharpe can't be distinguished
+from sample drift.
+
+**Decision: one file, not four** — a deliberate departure from every
+prior strategy's one-file-per-strategy convention (EMA, close-channel,
+momentum, mean reversion, volatility expansion each got their own
+file). These four are explicitly a matched baseline *set*, not
+independently evolving trading ideas, and each is only a few lines;
+grouping them keeps the shared rationale in one place instead of
+repeated four times.
+
+**Decision: always-long/always-short are genuine buy-and-hold
+baselines, not degenerate repeated no-ops** — confirmed via
+`run_backtest` + `simulate_trades`, not assumed: firing the same
+direction every single bar combines with FX-11's existing same-
+direction-no-op rule to open exactly one position that holds to the
+end of the dataset (verified: 5 identical-direction hypotheses produce
+exactly 1 trade). This is what makes them useful baselines — a
+strategy that can't beat trivially holding a directional bet the whole
+period isn't adding value.
+
+**Decision: `PreviousBarDirectionStrategy` has no lookback or
+threshold** — deliberately distinct from `TimeSeriesMomentumStrategy`
+(FX-16), which already occupies the "N-bar return vs. threshold" design
+space. This is the simplest possible directional baseline: did the
+last completed bar close up or down. Verified through the full pipeline
+on an engineered up/down/up/down/flat series, producing the expected
+4-trade flip-flop sequence with hand-traced execution prices.
+
+**Decision: `NoTradeStrategy` always returns `None`, and
+`compute_metrics` can't even be called on its output** (it raises on
+an empty trade list, per FX-17) — deliberately not special-cased to
+report zero metrics. A real strategy must clear that bar (produce at
+least one trade) just to be comparable at all; that friction is itself
+part of the baseline's value, not a gap to paper over.
+
+**Verification:** one consolidated live integration test
+(`tests/integration/test_control_strategies_live.py`) covering all
+four against real OANDA candles, rather than four near-duplicate live
+files — none of the four have numerical logic worth a dedicated
+live-data check beyond confirming they run cleanly and produce
+well-formed output. Full suite (459 tests) passed.
