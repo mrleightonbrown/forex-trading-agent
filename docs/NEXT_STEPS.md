@@ -92,10 +92,20 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   independent reference EMA calculation, through `run_backtest` +
   `simulate_trades` on an engineered synthetic series with hand-verified
   execution prices, and against live OANDA practice candles.
-- Close-Channel Breakout v1 → Time-Series Momentum v1 → backtest
-  performance metrics → `TargetPosition`/FLAT semantics → Mean Reversion
-  v1 → Volatility Expansion v1 → regime-conditioned experiments →
-  Multi-timeframe Trend v1. None of this is built yet.
+- ~~Close-Channel Breakout v1 (`close_channel_breakout_v1`)~~ — complete
+  (FX-15). `CloseChannelBreakoutStrategy` (`domain/strategies/
+  close_channel_breakout.py`): LONG when close exceeds the highest close
+  of the `lookback` bars strictly before it, SHORT when below the lowest
+  — close-based, not high/low, same FX-12H reasoning as before. Fires
+  every qualifying bar (not edge-only); FX-11's same-direction no-op
+  already absorbs repeats safely. Verified through `run_backtest` +
+  `simulate_trades` on an engineered series with hand-traced prices
+  (including a same-candle entry/force-close edge case), and against
+  live OANDA practice candles.
+- Time-Series Momentum v1 → backtest performance metrics →
+  `TargetPosition`/FLAT semantics → Mean Reversion v1 → Volatility
+  Expansion v1 → regime-conditioned experiments → Multi-timeframe Trend
+  v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

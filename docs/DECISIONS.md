@@ -835,3 +835,54 @@ the same discipline as `classify_regime` (FX-12H.1) — `int`, not `bool`,
 constant (identifies the algorithm, independent of instance parameters);
 `strategy_version` defaults to `"1"`; `parameters` embeds the actual
 periods used via FX-13's `params_from_dict`.
+
+## 2026-09-15 — FX-15: Close-Channel Breakout v1 (`close_channel_breakout_v1`)
+
+The second concrete `Strategy`, implemented per spec: LONG when the
+current close exceeds the highest close of the `lookback` (default 20)
+bars strictly before it, SHORT when below the lowest. Lives in
+`domain/strategies/close_channel_breakout.py`.
+
+**Decision: deliberately close-based, not high/low.** Directly applies
+FX-12H's finding forward: our synthetic bid/ask-averaged highs/lows are
+an approximation (the two sides' period extrema can occur at different
+instants), while bid-close and ask-close are the same instant and
+average cleanly. A true high/low Donchian channel becomes testable once
+real provider mid OHLC is stored — still deferred.
+
+**Decision: `close_channel_breakout_v1`, not `donchian_breakout_v1`** —
+confirmed before implementing. "Donchian" conventionally means high/low
+channels; naming this close-based variant something distinct avoids
+confusion with the true high/low version planned for later.
+
+**Decision: current bar excluded from its own channel** — confirmed
+before implementing. The window is the `lookback` closes strictly before
+the current one; the current close is never part of computing the
+channel it's tested against (the standard Donchian definition — a bar
+can't break out of a channel it contributed to).
+
+**Decision: fires every qualifying bar, not just the breakout moment** —
+confirmed before implementing, and a deliberate difference from EMA
+crossover. Unlike EMA (which is inherently an edge-detection signal — a
+crossing either happened on this bar or it didn't), "current close vs.
+rolling max/min" is re-evaluated fresh each bar with no edge-detection
+concept in the spec, so re-firing while price stays beyond the channel
+is the literal, correct behavior, not an oversight. No duplicate-position
+risk: FX-11's same-direction-repeat-is-a-no-op already absorbs this
+safely — verified directly in the integration test (a repeat LONG and a
+repeat SHORT both appear in `run_backtest`'s output, and `simulate_trades`
+correctly produces only 2 trades from the 4 hypotheses, not 4).
+
+**Verification, same standard as EMA:** hand-traced an engineered price
+series through `evaluate()` directly, then `run_backtest`, then
+`simulate_trades`, with hand-computed expected prices at each stage —
+including an edge case the trace surfaced: when a position enters on the
+series' second-to-last bar's signal and there are no further hypotheses,
+the resulting execution candle (the last one) is also the candle used for
+the end-of-dataset force-close, so `entry_time == exit_time` on that
+trade. Confirmed this is correct, expected behavior (SimulatedTrade's own
+validation already permits equal entry/exit time), not a bug.
+
+**Also decided:** constructor validates `lookback` with the same
+discipline as every other parameterized indicator in this codebase now
+(`classify_regime`, `EmaCrossoverStrategy`) — `int`, not `bool`, `>= 1`.

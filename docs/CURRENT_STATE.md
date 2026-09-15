@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-14)_
+_Last updated: 2026-09-15 (FX-15)_
 
 ## What exists
 
@@ -97,6 +97,18 @@ _Last updated: 2026-09-15 (FX-14)_
   EMA calculation (same rigor as ADX), through `run_backtest` +
   `simulate_trades` on an engineered synthetic series with hand-verified
   execution prices, and against live OANDA practice candles.
+- `CloseChannelBreakoutStrategy` (`forex_agent.domain.strategies.
+  close_channel_breakout`, `strategy_key="close_channel_breakout_v1"`) —
+  the second concrete `Strategy` (FX-15). LONG when the current close
+  exceeds the highest close of the `lookback` bars strictly before it,
+  SHORT when below the lowest — close-based, not high/low (FX-12H's
+  synthetic-midpoint-extrema caveat applies to highs/lows, not closes).
+  Fires every qualifying bar, not just the first breakout — FX-11's
+  same-direction no-op absorbs repeats safely, so no edge-detection logic
+  was needed. Verified the same way as EMA: through `run_backtest` +
+  `simulate_trades` on an engineered series with hand-traced prices
+  (including an edge case where entry and end-of-data force-close land on
+  the same final candle), and against live OANDA practice candles.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead
@@ -147,9 +159,10 @@ _Last updated: 2026-09-15 (FX-14)_
 
 ## What does not exist yet
 
-- Any strategy besides `EmaCrossoverStrategy` — the rest of the roadmap
-  (Close-Channel Breakout, Time-Series Momentum, Mean Reversion,
-  Volatility Expansion, Multi-timeframe Trend) is not built yet.
+- Any strategy besides `EmaCrossoverStrategy` and
+  `CloseChannelBreakoutStrategy` — the rest of the roadmap (Time-Series
+  Momentum, Mean Reversion, Volatility Expansion, Multi-timeframe Trend)
+  is not built yet.
 - Backtest performance metrics — no way yet to measure whether a
   strategy's output is actually good (win rate, expectancy, Sharpe,
   etc.), only to produce simulated trades.
