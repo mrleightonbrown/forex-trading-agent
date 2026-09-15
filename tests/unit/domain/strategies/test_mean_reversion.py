@@ -109,6 +109,13 @@ def test_rejects_negative_entry_threshold() -> None:
         MeanReversionStrategy(entry_threshold=Decimal("-0.01"))
 
 
+def test_rejects_entry_threshold_at_zero() -> None:
+    # FX-21H.1: at 0, the FLAT zero-crossing branch becomes unreachable
+    # -- entry_threshold must be strictly positive, not merely non-negative.
+    with pytest.raises(ValueError, match="entry_threshold"):
+        MeanReversionStrategy(entry_threshold=Decimal("0"))
+
+
 # --- evaluate() ---------------------------------------------------------
 
 

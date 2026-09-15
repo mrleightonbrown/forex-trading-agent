@@ -172,14 +172,14 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   rather than assumed. Mean-Reversion-vs-RANGING attribution, true
   regime-gating, and control strategies all remain separate, undated
   follow-ups.
-- Small strategy-suite hardening batch (flagged by the same external
-  review that produced FX-21H): `run_backtest` doesn't validate
-  `hypothesis.timeframe` against the candle series' actual granularity;
-  `MeanReversionStrategy` accepts `entry_threshold=0`, which silently
-  makes its FLAT crossing branch unreachable; `compute_metrics` checks
-  P&L currency but not instrument, so different same-currency
-  instruments (e.g. EUR_USD and GBP_USD) can currently be mixed. Not
-  built yet.
+- ~~Small strategy-suite hardening batch~~ — complete (FX-21H.1).
+  `run_backtest` now validates `hypothesis.timeframe` against the candle
+  series' granularity (FX-13's provenance is now structural, not
+  advisory); `MeanReversionStrategy.entry_threshold` must be strictly
+  positive (was `>= 0`, which made the FLAT crossing branch unreachable
+  at `0`); `compute_metrics` requires one `instrument`, not merely one
+  P&L currency (`EUR_USD` + `GBP_USD`, both USD-quoted, previously
+  passed unflagged despite being genuinely different instruments).
 - Control strategies, Mean-Reversion-vs-RANGING attribution, then
   Multi-timeframe Trend v1 (as `FX-22` candle-alignment/OANDA H4
   reconciliation followed by `FX-23`) — sequenced per the same external

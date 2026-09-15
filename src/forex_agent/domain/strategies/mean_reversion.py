@@ -51,8 +51,12 @@ class MeanReversionStrategy:
             raise TypeError(
                 f"entry_threshold must be a Decimal, got {type(entry_threshold).__name__}"
             )
-        if entry_threshold < 0:
-            raise ValueError(f"entry_threshold must not be negative, got {entry_threshold}")
+        if entry_threshold <= 0:
+            # At 0, `current_z <= -0` and `current_z >= 0` jointly cover
+            # the entire real line (FX-21H.1) -- the FLAT zero-crossing
+            # branch below becomes unreachable dead code, the opposite
+            # of this strategy's whole point.
+            raise ValueError(f"entry_threshold must be positive, got {entry_threshold}")
         self.period = period
         self.entry_threshold = entry_threshold
         self.strategy_version = strategy_version

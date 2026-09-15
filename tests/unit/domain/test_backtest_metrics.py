@@ -20,6 +20,7 @@ from forex_agent.domain.trade_side import TradeSide
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 GBP_EUR = Instrument(base_currency="GBP", quote_currency="EUR")
+GBP_USD = Instrument(base_currency="GBP", quote_currency="USD")
 
 
 def _ts(minute: int) -> UtcTimestamp:
@@ -54,10 +55,11 @@ def test_rejects_empty_trade_list() -> None:
         compute_metrics([])
 
 
-def test_rejects_mixed_currency_trades() -> None:
+def test_rejects_mixed_instrument_trades_with_different_currency() -> None:
     # SimulatedTrade itself already enforces pnl.currency ==
     # instrument.quote_currency, so a mixed-currency list can only
-    # legitimately arise from trades on different instruments.
+    # legitimately arise from trades on different instruments -- which
+    # the instrument check (FX-21H.1) catches directly.
     gbp_eur_trade = SimulatedTrade(
         instrument=GBP_EUR,
         side=TradeSide.LONG,
@@ -69,7 +71,27 @@ def test_rejects_mixed_currency_trades() -> None:
     )
     trades = [_trade(0, "10"), gbp_eur_trade]
 
-    with pytest.raises(ValueError, match="currency"):
+    with pytest.raises(ValueError, match="instrument"):
+        compute_metrics(trades)
+
+
+def test_rejects_mixed_instrument_trades_with_same_currency() -> None:
+    # FX-21H.1: EUR_USD and GBP_USD are both USD-quoted, so a
+    # currency-only check would have let this through -- pnl is
+    # per-unit notional (no position sizing), so a EUR_USD pip and a
+    # GBP_USD pip aren't economically comparable regardless.
+    gbp_usd_trade = SimulatedTrade(
+        instrument=GBP_USD,
+        side=TradeSide.LONG,
+        entry_price=Decimal("1.25"),
+        entry_time=_ts(1),
+        exit_price=Decimal("1.25"),
+        exit_time=_ts(2),
+        pnl=Money(Decimal("5"), "USD"),
+    )
+    trades = [_trade(0, "10"), gbp_usd_trade]
+
+    with pytest.raises(ValueError, match="instrument"):
         compute_metrics(trades)
 
 

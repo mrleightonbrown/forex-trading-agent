@@ -25,8 +25,11 @@ def run_backtest(strategy: Strategy, candles: list[Candle]) -> list[TradeHypothe
     granularity, aren't strictly ascending by `start_time`, if a returned
     hypothesis isn't timestamped at the current bar's `start_time` (a
     strategy fabricating a hypothesis outside the window it was actually
-    shown is itself a look-ahead bug), or if a returned hypothesis is for a
-    different instrument than the candles being replayed (FX-11H).
+    shown is itself a look-ahead bug), if a returned hypothesis is for a
+    different instrument than the candles being replayed (FX-11H), or if
+    a returned hypothesis's `timeframe` doesn't match the candles'
+    granularity (FX-21H.1) — `TradeHypothesis.timeframe` (FX-13) is
+    provenance that must be structurally true, not merely advisory.
 
     Finalized-only enforcement comes from reusing `run_strategy` for each
     step, not a separate check here.
@@ -51,6 +54,11 @@ def run_backtest(strategy: Strategy, candles: list[Candle]) -> list[TradeHypothe
                 "strategy hypothesis generated_at "
                 f"({hypothesis.generated_at.value.isoformat()}) must equal the current "
                 f"bar's start_time ({current_bar.start_time.value.isoformat()})"
+            )
+        if hypothesis.timeframe != current_bar.granularity:
+            raise ValueError(
+                f"strategy hypothesis timeframe ({hypothesis.timeframe}) does not match "
+                f"the candle series' granularity ({current_bar.granularity})"
             )
         hypotheses.append(hypothesis)
 

@@ -1276,3 +1276,44 @@ history once candle-backfill pagination exists.
 
 **Verification:** full suite (440 tests, one new regression test) and
 the live replay test all passed.
+
+## 2026-09-15 — FX-21H.1: strategy-suite hardening batch
+
+Three small, independent validation gaps flagged by the same external
+review that produced FX-21H — bundled into one story since none is
+individually large enough to warrant its own (same precedent as FX-11H
+bundling multiple validation additions across `run_backtest` and
+`find_gaps`).
+
+**1. `run_backtest` now validates `hypothesis.timeframe` against the
+candle series' granularity**, alongside its existing instrument/
+`generated_at` checks. `TradeHypothesis.timeframe` (FX-13) was
+provenance in name only until now — a strategy claiming `H4` while
+being fed `M1` candles previously passed through undetected.
+
+**2. `MeanReversionStrategy.entry_threshold` must be `> 0`, not `>=
+0`.** At `0`, `current_z <= -0` and `current_z >= 0` jointly cover the
+entire real line, making the FLAT zero-crossing branch (the whole
+reason this strategy exists — see FX-19) unreachable dead code. No
+existing test exercised `entry_threshold=0`, so nothing else changed.
+
+**3. `compute_metrics` now requires one `instrument`, not just one P&L
+currency.** `Instrument` is a plain value type and `SimulatedTrade`
+already enforces `pnl.currency == instrument.quote_currency`, so
+requiring one instrument is strictly *stronger* than requiring one
+currency (same instrument implies same currency, always) — the old
+currency-only check is replaced, not kept alongside, since it would
+otherwise be provably unreachable dead code once the instrument check
+exists. Closes a real gap: `EUR_USD` and `GBP_USD` (both USD-quoted)
+previously passed the currency check despite being genuinely different,
+non-comparable per-unit-notional instruments. FX-17's own existing
+mixed-currency test (`GBP_EUR` + `EUR_USD`) still raises, now on
+"instrument" (checked first, since that scenario differs in both) —
+renamed rather than left asserting a message that's no longer the
+actual first reason for rejection; a new test isolates the
+previously-unguarded same-currency/different-instrument case
+(`EUR_USD` + `GBP_USD`).
+
+**Verification:** 3 new/updated tests (443 total, up from 440), each
+new fix verified to have 100% branch coverage from its own test.
+Full suite, live integration tests, and pre-commit all passed.

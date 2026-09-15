@@ -93,6 +93,25 @@ class _WrongInstrumentStrategy:
         )
 
 
+class _WrongTimeframeStrategy:
+    """Bug (FX-21H.1): always claims H4 provenance regardless of the
+    granularity of the candles it was actually shown (M1 in these
+    tests)."""
+
+    def evaluate(self, candles: list[Candle]) -> TradeHypothesis | None:
+        current = candles[-1]
+        return TradeHypothesis(
+            instrument=current.instrument,
+            target_position=TargetPosition.LONG,
+            generated_at=current.start_time,
+            timeframe=Granularity.H4,
+            strategy_key="wrong_timeframe_test_strategy",
+            strategy_version="1",
+            parameters=(),
+            rationale="wrong timeframe bug",
+        )
+
+
 class _StaleTimestampStrategy:
     """Bug: always timestamps its hypothesis with the very first candle it
     ever saw, not the current bar."""
@@ -187,6 +206,15 @@ def test_rejects_hypothesis_with_wrong_instrument() -> None:
 
     with pytest.raises(ValueError, match="instrument"):
         run_backtest(_WrongInstrumentStrategy(), candles)
+
+
+def test_rejects_hypothesis_with_wrong_timeframe() -> None:
+    """FX-21H.1: a strategy evaluating M1 candles must not be able to
+    return an H4-timeframe hypothesis."""
+    candles = [_candle(0)]
+
+    with pytest.raises(ValueError, match="timeframe"):
+        run_backtest(_WrongTimeframeStrategy(), candles)
 
 
 def test_rejects_hypothesis_with_stale_generated_at() -> None:

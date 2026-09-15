@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-21)_
+_Last updated: 2026-09-15 (FX-21H.1)_
 
 ## What exists
 
@@ -138,7 +138,9 @@ _Last updated: 2026-09-15 (FX-21)_
   rolling window includes the current bar (standard Bollinger
   definition, at the cost of a known self-referential-dampening
   trade-off — documented, not treated as a defect); stddev is
-  population, not sample. Verified against an independently hand-derived
+  population, not sample. `entry_threshold` must be strictly positive
+  (FX-21H.1) — at `0` the FLAT zero-crossing branch would be
+  unreachable. Verified against an independently hand-derived
   synthetic series with exact clean z-scores at every relevant bar,
   through `run_backtest` + `simulate_trades` (confirming FLAT-closes-
   without-reopening produces the right trade count end to end), and
@@ -190,16 +192,23 @@ _Last updated: 2026-09-15 (FX-21)_
   between strategies on the same instrument/timeframe. Deliberately
   composable: no grouping/segmentation built in — "long vs short" etc. is
   filtering the trade list before calling `compute_metrics`, not a
-  feature of the function itself. Verified against an independent
+  feature of the function itself. Requires all trades share one
+  `instrument`, not merely one P&L currency (FX-21H.1) — `Instrument`
+  equality already implies currency equality, so this is strictly
+  stronger and catches e.g. `EUR_USD` + `GBP_USD` (both USD-quoted, but
+  not comparable per-unit-notional). Verified against an independent
   reference calculation for every field.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead
   prevention CLAUDE.md requires. Validates one instrument, one
   granularity, strictly ascending timestamps, that every returned
-  hypothesis is timestamped at the current bar, and (FX-11H) that every
-  returned hypothesis is for the same instrument as the candles being
-  replayed. `O(n²)` reslicing, known and accepted for now.
+  hypothesis is timestamped at the current bar, that every returned
+  hypothesis is for the same instrument as the candles being replayed
+  (FX-11H), and that every returned hypothesis's `timeframe` matches the
+  candles' granularity (FX-21H.1) — `TradeHypothesis.timeframe` (FX-13)
+  is now structurally enforced, not advisory. `O(n²)` reslicing, known
+  and accepted for now.
 - `SimulatedTrade` + `simulate_trades` (`forex_agent.domain.
   trade_simulation`): turns a backtest's hypotheses into simulated
   round-trip trades. **Next-bar execution (FX-11H)**: a hypothesis

@@ -8,7 +8,10 @@ any `list[SimulatedTrade]` and reports full stats for exactly that list.
 "trending vs ranging" comparison (regime-conditioned experiments) is
 filtering by an external regime classification and calling this twice;
 year/quarter is filtering by `entry_time`. This function never needs to
-know about instruments, timeframes, or regimes.
+know about timeframes or regimes — it does, however (FX-21H.1), require
+every trade to share one `instrument`: `pnl` is per-unit notional
+(no position sizing yet), so a pip on `EUR_USD` and a pip on `GBP_USD`
+aren't economically comparable even though both happen to be USD-quoted.
 
 `sharpe`/`sortino` are explicitly NOT true annualized percentage-return
 ratios. `SimulatedTrade.pnl` is per-unit notional (no position sizing
@@ -48,18 +51,30 @@ class BacktestMetrics:
 
 def compute_metrics(trades: list[SimulatedTrade]) -> BacktestMetrics:
     """Raises `ValueError` if `trades` is empty (a report on zero trades is
-    meaningless, not a valid degenerate case) or spans more than one P&L
-    currency."""
+    meaningless, not a valid degenerate case) or spans more than one
+    `instrument` (FX-21H.1).
+
+    `instrument`, not merely P&L currency, is the required invariant:
+    `Instrument` is a plain value type, and `SimulatedTrade` already
+    enforces `pnl.currency == instrument.quote_currency`, so one
+    instrument implies one currency automatically — checking currency
+    separately would only ever be reachable in a scenario this
+    invariant already rules out. Two different instruments sharing one
+    quote currency (e.g. `EUR_USD` and `GBP_USD`, both USD) are
+    correctly rejected here even though a currency-only check would
+    have let them through.
+    """
     if not trades:
         raise ValueError("cannot compute metrics for an empty trade list")
 
-    currency = trades[0].pnl.currency
+    instrument = trades[0].instrument
     for trade in trades:
-        if trade.pnl.currency != currency:
+        if trade.instrument != instrument:
             raise ValueError(
-                "all trades must share one P&L currency; found "
-                f"{trade.pnl.currency!r} and {currency!r}"
+                "all trades must share one instrument; found "
+                f"{trade.instrument.symbol!r} and {instrument.symbol!r}"
             )
+    currency = instrument.quote_currency
 
     trade_count = len(trades)
     wins = [t for t in trades if t.pnl.amount > 0]
