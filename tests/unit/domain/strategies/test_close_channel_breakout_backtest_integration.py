@@ -26,6 +26,7 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.strategies.close_channel_breakout import CloseChannelBreakoutStrategy
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_side import TradeSide
 from forex_agent.domain.trade_simulation import simulate_trades
@@ -59,12 +60,12 @@ def test_run_backtest_fires_at_breakout_and_repeat_bars() -> None:
     hypotheses = run_backtest(strategy, candles)
 
     assert len(hypotheses) == 4
-    sides_and_times = [(h.side, h.generated_at) for h in hypotheses]
+    sides_and_times = [(h.target_position, h.generated_at) for h in hypotheses]
     assert sides_and_times == [
-        (TradeSide.LONG, _ts(4)),
-        (TradeSide.LONG, _ts(5)),
-        (TradeSide.SHORT, _ts(6)),
-        (TradeSide.SHORT, _ts(7)),
+        (TargetPosition.LONG, _ts(4)),
+        (TargetPosition.LONG, _ts(5)),
+        (TargetPosition.SHORT, _ts(6)),
+        (TargetPosition.SHORT, _ts(7)),
     ]
 
 

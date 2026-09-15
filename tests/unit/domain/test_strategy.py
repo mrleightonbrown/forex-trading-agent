@@ -8,9 +8,9 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.strategy import run_strategy
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import TradeHypothesis
-from forex_agent.domain.trade_side import TradeSide
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 
@@ -43,7 +43,7 @@ class _FakeStrategy:
 
 _HYPOTHESIS = TradeHypothesis(
     instrument=EUR_USD,
-    side=TradeSide.LONG,
+    target_position=TargetPosition.LONG,
     generated_at=UtcTimestamp(datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)),
     timeframe=Granularity.M1,
     strategy_key="test_strategy",

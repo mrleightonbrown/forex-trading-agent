@@ -20,6 +20,13 @@ A hypothesis generated on the final candle in the dataset cannot execute
 at all — there is no N+1 candle to price it from — and is silently not
 actionable; any already-open position simply carries through to the
 end-of-dataset force-close.
+
+FLAT (FX-18): a third `target_position`, distinct from LONG/SHORT. With
+no open position it is a no-op (nothing to close). With an open position
+it closes it — same next-bar-open execution price as everything else —
+and does NOT open a new position, unlike LONG/SHORT's close-and-reverse.
+A later LONG/SHORT hypothesis after a FLAT close opens fresh, exactly as
+it would from a flat start.
 """
 
 from dataclasses import dataclass
@@ -31,6 +38,7 @@ from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.money import Money
 from forex_agent.domain.price import Price
 from forex_agent.domain.simulated_trade import SimulatedTrade
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import TradeHypothesis
 from forex_agent.domain.trade_side import TradeSide
@@ -133,16 +141,32 @@ def simulate_trades(
         execution_candle = candles[execution_index]
         execution_price = Price(bid=execution_candle.bid.open, ask=execution_candle.ask.open)
 
+        if hypothesis.target_position is TargetPosition.FLAT:
+            if open_position is None:
+                continue  # already flat: no-op, nothing to close
+            trades.append(
+                open_position.close(
+                    exit_price=execution_price.exit_price(open_position.side),
+                    exit_time=execution_candle.start_time,
+                )
+            )
+            open_position = None  # closed, and NOT reopened, unlike LONG/SHORT
+            continue
+
+        side = (
+            TradeSide.LONG if hypothesis.target_position is TargetPosition.LONG else TradeSide.SHORT
+        )
+
         if open_position is None:
             open_position = _OpenPosition(
                 instrument=hypothesis.instrument,
-                side=hypothesis.side,
-                entry_price=execution_price.entry_price(hypothesis.side),
+                side=side,
+                entry_price=execution_price.entry_price(side),
                 entry_time=execution_candle.start_time,
             )
             continue
 
-        if hypothesis.side == open_position.side:
+        if side == open_position.side:
             continue  # same-direction repeat while already in a position: no-op
 
         trades.append(
@@ -153,8 +177,8 @@ def simulate_trades(
         )
         open_position = _OpenPosition(
             instrument=hypothesis.instrument,
-            side=hypothesis.side,
-            entry_price=execution_price.entry_price(hypothesis.side),
+            side=side,
+            entry_price=execution_price.entry_price(side),
             entry_time=execution_candle.start_time,
         )
 

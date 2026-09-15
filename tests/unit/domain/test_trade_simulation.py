@@ -13,6 +13,7 @@ from forex_agent.domain.candle import Candle
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import TradeHypothesis
 from forex_agent.domain.trade_side import TradeSide
@@ -56,10 +57,12 @@ def _flat(minute: int, bid: str, ask: str, **overrides: object) -> Candle:
     return _candle(minute, bid_open=bid, bid_close=bid, ask_open=ask, ask_close=ask, **overrides)  # type: ignore[arg-type]
 
 
-def _hypothesis(minute: int, side: TradeSide, instrument: Instrument = EUR_USD) -> TradeHypothesis:
+def _hypothesis(
+    minute: int, target_position: TargetPosition, instrument: Instrument = EUR_USD
+) -> TradeHypothesis:
     return TradeHypothesis(
         instrument=instrument,
-        side=side,
+        target_position=target_position,
         generated_at=_ts(minute),
         timeframe=Granularity.M1,
         strategy_key="test_strategy",
@@ -83,7 +86,7 @@ def test_rejects_non_empty_hypotheses_when_candles_is_empty() -> None:
     be matched to any execution price — this must raise, not silently
     return an empty trade list that could mask a real caller bug."""
     with pytest.raises(ValueError, match="candles"):
-        simulate_trades([_hypothesis(0, TradeSide.LONG)], [])
+        simulate_trades([_hypothesis(0, TargetPosition.LONG)], [])
 
 
 # --- AC1/AC9: next-bar execution, not the decision bar's own close -----
@@ -94,7 +97,7 @@ def test_long_entry_uses_next_bar_ask_open_not_decision_bar_close() -> None:
         _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
         _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.LONG)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG)]
 
     trades = simulate_trades(hypotheses, candles)
 
@@ -109,7 +112,7 @@ def test_short_entry_uses_next_bar_bid_open_not_decision_bar_close() -> None:
         _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
         _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.SHORT)]
+    hypotheses = [_hypothesis(0, TargetPosition.SHORT)]
 
     trades = simulate_trades(hypotheses, candles)
 
@@ -129,8 +132,8 @@ def test_reversal_closes_and_reopens_at_next_bar_open() -> None:
         _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
     ]
     hypotheses = [
-        _hypothesis(0, TradeSide.LONG),  # executes at bar 1's open
-        _hypothesis(1, TradeSide.SHORT),  # reversal, executes at bar 2's open
+        _hypothesis(0, TargetPosition.LONG),  # executes at bar 1's open
+        _hypothesis(1, TargetPosition.SHORT),  # reversal, executes at bar 2's open
     ]
 
     trades = simulate_trades(hypotheses, candles)
@@ -159,7 +162,7 @@ def test_hypothesis_on_final_bar_produces_no_new_trade() -> None:
         _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
         _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
     ]
-    hypotheses = [_hypothesis(1, TradeSide.LONG)]  # signal on the LAST candle
+    hypotheses = [_hypothesis(1, TargetPosition.LONG)]  # signal on the LAST candle
 
     assert simulate_trades(hypotheses, candles) == []
 
@@ -171,8 +174,8 @@ def test_final_bar_reversal_signal_is_not_actionable() -> None:
         _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
     ]
     hypotheses = [
-        _hypothesis(0, TradeSide.LONG),  # opens at bar 1's open
-        _hypothesis(2, TradeSide.SHORT),  # generated on the final bar: not actionable
+        _hypothesis(0, TargetPosition.LONG),  # opens at bar 1's open
+        _hypothesis(2, TargetPosition.SHORT),  # generated on the final bar: not actionable
     ]
 
     trades = simulate_trades(hypotheses, candles)
@@ -194,7 +197,7 @@ def test_still_open_position_force_closed_at_last_candle_close() -> None:
         _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
         _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.LONG)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG)]
 
     trades = simulate_trades(hypotheses, candles)
 
@@ -210,8 +213,8 @@ def test_same_direction_repeat_is_a_noop() -> None:
         _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
     ]
     hypotheses = [
-        _hypothesis(0, TradeSide.LONG),
-        _hypothesis(1, TradeSide.LONG),  # already long: no-op
+        _hypothesis(0, TargetPosition.LONG),
+        _hypothesis(1, TargetPosition.LONG),  # already long: no-op
     ]
 
     trades = simulate_trades(hypotheses, candles)
@@ -224,6 +227,115 @@ def test_same_direction_repeat_is_a_noop() -> None:
     assert trade.exit_time == _ts(2)
 
 
+# --- FX-18: FLAT semantics -------------------------------------------------
+
+
+def test_flat_with_no_open_position_is_a_noop() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+    ]
+    hypotheses = [_hypothesis(0, TargetPosition.FLAT)]  # never opened anything
+
+    assert simulate_trades(hypotheses, candles) == []
+
+
+def test_flat_closes_open_position_without_reopening() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+        _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
+    ]
+    hypotheses = [
+        _hypothesis(0, TargetPosition.LONG),  # executes at bar 1's open
+        _hypothesis(1, TargetPosition.FLAT),  # closes at bar 2's open, does not reopen
+    ]
+
+    trades = simulate_trades(hypotheses, candles)
+
+    assert len(trades) == 1  # not 2 -- FLAT must not open a new position
+    trade = trades[0]
+    assert trade.side is TradeSide.LONG
+    assert trade.entry_price == Decimal("1.1012")  # bar 1 ask.open
+    assert trade.entry_time == _ts(1)
+    assert trade.exit_price == Decimal("1.1020")  # bar 2 bid.open (LONG exits at bid)
+    assert trade.exit_time == _ts(2)
+
+
+def test_flat_as_first_hypothesis_is_a_noop() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+    ]
+    hypotheses = [_hypothesis(0, TargetPosition.FLAT)]
+
+    assert simulate_trades(hypotheses, candles) == []
+
+
+def test_long_after_flat_close_opens_a_fresh_position() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+        _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
+        _candle(3, bid_open="1.1030", bid_close="1.1035", ask_open="1.1032", ask_close="1.1037"),
+    ]
+    hypotheses = [
+        _hypothesis(0, TargetPosition.LONG),  # opens at bar 1's open
+        _hypothesis(1, TargetPosition.FLAT),  # closes at bar 2's open
+        _hypothesis(2, TargetPosition.LONG),  # opens fresh at bar 3's open
+    ]
+
+    trades = simulate_trades(hypotheses, candles)
+
+    assert len(trades) == 2
+    first, second = trades
+    assert first.exit_price == Decimal("1.1020")  # bar 2 bid.open, from the FLAT close
+    assert first.exit_time == _ts(2)
+    assert second.entry_price == Decimal("1.1032")  # bar 3 ask.open, a genuinely fresh entry
+    assert second.entry_time == _ts(3)
+    # still open at the end -> force-closed at the last candle's close
+    assert second.exit_price == Decimal("1.1035")  # bar 3 (last) bid.close
+    assert second.exit_time == _ts(3)
+
+
+def test_repeated_flat_while_already_flat_is_a_noop() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+        _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
+    ]
+    hypotheses = [
+        _hypothesis(0, TargetPosition.LONG),  # opens at bar 1's open
+        _hypothesis(1, TargetPosition.FLAT),  # closes at bar 2's open
+        _hypothesis(2, TargetPosition.FLAT),  # already flat: no-op, but final bar anyway
+    ]
+
+    trades = simulate_trades(hypotheses, candles)
+
+    assert len(trades) == 1
+    assert trades[0].exit_price == Decimal("1.1020")  # bar 2 bid.open
+
+
+def test_flat_short_position_closes_at_ask() -> None:
+    candles = [
+        _candle(0, bid_open="1.1000", bid_close="1.1005", ask_open="1.1002", ask_close="1.1007"),
+        _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
+        _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
+    ]
+    hypotheses = [
+        _hypothesis(0, TargetPosition.SHORT),  # executes at bar 1's open
+        _hypothesis(1, TargetPosition.FLAT),  # closes at bar 2's open
+    ]
+
+    trades = simulate_trades(hypotheses, candles)
+
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.side is TradeSide.SHORT
+    assert trade.exit_price == Decimal("1.1022")  # bar 2 ask.open (SHORT exits at ask)
+    assert trade.exit_time == _ts(2)
+
+
 # --- AC10: bid/ask-per-side rules preserved ------------------------------
 
 
@@ -233,7 +345,7 @@ def test_short_trade_profits_when_price_falls() -> None:
         _flat(1, "1.1000", "1.1002"),
         _flat(2, "1.0990", "1.0992"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.SHORT)]
+    hypotheses = [_hypothesis(0, TargetPosition.SHORT)]
 
     trades = simulate_trades(hypotheses, candles)
 
@@ -250,7 +362,7 @@ def test_long_trade_loses_when_price_falls() -> None:
         _flat(1, "1.1000", "1.1002"),
         _flat(2, "1.0990", "1.0992"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.LONG)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG)]
 
     trades = simulate_trades(hypotheses, candles)
 
@@ -300,7 +412,7 @@ def test_rejects_non_finalized_candle() -> None:
 
 def test_rejects_out_of_order_hypotheses() -> None:
     candles = [_flat(0, "1.1", "1.1002"), _flat(1, "1.1", "1.1002"), _flat(2, "1.1", "1.1002")]
-    hypotheses = [_hypothesis(1, TradeSide.LONG), _hypothesis(0, TradeSide.SHORT)]
+    hypotheses = [_hypothesis(1, TargetPosition.LONG), _hypothesis(0, TargetPosition.SHORT)]
 
     with pytest.raises(ValueError, match="ascending"):
         simulate_trades(hypotheses, candles)
@@ -308,7 +420,7 @@ def test_rejects_out_of_order_hypotheses() -> None:
 
 def test_rejects_duplicate_hypothesis_timestamps() -> None:
     candles = [_flat(0, "1.1", "1.1002"), _flat(1, "1.1", "1.1002")]
-    hypotheses = [_hypothesis(0, TradeSide.LONG), _hypothesis(0, TradeSide.SHORT)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG), _hypothesis(0, TargetPosition.SHORT)]
 
     with pytest.raises(ValueError, match="ascending"):
         simulate_trades(hypotheses, candles)
@@ -316,7 +428,7 @@ def test_rejects_duplicate_hypothesis_timestamps() -> None:
 
 def test_rejects_hypothesis_instrument_mismatch() -> None:
     candles = [_flat(0, "1.1", "1.1002")]
-    hypotheses = [_hypothesis(0, TradeSide.LONG, instrument=GBP_USD)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG, instrument=GBP_USD)]
 
     with pytest.raises(ValueError, match="instrument"):
         simulate_trades(hypotheses, candles)
@@ -324,7 +436,7 @@ def test_rejects_hypothesis_instrument_mismatch() -> None:
 
 def test_rejects_hypothesis_with_no_matching_candle() -> None:
     candles = [_flat(0, "1.1", "1.1002")]
-    hypotheses = [_hypothesis(5, TradeSide.LONG)]  # no candle at minute 5
+    hypotheses = [_hypothesis(5, TargetPosition.LONG)]  # no candle at minute 5
 
     with pytest.raises(ValueError, match="does not"):
         simulate_trades(hypotheses, candles)
@@ -339,7 +451,7 @@ def test_deterministic_given_identical_input() -> None:
         _candle(1, bid_open="1.1010", bid_close="1.1015", ask_open="1.1012", ask_close="1.1017"),
         _candle(2, bid_open="1.1020", bid_close="1.1025", ask_open="1.1022", ask_close="1.1027"),
     ]
-    hypotheses = [_hypothesis(0, TradeSide.LONG), _hypothesis(1, TradeSide.SHORT)]
+    hypotheses = [_hypothesis(0, TargetPosition.LONG), _hypothesis(1, TargetPosition.SHORT)]
 
     first_run = simulate_trades(hypotheses, candles)
     second_run = simulate_trades(hypotheses, candles)

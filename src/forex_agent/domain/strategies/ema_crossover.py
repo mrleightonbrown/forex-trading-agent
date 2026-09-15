@@ -17,8 +17,8 @@ from decimal import Decimal
 from typing import ClassVar
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.trade_hypothesis import TradeHypothesis, params_from_dict
-from forex_agent.domain.trade_side import TradeSide
 
 
 class EmaCrossoverStrategy:
@@ -57,17 +57,17 @@ class EmaCrossoverStrategy:
         previous_diff = fast_ema[-2] - slow_ema[-2]
 
         if previous_diff <= 0 and current_diff > 0:
-            side = TradeSide.LONG
+            target_position = TargetPosition.LONG
         elif previous_diff >= 0 and current_diff < 0:
-            side = TradeSide.SHORT
+            target_position = TargetPosition.SHORT
         else:
             return None
 
         current_candle = candles[-1]
-        crossed = "above" if side is TradeSide.LONG else "below"
+        crossed = "above" if target_position is TargetPosition.LONG else "below"
         return TradeHypothesis(
             instrument=current_candle.instrument,
-            side=side,
+            target_position=target_position,
             generated_at=current_candle.start_time,
             timeframe=current_candle.granularity,
             strategy_key=self.strategy_key,

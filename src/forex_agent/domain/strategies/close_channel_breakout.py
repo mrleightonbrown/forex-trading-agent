@@ -20,8 +20,8 @@ positions.
 from typing import ClassVar
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.trade_hypothesis import TradeHypothesis, params_from_dict
-from forex_agent.domain.trade_side import TradeSide
 
 
 class CloseChannelBreakoutStrategy:
@@ -46,10 +46,10 @@ class CloseChannelBreakoutStrategy:
         window_min = min(window)
 
         if current > window_max:
-            side = TradeSide.LONG
+            target_position = TargetPosition.LONG
             rationale = f"close {current} broke above {self.lookback}-bar high {window_max}"
         elif current < window_min:
-            side = TradeSide.SHORT
+            target_position = TargetPosition.SHORT
             rationale = f"close {current} broke below {self.lookback}-bar low {window_min}"
         else:
             return None
@@ -57,7 +57,7 @@ class CloseChannelBreakoutStrategy:
         current_candle = candles[-1]
         return TradeHypothesis(
             instrument=current_candle.instrument,
-            side=side,
+            target_position=target_position,
             generated_at=current_candle.start_time,
             timeframe=current_candle.granularity,
             strategy_key=self.strategy_key,

@@ -29,6 +29,7 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.strategies.time_series_momentum import TimeSeriesMomentumStrategy
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_side import TradeSide
 from forex_agent.domain.trade_simulation import simulate_trades
@@ -64,12 +65,12 @@ def test_run_backtest_fires_at_every_qualifying_bar() -> None:
 
     hypotheses = run_backtest(strategy, _make_candles())
 
-    assert [(h.side, h.generated_at) for h in hypotheses] == [
-        (TradeSide.LONG, _ts(4)),
-        (TradeSide.LONG, _ts(5)),
-        (TradeSide.SHORT, _ts(7)),
-        (TradeSide.SHORT, _ts(8)),
-        (TradeSide.SHORT, _ts(9)),
+    assert [(h.target_position, h.generated_at) for h in hypotheses] == [
+        (TargetPosition.LONG, _ts(4)),
+        (TargetPosition.LONG, _ts(5)),
+        (TargetPosition.SHORT, _ts(7)),
+        (TargetPosition.SHORT, _ts(8)),
+        (TargetPosition.SHORT, _ts(9)),
     ]
 
 

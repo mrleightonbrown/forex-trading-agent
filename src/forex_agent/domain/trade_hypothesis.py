@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.domain.trade_side import TradeSide
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +34,14 @@ class TradeHypothesis:
     a `dict` would make this frozen dataclass unhashable, breaking the
     pattern every other domain value object follows. Build it with
     `params_from_dict` rather than hand-writing tuple literals.
+
+    `target_position` (FX-18) is a `TargetPosition` (LONG/SHORT/FLAT), not
+    a `TradeSide` (LONG/SHORT only) — a strategy can ask to be flat, which
+    no execution-side type can express. See `target_position.py`.
     """
 
     instrument: Instrument
-    side: TradeSide
+    target_position: TargetPosition
     generated_at: UtcTimestamp
     timeframe: Granularity
     strategy_key: str
@@ -50,8 +54,11 @@ class TradeHypothesis:
             raise TypeError(
                 f"instrument must be an Instrument, got {type(self.instrument).__name__}"
             )
-        if not isinstance(self.side, TradeSide):
-            raise TypeError(f"side must be a TradeSide, got {type(self.side).__name__}")
+        if not isinstance(self.target_position, TargetPosition):
+            raise TypeError(
+                f"target_position must be a TargetPosition, got "
+                f"{type(self.target_position).__name__}"
+            )
         if not isinstance(self.generated_at, UtcTimestamp):
             raise TypeError(
                 f"generated_at must be a UtcTimestamp, got {type(self.generated_at).__name__}"

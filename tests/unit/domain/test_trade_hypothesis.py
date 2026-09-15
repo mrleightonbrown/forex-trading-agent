@@ -4,9 +4,9 @@ import pytest
 
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import TradeHypothesis, params_from_dict
-from forex_agent.domain.trade_side import TradeSide
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 NOW = UtcTimestamp(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
@@ -15,7 +15,7 @@ NOW = UtcTimestamp(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
 def _hypothesis(**overrides: object) -> TradeHypothesis:
     defaults: dict[str, object] = {
         "instrument": EUR_USD,
-        "side": TradeSide.LONG,
+        "target_position": TargetPosition.LONG,
         "generated_at": NOW,
         "timeframe": Granularity.M1,
         "strategy_key": "ema_crossover_v1",
@@ -31,13 +31,20 @@ def test_valid_trade_hypothesis() -> None:
     hypothesis = _hypothesis()
 
     assert hypothesis.instrument == EUR_USD
-    assert hypothesis.side is TradeSide.LONG
+    assert hypothesis.target_position is TargetPosition.LONG
     assert hypothesis.generated_at == NOW
     assert hypothesis.timeframe is Granularity.M1
     assert hypothesis.strategy_key == "ema_crossover_v1"
     assert hypothesis.strategy_version == "1"
     assert hypothesis.parameters == (("fast_period", "20"), ("slow_period", "50"))
     assert hypothesis.rationale == "fast MA crossed above slow MA"
+
+
+def test_flat_is_a_valid_target_position() -> None:
+    # FX-18: distinct from side's old LONG/SHORT-only range.
+    hypothesis = _hypothesis(target_position=TargetPosition.FLAT)
+
+    assert hypothesis.target_position is TargetPosition.FLAT
 
 
 def test_is_hashable() -> None:
@@ -51,9 +58,9 @@ def test_rejects_wrong_type_for_instrument() -> None:
         _hypothesis(instrument="EUR_USD")
 
 
-def test_rejects_wrong_type_for_side() -> None:
-    with pytest.raises(TypeError, match="side"):
-        _hypothesis(side="LONG")
+def test_rejects_wrong_type_for_target_position() -> None:
+    with pytest.raises(TypeError, match="target_position"):
+        _hypothesis(target_position="LONG")
 
 
 def test_rejects_wrong_type_for_generated_at() -> None:

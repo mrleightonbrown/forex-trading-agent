@@ -22,8 +22,8 @@ from decimal import Decimal
 from typing import ClassVar
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.trade_hypothesis import TradeHypothesis, params_from_dict
-from forex_agent.domain.trade_side import TradeSide
 
 
 class TimeSeriesMomentumStrategy:
@@ -57,16 +57,16 @@ class TimeSeriesMomentumStrategy:
         n_bar_return = current_close / prior_close - 1
 
         if n_bar_return > self.threshold:
-            side = TradeSide.LONG
+            target_position = TargetPosition.LONG
         elif n_bar_return < -self.threshold:
-            side = TradeSide.SHORT
+            target_position = TargetPosition.SHORT
         else:
             return None
 
         current_candle = candles[-1]
         return TradeHypothesis(
             instrument=current_candle.instrument,
-            side=side,
+            target_position=target_position,
             generated_at=current_candle.start_time,
             timeframe=current_candle.granularity,
             strategy_key=self.strategy_key,
@@ -74,7 +74,8 @@ class TimeSeriesMomentumStrategy:
             parameters=params_from_dict({"lookback": self.lookback, "threshold": self.threshold}),
             rationale=(
                 f"{self.lookback}-bar return {n_bar_return} "
-                f"{'exceeds' if side is TradeSide.LONG else 'falls below'} "
-                f"threshold {'+' if side is TradeSide.LONG else '-'}{self.threshold}"
+                f"{'exceeds' if target_position is TargetPosition.LONG else 'falls below'} "
+                f"threshold {'+' if target_position is TargetPosition.LONG else '-'}"
+                f"{self.threshold}"
             ),
         )

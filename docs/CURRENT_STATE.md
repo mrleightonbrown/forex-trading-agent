@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-17)_
+_Last updated: 2026-09-15 (FX-18)_
 
 ## What exists
 
@@ -86,7 +86,11 @@ _Last updated: 2026-09-15 (FX-17)_
   (FX-13): `timeframe`, `strategy_key`, `strategy_version`, `parameters`
   (a hashable tuple of string pairs, not a `dict` — `params_from_dict`
   builds it from a strategy's typed params), all required on every
-  hypothesis.
+  hypothesis. Its directional field is `target_position: TargetPosition`
+  (`forex_agent.domain.target_position`, FX-18) — LONG/SHORT/FLAT,
+  distinct from the execution-only `TradeSide` (LONG/SHORT) used by
+  `Price`/`SimulatedTrade`: a strategy can ask to be flat, which
+  `TradeSide` cannot express.
 - `EmaCrossoverStrategy` (`forex_agent.domain.strategies.ema_crossover`,
   `strategy_key="ema_crossover_v1"`) — the first concrete `Strategy`
   (FX-14), and the reference strategy the roadmap in `docs/DECISIONS.md`
@@ -160,7 +164,12 @@ _Last updated: 2026-09-15 (FX-17)_
   timestamp with no matching candle — rather than assuming it's only
   ever called with `run_backtest`'s own well-formed output. Also rejects
   a non-empty `hypotheses` list with empty `candles` (FX-11H.1) rather
-  than silently returning `[]`.
+  than silently returning `[]`. **FLAT (FX-18):** a third
+  `target_position`, distinct from the LONG/SHORT close-and-reverse
+  behavior above — a no-op with no open position; with one open, closes
+  it at the same next-bar-open execution price and does *not* reopen. A
+  later LONG/SHORT hypothesis after a FLAT close opens fresh, exactly as
+  it would from a flat start.
 - `candle_series.require_consistent_series` (`forex_agent.domain.
   candle_series`): the "one instrument, one granularity, strictly
   ascending `start_time`" validation, extracted (FX-12) from being
@@ -185,9 +194,9 @@ _Last updated: 2026-09-15 (FX-17)_
 - Any strategy besides `EmaCrossoverStrategy`,
   `CloseChannelBreakoutStrategy`, and `TimeSeriesMomentumStrategy` — the
   rest of the roadmap (Mean Reversion, Volatility Expansion,
-  Multi-timeframe Trend) is not built yet.
-- `TargetPosition`/FLAT semantics — `Mean Reversion v1` needs to explicitly
-  exit rather than wait for the opposite extreme; not built yet.
+  Multi-timeframe Trend) is not built yet. `TargetPosition`/FLAT
+  semantics now exist (FX-18) but nothing emits FLAT yet — Mean
+  Reversion v1 will be the first.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

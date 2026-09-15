@@ -121,9 +121,18 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   is filtering the trade list before calling, not a feature of the
   function itself. Verified against an independent reference calculation
   for every field, including Sharpe/Sortino/max-drawdown.
-- `TargetPosition`/FLAT semantics → Mean Reversion v1 → Volatility
-  Expansion v1 → regime-conditioned experiments → Multi-timeframe Trend
-  v1. None of this is built yet.
+- ~~`TargetPosition`/FLAT semantics~~ — complete (FX-18).
+  `TradeHypothesis.side: TradeSide` renamed and retyped to
+  `target_position: TargetPosition` (`domain/target_position.py`, new
+  LONG/SHORT/FLAT enum, distinct from the execution-only `TradeSide`).
+  `simulate_trades` gained a third behavior: FLAT closes an open position
+  without reopening it (no-op if already flat), alongside the existing
+  same-direction no-op and opposite-direction close-and-reverse. All
+  three existing strategies mechanically updated to construct
+  `target_position=`; no behavior change, none emit FLAT yet — that's
+  Mean Reversion v1, next.
+- Mean Reversion v1 → Volatility Expansion v1 → regime-conditioned
+  experiments → Multi-timeframe Trend v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

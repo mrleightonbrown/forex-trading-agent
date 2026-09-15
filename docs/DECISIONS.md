@@ -974,3 +974,59 @@ currency; the test was adjusted to reflect that, not the implementation.
 calculation (Sharpe, Sortino, max drawdown, and every other field) on a
 fixed hand-picked trade set, cross-checked against the real
 implementation.
+
+## 2026-09-15 — FX-18: TargetPosition/FLAT semantics
+
+Prerequisite for Mean Reversion v1, per the roadmap — every strategy so
+far can only say LONG or SHORT, with no way to express "go flat" as a
+real signal. `TradeHypothesis.side: TradeSide` is renamed and retyped to
+`target_position: TargetPosition`, a new enum in `domain/
+target_position.py`.
+
+**Decision: a new, separate enum, not a third value bolted onto
+`TradeSide`** — confirmed before implementing. `TradeSide` (LONG/SHORT)
+stays execution-only: `Price.entry_price`/`exit_price`, `SimulatedTrade`,
+and `_OpenPosition` all keep using it unchanged, because a trade or an
+open position is always LONG or SHORT and never FLAT — FLAT is the
+*absence* of a position (`open_position = None`), not a new state those
+types need to represent. `TargetPosition` (LONG/SHORT/FLAT) instead
+belongs on `TradeHypothesis`, where it describes what a strategy *wants*
+without giving it execution authority — CLAUDE.md's hypothesis -> risk
+decision -> execution intent -> order pipeline is unaffected; this is
+still only the first stage.
+
+**Decision: full rename, not an added field** — `TradeHypothesis.side`
+no longer exists; every hypothesis now carries `target_position`. Kept
+side-by-side would have let old and new code disagree about which field
+was authoritative; a hard rename forces every call site to make the
+FLAT/LONG/SHORT distinction explicit up front. All three existing
+strategies (`ema_crossover_v1`, `close_channel_breakout_v1`,
+`time_series_momentum_v1`) were mechanically updated to construct
+`target_position=TargetPosition.LONG/SHORT` — no behavioral change; none
+of them emit FLAT yet. Mean Reversion v1 will be the first strategy to
+actually use it.
+
+**Decision: `simulate_trades` gains a third behavior for FLAT**,
+alongside the existing two (same-direction no-op, opposite-direction
+close-and-reverse): with no open position, FLAT is a no-op; with an open
+position, FLAT closes it — same next-bar-open execution price as
+everything else — and does **not** reopen. A later LONG/SHORT hypothesis
+after a FLAT close opens a genuinely fresh position, exactly as it would
+from a flat start. `run_backtest`, `SimulatedTrade`, `_OpenPosition`, and
+`backtest_metrics.py` needed no changes — none of them reference
+`TradeHypothesis.side`/`target_position` directly.
+
+**Verification:** exhaustively grepped every `TradeHypothesis(`
+construction site and every `.side` access before implementing, to state
+the exact breaking-change footprint up front (6 source files, 10 test
+files, mechanical rename) and confirm nothing was missed — including
+checking the three live OANDA integration tests, which turned out not to
+reference `.side` at all. New tests cover all three FLAT interactions
+directly: no-op while already flat, close-without-reopen, FLAT as the
+very first hypothesis, a fresh LONG open after a FLAT close, repeated
+FLAT while already flat, and a FLAT close on a SHORT position exiting at
+ask (not bid) — confirming CLAUDE.md's bid/ask-per-side rule still holds
+through the new code path. Full suite (379 tests, including the three
+live-OANDA strategy integration tests) passed; contract boundary tests
+picked up `target_position.py` automatically and confirmed it has zero
+forbidden imports and no env-var reads.

@@ -13,6 +13,7 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.strategies.ema_crossover import EmaCrossoverStrategy
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_side import TradeSide
 from forex_agent.domain.trade_simulation import simulate_trades
@@ -50,9 +51,9 @@ def test_run_backtest_produces_exactly_the_two_engineered_crosses() -> None:
 
     assert len(hypotheses) == 2
     long_hyp, short_hyp = hypotheses
-    assert long_hyp.side is TradeSide.LONG
+    assert long_hyp.target_position is TargetPosition.LONG
     assert long_hyp.generated_at == _ts(4)
-    assert short_hyp.side is TradeSide.SHORT
+    assert short_hyp.target_position is TargetPosition.SHORT
     assert short_hyp.generated_at == _ts(7)
 
 

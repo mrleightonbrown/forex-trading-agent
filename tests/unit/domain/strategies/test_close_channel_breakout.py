@@ -18,9 +18,9 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.strategies.close_channel_breakout import CloseChannelBreakoutStrategy
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import params_from_dict
-from forex_agent.domain.trade_side import TradeSide
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 
@@ -110,7 +110,7 @@ def test_evaluate_fires_long_on_breakout_above() -> None:
     hypothesis = strategy.evaluate(candles)
 
     assert hypothesis is not None
-    assert hypothesis.side is TradeSide.LONG
+    assert hypothesis.target_position is TargetPosition.LONG
     assert hypothesis.instrument == EUR_USD
     assert hypothesis.generated_at == _ts(4)
     assert hypothesis.timeframe is Granularity.M1
@@ -127,7 +127,7 @@ def test_evaluate_fires_long_again_while_breakout_continues() -> None:
     hypothesis = strategy.evaluate(candles)
 
     assert hypothesis is not None
-    assert hypothesis.side is TradeSide.LONG
+    assert hypothesis.target_position is TargetPosition.LONG
     assert hypothesis.generated_at == _ts(5)
 
 
@@ -138,7 +138,7 @@ def test_evaluate_fires_short_on_breakout_below() -> None:
     hypothesis = strategy.evaluate(candles)
 
     assert hypothesis is not None
-    assert hypothesis.side is TradeSide.SHORT
+    assert hypothesis.target_position is TargetPosition.SHORT
     assert hypothesis.generated_at == _ts(6)
     assert "below" in hypothesis.rationale
 
@@ -150,5 +150,5 @@ def test_evaluate_fires_short_again_while_breakout_continues() -> None:
     hypothesis = strategy.evaluate(candles)
 
     assert hypothesis is not None
-    assert hypothesis.side is TradeSide.SHORT
+    assert hypothesis.target_position is TargetPosition.SHORT
     assert hypothesis.generated_at == _ts(7)

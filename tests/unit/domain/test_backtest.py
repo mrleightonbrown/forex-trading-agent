@@ -8,9 +8,9 @@ from forex_agent.domain.candle import Candle
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
+from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_hypothesis import TradeHypothesis
-from forex_agent.domain.trade_side import TradeSide
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 GBP_USD = Instrument(base_currency="GBP", quote_currency="USD")
@@ -65,7 +65,7 @@ class _AlwaysFireStrategy:
         current = candles[-1]
         return TradeHypothesis(
             instrument=current.instrument,
-            side=TradeSide.LONG,
+            target_position=TargetPosition.LONG,
             generated_at=current.start_time,
             timeframe=Granularity.M1,
             strategy_key="always_fire_test_strategy",
@@ -83,7 +83,7 @@ class _WrongInstrumentStrategy:
         current = candles[-1]
         return TradeHypothesis(
             instrument=GBP_USD,
-            side=TradeSide.LONG,
+            target_position=TargetPosition.LONG,
             generated_at=current.start_time,
             timeframe=Granularity.M1,
             strategy_key="wrong_instrument_test_strategy",
@@ -105,7 +105,7 @@ class _StaleTimestampStrategy:
             self._first_seen = candles[0].start_time
         return TradeHypothesis(
             instrument=candles[-1].instrument,
-            side=TradeSide.LONG,
+            target_position=TargetPosition.LONG,
             generated_at=self._first_seen,
             timeframe=Granularity.M1,
             strategy_key="stale_timestamp_test_strategy",
