@@ -5,13 +5,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.candle import CandleRow
 
-_CONFLICT_KEY = ("instrument", "granularity", "start_time")
+_CONFLICT_KEY = ("instrument", "granularity", "start_time", "source")
 _UPDATABLE_COLUMNS = (
     "bid_open",
     "bid_high",
@@ -77,6 +78,7 @@ def _to_domain(instrument: Instrument, granularity: Granularity, row: CandleRow)
         ask=Ohlc(open=row.ask_open, high=row.ask_high, low=row.ask_low, close=row.ask_close),
         volume=row.volume,
         is_finalized=row.is_finalized,
+        source=CandleSource(row.source),
     )
 
 
@@ -95,4 +97,5 @@ def _row_values(candle: Candle) -> dict[str, object]:
         "ask_close": candle.ask.close,
         "volume": candle.volume,
         "is_finalized": candle.is_finalized,
+        "source": candle.source.value,
     }

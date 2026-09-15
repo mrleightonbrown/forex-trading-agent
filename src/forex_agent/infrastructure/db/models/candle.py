@@ -9,12 +9,17 @@ from forex_agent.infrastructure.db.mixins import TimestampMixin, UUIDPrimaryKeyM
 
 
 class CandleRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """One row per (instrument, granularity, start_time).
+    """One row per (instrument, granularity, start_time, source).
 
     `created_at`/`updated_at` (from `TimestampMixin`) track this *row's*
     bookkeeping — when we first stored it, when we last updated it (e.g. a
     candle finalizing) — separate from `start_time`, the candle's own open
     time in market terms.
+
+    `source` (FX-24) is part of the unique constraint, not just a stored
+    field — a native candle and a self-aggregated candle for the same
+    instrument/granularity/start_time can coexist without colliding or
+    silently overwriting each other in an upsert.
     """
 
     __tablename__ = "candles"
@@ -23,13 +28,15 @@ class CandleRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "instrument",
             "granularity",
             "start_time",
-            name="uq_candles_instrument_granularity_start_time",
+            "source",
+            name="uq_candles_instrument_granularity_start_time_source",
         ),
     )
 
     instrument: Mapped[str] = mapped_column(String, nullable=False)
     granularity: Mapped[str] = mapped_column(String, nullable=False)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
 
     bid_open: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     bid_high: Mapped[Decimal] = mapped_column(Numeric, nullable=False)

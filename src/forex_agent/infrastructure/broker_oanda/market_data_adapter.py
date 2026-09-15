@@ -8,6 +8,12 @@ Confirmed live against the practice API before writing this:
 - OANDA caps `count` at 5000 and returns HTTP 400 ("Maximum value for
   'count' exceeded") for a `from`/`to` range implying more than that,
   rather than silently truncating the response.
+- (FX-24) `dailyAlignment=17`/`alignmentTimezone=America/New_York`
+  produce byte-identical results to omitting them — the practice API's
+  default already matches. Sent explicitly anyway, confirmed live, so
+  this adapter's own correctness doesn't silently depend on OANDA's
+  default never changing; `domain.candle_aggregation`'s NY-anchored
+  day-aligned bucketing (FX-24) assumes exactly this alignment.
 """
 
 from datetime import datetime
@@ -22,6 +28,7 @@ from forex_agent.application.ports.exceptions import (
     InstrumentNotAvailableError,
 )
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -74,6 +81,8 @@ class OandaMarketDataAdapter:
                     "from": start.value.isoformat(),
                     "to": end.value.isoformat(),
                     "price": "BA",
+                    "dailyAlignment": 17,
+                    "alignmentTimezone": "America/New_York",
                 },
                 headers=self._headers,
             )
@@ -109,6 +118,7 @@ def _to_candle(instrument: Instrument, granularity: Granularity, raw: dict[str, 
         ask=_to_ohlc(raw["ask"]),
         volume=int(raw["volume"]),
         is_finalized=bool(raw["complete"]),
+        source=CandleSource.NATIVE,  # explicit, even though it's the default (FX-24)
     )
 
 

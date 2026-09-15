@@ -1424,3 +1424,104 @@ it the same way.
 
 **Verification:** full suite (460 tests) and the live replay test both
 passed.
+
+## 2026-09-15 — FX-24: candle alignment / OANDA H4 reconciliation
+
+`aggregate_candles`'s bucket boundaries were pure epoch-UTC floor since
+FX-7 — never reconciled against what OANDA's own day-aligned candles
+actually align to, flagged as a known gap since FX-13's roadmap entry.
+Flagged again, with much sharper detail, by the same external review
+that produced FX-21H: OANDA's own documented granularity semantics say
+`H1` is hour-aligned but `H2`/`H3`/`H4`/`H6`/`H8`/`H12`/`D` are
+day-aligned to a 17:00 `America/New_York` anchor, which — being a
+calendar concept, not a fixed duration — shifts in UTC terms across DST.
+
+**Empirically verified against the live practice API before writing any
+code, not assumed:**
+- Fetched live `H4` candles: boundaries at `09:00`/`13:00`/`17:00` UTC
+  on 2026-09-11 (EDT, UTC-4 — `17:00 EDT = 21:00 UTC`), with the day
+  restarting at `21:00` UTC after the weekend gap. Fetched live `D`
+  candles: daily boundary at `21:00` UTC, same anchor. Neither matches
+  epoch-UTC-floored buckets (`00:00`/`04:00`/`08:00`/... for `H4`).
+- Fetched with explicit `dailyAlignment=17`/`alignmentTimezone=
+  America/New_York` vs. omitting them entirely: byte-identical
+  responses — the practice API's default already matches. Sent
+  explicitly anyway (confirmed live, not just in theory) so this
+  codebase's own correctness doesn't silently depend on that default
+  never changing.
+- Fetched live `H4` candles spanning the actual 2026-03-08 US
+  spring-forward transition: the transition (2am local, Sunday) falls
+  entirely inside forex's weekend closure, so real OANDA data never
+  actually contains a "3-hour" or "5-hour" H4 bucket. The underlying
+  wall-clock arithmetic still has to be correct for that case though —
+  a general-purpose aggregator can't assume "the market happens to be
+  closed then" as an invariant.
+- Independently derived the DST-aware bucket arithmetic with a scratch
+  `zoneinfo` script *before* writing the real implementation, same
+  discipline as every recursive/calendar calculation in this codebase:
+  confirmed adding `timedelta(hours=4)` to an `America/New_York`-aware
+  `datetime` correctly produces one 3-hour bucket on the spring-forward
+  day and one 5-hour bucket on the fall-back day (PEP 495 wall-clock
+  semantics), every other bucket a clean 4 hours.
+
+**Decision: `H1` and finer are unaffected, unchanged** — confirmed
+before implementing. `America/New_York`'s UTC offset is always a whole
+number of hours, so an hour boundary is the same instant regardless of
+which timezone names it; epoch-floored hour buckets already agree with
+NY-local hour buckets. Only day-aligned granularities needed a new
+bucketing path.
+
+**Decision: a day-aligned bucket's expected member count is computed
+per bucket from its own real elapsed time, not a single fixed
+constant** — discovered while designing the DST test, not initially
+planned. A bucket containing a DST transition genuinely spans 3 or 5
+real hours; using a fixed `target_duration // source_duration` count
+(the pre-existing scheme, still correct for non-day-aligned targets)
+would incorrectly judge that bucket "incomplete" and silently drop
+otherwise-valid data. `_expected_member_count` computes each bucket's
+real span via the same `zoneinfo`-aware arithmetic used to find the
+bucket itself.
+
+**Decision: `CandleSource` (`NATIVE`/`AGGREGATED`) added to `Candle` as
+a *defaulted* field (`= CandleSource.NATIVE`), not required** —
+confirmed before implementing. A required field would have forced a
+mechanical rename across every test file that constructs a `Candle`
+without caring about provenance (dozens of them, by this point in the
+project). Defaulting to `NATIVE` keeps that entire surface untouched;
+only `aggregate_candles` (sets `AGGREGATED` explicitly) and the OANDA
+adapter (sets `NATIVE` explicitly, for clarity even though it's already
+the default) needed to change.
+
+**Decision: `source` is part of the DB unique constraint** (now
+`instrument`/`granularity`/`start_time`/`source`, was missing `source`)
+— this is the actual "prevent native and derived H4 candles from
+silently occupying the same logical dataset" fix, structural rather
+than conventional: a native and a self-aggregated candle for the same
+logical slot can now coexist in storage without colliding in an
+upsert. New Alembic migration; no backfill needed (nothing has
+persisted H2+ candles yet — `AggregateCandles` still isn't invoked on
+any schedule).
+
+**Decision: `aggregate_candles` itself now also rejects a mix of
+`NATIVE` and `AGGREGATED` source candles** (alongside its existing
+instrument/granularity consistency checks) — found while reasoning
+through `AggregateCandles`' own `get_range` call, which doesn't filter
+by `source`. Without this, a future scenario with both native and
+aggregated candles stored at the same source granularity could get
+silently blended by `aggregate_candles` itself, one layer earlier than
+the storage-level fix above catches. A `get_range` filter parameter
+was deliberately *not* added — nothing needs it yet (FX-25 is still
+unbuilt), and this validation already converts silent blending into a
+loud error, which is the actual safety property needed now.
+
+**Verification:** the day-alignment logic is tested against the
+exact live-fetched OANDA boundary times above (a golden-data-style
+regression, not just a qualitative check), an EST (winter) case, a
+plain `D`-granularity case, `H1`-still-unaffected regression, and two
+synthetic continuous-data DST tests (spring-forward's 3-hour bucket,
+fall-back's 5-hour bucket) each proving both that the short/long bucket
+is correctly treated as *complete*, and that it's correctly dropped if
+genuinely short by even one candle. `CandleSource` round-trips through
+`aggregate_candles`, the OANDA adapter, and a live-Postgres DB test
+proving native/aggregated coexistence without collision. Full suite
+(474 tests) and live integration tests (OANDA + Postgres) all passed.

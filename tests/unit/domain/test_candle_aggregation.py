@@ -5,6 +5,7 @@ import pytest
 
 from forex_agent.domain.candle import Candle
 from forex_agent.domain.candle_aggregation import aggregate_candles
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -115,6 +116,30 @@ def test_rejects_mixed_instruments() -> None:
     candles = [_m1(0, "1.1", "1.1", "1.1", "1.1"), other]
 
     with pytest.raises(ValueError, match="instrument"):
+        aggregate_candles(candles, Granularity.M5)
+
+
+def test_rejects_mixed_source_provenance() -> None:
+    # FX-24: aggregating a mix of NATIVE and AGGREGATED source candles
+    # would silently blend two potentially differently-aligned datasets.
+    native = _m1(0, "1.1", "1.1", "1.1", "1.1")
+    aggregated = Candle(
+        instrument=EUR_USD,
+        granularity=Granularity.M1,
+        start_time=UtcTimestamp(datetime(2026, 1, 1, 0, 1, 0, tzinfo=UTC)),
+        bid=Ohlc(
+            open=Decimal("1.1"), high=Decimal("1.1"), low=Decimal("1.1"), close=Decimal("1.1")
+        ),
+        ask=Ohlc(
+            open=Decimal("1.1"), high=Decimal("1.1"), low=Decimal("1.1"), close=Decimal("1.1")
+        ),
+        volume=1,
+        is_finalized=True,
+        source=CandleSource.AGGREGATED,
+    )
+    candles = [native, aggregated]
+
+    with pytest.raises(ValueError, match="source"):
         aggregate_candles(candles, Granularity.M5)
 
 

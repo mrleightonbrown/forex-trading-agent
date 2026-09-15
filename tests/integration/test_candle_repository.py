@@ -17,6 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -33,7 +34,13 @@ START = UtcTimestamp(datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC))
 _SPREAD = Decimal("0.0002")
 
 
-def _candle(*, bid_close: str, is_finalized: bool, start_time: UtcTimestamp = START) -> Candle:
+def _candle(
+    *,
+    bid_close: str,
+    is_finalized: bool,
+    start_time: UtcTimestamp = START,
+    source: CandleSource = CandleSource.NATIVE,
+) -> Candle:
     bid_close_decimal = Decimal(bid_close)
     return Candle(
         instrument=TEST_INSTRUMENT,
@@ -53,6 +60,7 @@ def _candle(*, bid_close: str, is_finalized: bool, start_time: UtcTimestamp = ST
         ),
         volume=10,
         is_finalized=is_finalized,
+        source=source,
     )
 
 
@@ -145,3 +153,44 @@ async def test_get_range_returns_empty_list_when_nothing_matches(session: AsyncS
     result = await repo.get_range(TEST_INSTRUMENT, Granularity.M1, START, START)
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_source_round_trips_through_upsert_and_get_range(session: AsyncSession) -> None:
+    repo = SqlAlchemyCandleRepository(session)
+
+    await repo.upsert_many([_candle(bid_close="1.0005", is_finalized=True)])
+
+    result = await repo.get_range(
+        TEST_INSTRUMENT, Granularity.M1, START, UtcTimestamp(START.value.replace(minute=1))
+    )
+
+    assert len(result) == 1
+    assert result[0].source is CandleSource.NATIVE
+
+
+@pytest.mark.asyncio
+async def test_native_and_aggregated_candles_coexist_without_collision(
+    session: AsyncSession,
+) -> None:
+    """FX-24: same instrument/granularity/start_time, different `source`
+    -- must NOT collide/overwrite each other, unlike two candles that
+    only differ by content (which upsert intentionally treats as the
+    same logical row, per test_upsert_many_updates_existing_candle_in_place
+    above)."""
+    repo = SqlAlchemyCandleRepository(session)
+
+    await repo.upsert_many(
+        [_candle(bid_close="1.0001", is_finalized=True, source=CandleSource.NATIVE)]
+    )
+    await repo.upsert_many(
+        [_candle(bid_close="1.0009", is_finalized=True, source=CandleSource.AGGREGATED)]
+    )
+
+    assert await _row_count(session) == 2
+
+    result = await repo.get_range(
+        TEST_INSTRUMENT, Granularity.M1, START, UtcTimestamp(START.value.replace(minute=1))
+    )
+    assert {c.source for c in result} == {CandleSource.NATIVE, CandleSource.AGGREGATED}
+    assert {c.bid.close for c in result} == {Decimal("1.0001"), Decimal("1.0009")}

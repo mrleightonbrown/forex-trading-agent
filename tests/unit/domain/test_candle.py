@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -43,6 +44,17 @@ def test_valid_candle() -> None:
     assert candle.ask == ASK
     assert candle.volume == 100
     assert candle.is_finalized is True
+    assert candle.source is CandleSource.NATIVE  # FX-24: the default
+
+
+def test_source_defaults_to_native_but_can_be_overridden() -> None:
+    assert _candle().source is CandleSource.NATIVE
+    assert _candle(source=CandleSource.AGGREGATED).source is CandleSource.AGGREGATED
+
+
+def test_rejects_wrong_type_for_source() -> None:
+    with pytest.raises(TypeError, match="source"):
+        _candle(source="NATIVE")
 
 
 def test_rejects_wrong_type_for_granularity() -> None:

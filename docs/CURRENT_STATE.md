@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-23)_
+_Last updated: 2026-09-15 (FX-24)_
 
 ## What exists
 
@@ -54,9 +54,15 @@ _Last updated: 2026-09-15 (FX-23)_
   committed) — connectivity confirmed working.
 - `Granularity`, `Ohlc`, `Candle` domain value objects — bid *and* ask
   OHLC per candle (spread, per CLAUDE.md), `is_finalized` flag. `Candle`
-  rejects crossed-market data (ask below bid at open or close).
-- `candles` table (migration `91c1293c5760`) with a unique constraint on
-  `(instrument, granularity, start_time)`, plus `CandleRepository`
+  rejects crossed-market data (ask below bid at open or close). `Candle`
+  also carries `source: CandleSource` (`NATIVE`/`AGGREGATED`, FX-24,
+  defaults to `NATIVE`) — provenance, not just descriptive: see
+  `candles` table below.
+- `candles` table (migrations `91c1293c5760`, `635084cc3eb0`) with a
+  unique constraint on `(instrument, granularity, start_time, source)`
+  — `source` included since FX-24, so a native candle and a
+  self-aggregated candle for the same logical slot can coexist in
+  storage without colliding in an upsert. Plus `CandleRepository`
   (application port: `upsert_many`, `get_range`) and
   `SqlAlchemyCandleRepository` — idempotent upsert via Postgres
   `ON CONFLICT DO UPDATE`.
@@ -65,7 +71,22 @@ _Last updated: 2026-09-15 (FX-23)_
   endpoint (no account ID needed for this one). Bounded to what a single
   request can return (OANDA's own 5000-candle cap) — raises
   `CandleRangeTooLargeError` rather than silently truncating; pagination
-  for larger backfills isn't built yet.
+  for larger backfills isn't built yet. Sends `dailyAlignment=17`/
+  `alignmentTimezone=America/New_York` explicitly (FX-24, confirmed
+  live to already match the practice API's own default) and tags every
+  candle `source=NATIVE`.
+- `aggregate_candles` (`forex_agent.domain.candle_aggregation`, FX-7,
+  day-aligned bucketing fixed FX-24): buckets for `H2`/`H3`/`H4`/`H6`/
+  `H8`/`H12`/`D` are anchored to 17:00 `America/New_York` via
+  `zoneinfo`, DST-aware — matching OANDA's own native candles for those
+  granularities (confirmed against a live fetch, not assumed); `H1` and
+  finer are unaffected (no DST ambiguity — NY's UTC offset is always a
+  whole number of hours). A bucket spanning a DST transition is
+  genuinely 3 or 5 real hours, not 4 — its "complete" threshold is
+  computed per bucket from real elapsed time, not a fixed constant.
+  Every aggregated candle is tagged `source=AGGREGATED`; mixing
+  `NATIVE` and `AGGREGATED` source candles in one call now raises,
+  same as mixing instruments or granularities.
 - `IngestCandles` and `AggregateCandles` (`application/use_cases/`): the
   former wires `MarketDataPort.get_candles` to
   `CandleRepository.upsert_many`; the latter reads a range via
@@ -278,8 +299,8 @@ _Last updated: 2026-09-15 (FX-23)_
 - Any directional strategy besides `EmaCrossoverStrategy`,
   `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`,
   `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
-  Multi-timeframe Trend v1 (`FX-25`) is not built yet (blocked on H4
-  candle-alignment reconciliation, `FX-24`).
+  Multi-timeframe Trend v1 (`FX-25`) is not built yet. Its former
+  blocker (H4 candle-alignment reconciliation) is resolved as of FX-24.
 - True regime-*gating* (an entry filter that changes which trades
   occur, distinct from the entry-regime attribution both FX-21 and
   FX-23 already did) — unbuilt, see FX-21H's entry in

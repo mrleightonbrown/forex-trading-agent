@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -13,6 +14,11 @@ class Candle:
     `is_finalized` mirrors OANDA's `complete` flag under a name that states
     the rule directly — CLAUDE.md: "Strategies must only evaluate finalized
     candles."
+
+    `source` (FX-24) defaults to `CandleSource.NATIVE` — deliberately, so
+    every existing call site that doesn't care about provenance (most
+    test fixtures, most domain logic) keeps working unchanged; only
+    `aggregate_candles` needs to override it to `AGGREGATED`.
     """
 
     instrument: Instrument
@@ -22,6 +28,7 @@ class Candle:
     ask: Ohlc
     volume: int
     is_finalized: bool
+    source: CandleSource = CandleSource.NATIVE
 
     def __post_init__(self) -> None:
         if not isinstance(self.granularity, Granularity):
@@ -36,6 +43,8 @@ class Candle:
             raise TypeError(f"bid must be an Ohlc, got {type(self.bid).__name__}")
         if not isinstance(self.ask, Ohlc):
             raise TypeError(f"ask must be an Ohlc, got {type(self.ask).__name__}")
+        if not isinstance(self.source, CandleSource):
+            raise TypeError(f"source must be a CandleSource, got {type(self.source).__name__}")
         if self.volume < 0:
             raise ValueError(f"volume must not be negative, got {self.volume}")
 

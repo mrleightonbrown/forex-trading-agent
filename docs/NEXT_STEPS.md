@@ -203,11 +203,28 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   naive "strategy type should match regime type" intuition doesn't hold
   on the data observed so far. `n=57` is larger than FX-21's `n=26` but
   still not a basis for strategy-selection decisions.
-- Candle-alignment/OANDA H4 reconciliation (`FX-24`) followed by
-  Multi-timeframe Trend v1 (`FX-25`) — sequenced per the same external
-  review that produced FX-21H (renumbered from that review's original
-  FX-22/FX-23 suggestion to keep FX-N matching actual build order — see
-  FX-22's entry in `docs/DECISIONS.md`). Neither built yet.
+- ~~Candle alignment / OANDA H4 reconciliation~~ — complete (FX-24).
+  `aggregate_candles` (`domain/candle_aggregation.py`) now anchors
+  `H2`/`H3`/`H4`/`H6`/`H8`/`H12`/`D` buckets to 17:00 `America/New_York`
+  via `zoneinfo`, DST-aware — matching OANDA's own native candles for
+  those granularities (confirmed against a live fetch of real H4/D
+  candles, not assumed; also confirmed the explicit `dailyAlignment=17`/
+  `alignmentTimezone=America/New_York` request params already match the
+  practice API's default, sent explicitly anyway). `H1` and finer are
+  unaffected — no DST ambiguity there. New `CandleSource`
+  (`NATIVE`/`AGGREGATED`) provenance field on `Candle`, included in the
+  DB unique constraint, so native and self-aggregated candles can't
+  silently collide in storage; `aggregate_candles` itself also rejects
+  mixing the two. Verified against the exact live-fetched OANDA boundary
+  times as a golden-data regression, an EST (winter) case, and two
+  synthetic DST-transition tests (spring-forward's genuinely-3-hour
+  bucket, fall-back's genuinely-5-hour bucket) — a real correctness
+  subtlety found while designing those tests: a DST-transition bucket's
+  "complete" threshold has to be computed per bucket from real elapsed
+  time, not a fixed constant, or such a bucket gets silently dropped as
+  falsely "incomplete."
+- Multi-timeframe Trend v1 (`FX-25`) — its former blocker is resolved;
+  not built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

@@ -10,6 +10,7 @@ from forex_agent.application.ports.exceptions import (
     CandleRangeTooLargeError,
     InstrumentNotAvailableError,
 )
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -44,6 +45,9 @@ async def test_get_candles_success() -> None:
         assert request.url.path == "/v3/instruments/EUR_USD/candles"
         assert request.url.params["granularity"] == "M1"
         assert request.url.params["price"] == "BA"
+        # FX-24: sent explicitly rather than relying on OANDA's default.
+        assert request.url.params["dailyAlignment"] == "17"
+        assert request.url.params["alignmentTimezone"] == "America/New_York"
         assert request.headers["Authorization"] == "Bearer secret-token"
         return httpx.Response(
             200,
@@ -84,6 +88,7 @@ async def test_get_candles_success() -> None:
     )
     assert first.volume == 83
     assert first.is_finalized is True
+    assert first.source is CandleSource.NATIVE  # FX-24
     # a still-forming candle is stored too, marked not finalized
     assert second.is_finalized is False
 
