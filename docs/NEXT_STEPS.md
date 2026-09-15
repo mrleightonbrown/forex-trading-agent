@@ -76,6 +76,16 @@ Per CLAUDE.md's current phase (M0-M4) priority order:
 
 This closes out CLAUDE.md's current M0–M4 phase (items 1–11).
 
+## Now underway: concrete strategy suite (FX-EPIC-03 + FX-EPIC-04)
+
+Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
+(2026-09-15 entry) — not repeated here. Proposed order: strategy metadata/
+hypothesis enrichment → EMA Trend v1 → Close-Channel Breakout v1 →
+Time-Series Momentum v1 → backtest performance metrics → `TargetPosition`/
+FLAT semantics → Mean Reversion v1 → Volatility Expansion v1 →
+regime-conditioned experiments → Multi-timeframe Trend v1. Nothing in
+that list is built yet.
+
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
 goes for the downstream epics not in this list at all (Decision Engine,

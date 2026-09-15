@@ -611,3 +611,141 @@ leaves room for that without any rework.
 
 Recording this here specifically so it doesn't get lost — this entry
 exists to be found later, not to be acted on now.
+
+## 2026-09-15 — Concrete strategy suite roadmap (user's plan, agreed; nothing built yet)
+
+CLAUDE.md's M0–M4 phase (items 1–11) is done. From here the operative
+question changes from "is the platform correct?" to "does a strategy add
+predictive value after spread, under conditions it wasn't tuned on?" —
+that shift is why everything below is deliberately diversity-first and
+measurement-first rather than strategy-count-first.
+
+**Numbering note:** the FX-numbers below are a *proposed backlog order*,
+not fixed final IDs — same reason FX-11H/FX-11H.1/FX-12H/FX-12H.1 exist
+outside strict sequence: hardening follow-ups get inserted as real issues
+turn up. The order and grouping is what's being committed to here, not
+exact numbers.
+
+**The suite, in order, and why this order:**
+
+1. **EMA Trend v1** (`ema_crossover_v1`) — 20/50 EMA crossover on the
+   synthetic-midpoint close (same convention as ADX). The deliberately
+   boring reference strategy: easy to independently verify, exercises the
+   close-and-reverse exit rule exactly as designed, and will surface any
+   remaining strategy/backtest integration defects fast. Named
+   `ema_crossover_v1`, not `trend_strategy` — there will be more than one
+   trend strategy eventually.
+2. **Close-Channel (Donchian) Breakout v1** — close breaks the highest/
+   lowest *close* of the prior 20 bars. Deliberately close-based, not
+   high/low-based: FX-12H already established that our synthetic
+   bid/ask-averaged highs/lows are an approximation (the two sides' period
+   extrema can occur at different instants), while bid-close and ask-close
+   are the same instant and average cleanly. True high/low Donchian
+   channels become testable once real provider mid OHLC is stored — still
+   deferred, see the FX-12H entry above.
+3. **Time-Series Momentum v1** — N-bar return vs. a threshold (starting
+   at `threshold=0` as the pure baseline, a deadband tested later, not
+   assumed upfront). Deliberately minimal — not RSI+MACD+ROC+stochastic
+   combined into one "momentum" strategy, where nothing would be
+   attributable. Academic FX momentum evidence is a legitimate reason to
+   include this family; the same literature argues for testing it after
+   transaction costs before trusting it, which is exactly what this
+   backtester already forces (spread-aware fills, look-ahead-safe replay).
+4. **Mean Reversion v1** (Bollinger/z-score) — requires `TargetPosition`/
+   FLAT semantics first (below); a mean-reversion thesis needs to exit
+   when the mispricing closes, not wait for the opposite extreme to
+   trigger close-and-reverse.
+5. **Volatility Expansion Breakout v1** — ATR14/ATR50 ratio (compression
+   → expansion) combined with a range breakout. Overlaps with Donchian by
+   construction; the point is finding out whether the extra
+   "regime changed" condition adds anything over breakout alone — another
+   thing to measure, not assume.
+6. **Multi-timeframe Trend Confirmation v1** — H1 signal gated by H4
+   trend agreement. Deliberately last, and blocked on resolving the H4
+   candle-alignment question first (below) — building multi-timeframe
+   sophistication on timeframe boundaries we haven't verified would be
+   compounding an unresolved unknown.
+
+**Explicitly not started, and why:** carry (needs policy rates, forward
+points/swap, rate expectations — belongs with the fundamentals/economic-
+data phase, FX-EPIC-06/07, not assigned yet). Economic-momentum-style
+fundamentals signals, for the same reason.
+
+**Control strategies** (always-long, always-short, previous-bar-direction,
+no-trade) — not "a strategy," a sanity baseline every real strategy's
+metrics get compared against on the same sample. Without them, a modest
+positive Sharpe can't be distinguished from sample drift. Not deployed;
+built to sit next to FX-17 (metrics) since their only value is having a
+scoreboard to appear on — see the sequencing note below.
+
+**Two structural changes needed along the way, sequenced deliberately
+early:**
+
+- **Strategy metadata/hypothesis enrichment** (`strategy_key`,
+  `strategy_version`, `timeframe`, `parameters` — likely additions to
+  `TradeHypothesis` or an adjacent type). Sequenced *first*, before any
+  concrete strategy exists, specifically because retrofitting identity/
+  versioning across six already-built strategies is far more invasive
+  than building it into the first one. Needs its own design pass — a
+  `parameters` field in particular breaks the "frozen dataclass is
+  hashable" pattern every other domain value object follows unless its
+  shape is chosen deliberately.
+- **`TargetPosition` (LONG/SHORT/FLAT) semantics**, sequenced after the
+  first three directional strategies (EMA, Donchian, momentum — all of
+  which work fine under today's close-and-reverse model) and before mean
+  reversion (which doesn't). This is a bigger change than the enum
+  suggests: `TradeSide` currently does double duty as both "what the
+  strategy believes" and "which side to execute on" — `Price.entry_price`/
+  `exit_price` only make sense for LONG/SHORT. Once FLAT exists,
+  `simulate_trades`'s exit logic needs a third behavior (close without
+  reopening) distinct from today's two (same-side no-op, opposite-side
+  close-and-reverse). Real design work, not a trivial addition — gets its
+  own conversation when picked up, same as every other story here.
+
+**Regime stays structurally separate from strategies, tested as an
+experiment, not assumed:** no strategy above checks `TrendRegime`
+internally. Instead, a later comparison story (`EMA alone` vs. `EMA when
+TRENDING`, `Mean Reversion alone` vs. `Mean Reversion when RANGING`)
+answers "does regime filtering actually help?" as data. Baking regime
+into each strategy would make that question unanswerable and violate the
+same "one subsystem doesn't need to know about every other subsystem"
+principle `BrokerPort`/`MarketDataPort`/`CandleRepository` were already
+kept separate for.
+
+**Two known dependencies flagged now, not discovered mid-story:**
+- **H4 candle-alignment**, referenced above: `aggregate_candles`'s bucket
+  boundaries are epoch-UTC-aligned by construction; never verified
+  against what OANDA's *own* H4 candles (`get_candles(granularity=H4)`)
+  actually align to. If they differ, a multi-timeframe strategy mixing
+  self-aggregated H4 with OANDA-native H4 would silently compare
+  misaligned bars. Needs its own small reconciliation story before
+  multi-timeframe confirmation (item 6), not folded silently into it.
+- **Candle backfill pagination**: FX-6 already documented `get_candles`
+  as bounded to 5000 candles per request, pagination deferred. The
+  metrics epic's planned year/quarter segmentation needs more history
+  than that bound provides at most granularities (5000 M1 candles ≈ 3.5
+  days; even H1 only reaches ≈ 7 months) — pagination is a likely
+  prerequisite for that specific metric, not optional polish.
+
+**Epic mapping:**
+
+| Story (proposed order) | Epic |
+|---|---|
+| Strategy metadata/hypothesis enrichment | FX-EPIC-03 Technical Strategies |
+| EMA Crossover v1 | FX-EPIC-03 |
+| Close-Channel Breakout v1 | FX-EPIC-03 |
+| Time-Series Momentum v1 | FX-EPIC-03 |
+| Backtest performance metrics | FX-EPIC-04 Backtesting |
+| `TargetPosition`/FLAT semantics | FX-EPIC-03 |
+| Mean Reversion v1 | FX-EPIC-03 |
+| Volatility Expansion v1 | FX-EPIC-03 |
+| Regime-conditioned experiments | FX-EPIC-05 Market Regime Detection + FX-EPIC-04 (dual) |
+| Multi-timeframe Trend v1 | FX-EPIC-03 |
+
+FX-EPIC-05 (Market Regime Detection) is considered V1-complete as of
+FX-12/FX-12H/FX-12H.1 (`TrendRegime`, ADX classifier). Its only further
+item on this roadmap is the regime-conditioned experiment story above,
+which depends on strategies and metrics existing first.
+
+Recording this here so the plan survives past this conversation — nothing
+in this entry has been implemented yet.
