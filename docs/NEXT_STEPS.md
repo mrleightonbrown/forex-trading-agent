@@ -251,9 +251,23 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   member count — also closes the original FX-7 duplicate-plus-missing
   edge case in the same change. `MultiTimeframeTrendStrategy` also now
   rejects a non-`H1` driving series.
+- ~~Source/target boundary nesting fix~~ — complete (FX-25H.1). One
+  further gap the same review caught: nominal duration divisibility
+  (`H6 % H3 == 0`) doesn't guarantee NY wall-clock source boundaries
+  stay nested inside the target boundary across a DST discontinuity —
+  reproduced directly (an `H3`-sourced `H6` bucket on the spring-forward
+  day pulled in an hour of data past its own canonical end, real
+  contamination). Fixed: the expected-boundary walk now requires exact
+  termination on the target's own end; a bucket whose sources straddle
+  rather than tile it is dropped, not the granularity pairing itself.
+  Verified both as a targeted regression (confirmed to fail pre-fix,
+  pass post-fix) and a broader structural test across five source/
+  target pairings on both DST transition days, confirming the fix
+  introduces no false negatives either.
 
-**This closes out the original diversity-first strategy-suite roadmap**
-recorded in `docs/DECISIONS.md` (2026-09-15): six directional
+**With FX-25H.1, the external review's full FX-24/FX-25 assessment is
+resolved. This closes out the original diversity-first strategy-suite
+roadmap** recorded in `docs/DECISIONS.md` (2026-09-15): six directional
 strategies, `TargetPosition`/FLAT semantics, backtest metrics, control
 strategies, two entry-regime-attribution experiments, and candle
 alignment (now hardened) are all complete.

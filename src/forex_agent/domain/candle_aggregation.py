@@ -22,6 +22,23 @@ candle start-times for a bucket (via `candle_boundary.candle_end_time`,
 walked forward one source candle at a time) and requiring the actual
 member start-times to match that sequence exactly — count, gaps, and
 duplicates are all covered by the same check.
+
+FX-25H.1: that walk also has to verify the LAST source candle lands
+exactly on the target bucket's own end — nominal divisibility
+(`target_duration % source_duration == 0`) does not guarantee NY
+wall-clock source boundaries stay nested inside the target boundary
+across a DST discontinuity. Verified directly: the spring-forward `H6`
+bucket 04:00-09:00Z (5 real hours) is nominally divisible by `H3` (3h),
+but `H3`'s own DST-shortened boundary that day falls at 07:00-10:00Z —
+straddling the `H6` boundary by an hour, not nested inside it. Without
+checking exact termination, `aggregate_candles` would silently pull an
+hour of data from OUTSIDE the target bucket into its aggregate (a real,
+reproduced contamination/look-ahead, not hypothetical). A target bucket
+whose source candles don't exactly tile it — front-to-back, no gap, no
+overhang — is dropped, same as a genuinely incomplete one; this is a
+property of that specific DST-transition bucket, not a reason to reject
+the granularity pairing generally (an ordinary, non-transition `H3`→`H6`
+bucket tiles perfectly).
 """
 
 from collections import defaultdict
@@ -50,14 +67,20 @@ def aggregate_candles(candles: list[Candle], into: Granularity) -> list[Candle]:
     original epoch-UTC-floored fixed-duration bucketing (`H1` and finer
     have no DST ambiguity to account for).
 
-    A trailing, DST-shortened, or gappy/duplicated bucket is dropped
-    rather than emitted wrong — call again once the source candles for
-    it are complete. "Complete" (FX-25H) means the bucket's actual member
-    start-times exactly match the expected source-candle boundary
-    sequence for that bucket, generated via `candle_boundary.
-    candle_end_time` — not a member count, which can't distinguish a
-    genuinely short DST bucket from a bucket that's merely missing data,
-    nor catch a duplicate-plus-missing pair at the right total count.
+    A trailing, DST-shortened, gappy/duplicated, or (FX-25H.1)
+    non-exactly-tiling bucket is dropped rather than emitted wrong — call
+    again once the source candles for it are complete. "Complete"
+    (FX-25H) means the bucket's actual member start-times exactly match
+    the expected source-candle boundary sequence for that bucket,
+    generated via `candle_boundary.candle_end_time` — not a member
+    count, which can't distinguish a genuinely short DST bucket from a
+    bucket that's merely missing data, nor catch a duplicate-plus-missing
+    pair at the right total count. That expected sequence is itself only
+    valid (FX-25H.1) if its last source candle ends EXACTLY at the
+    target bucket's own end — nominal divisibility between granularities
+    doesn't guarantee that across a DST discontinuity; a bucket whose
+    source candles would straddle rather than exactly tile it is dropped
+    too, rather than aggregated from data that overhangs the boundary.
 
     Every aggregated candle's `source` is `CandleSource.AGGREGATED`
     (FX-24) — never `NATIVE`, regardless of the source candles' own
@@ -110,13 +133,19 @@ def aggregate_candles(candles: list[Candle], into: Granularity) -> list[Candle]:
 
 def _expected_source_starts(
     bucket_start: datetime, target_granularity: Granularity, source_granularity: Granularity
-) -> list[datetime]:
+) -> list[datetime] | None:
     """The exact sequence of source-candle start-times a COMPLETE
     `target_granularity` bucket beginning at `bucket_start` must contain
     — walked one source candle at a time via `candle_end_time`, so a
     DST-shortened/lengthened source candle (when the source is itself
     day-aligned) is accounted for exactly, not assumed away by a fixed
     per-bucket count.
+
+    Returns `None` (FX-25H.1) if the walk overshoots or undershoots the
+    target bucket's own end — i.e. the source candles for this specific
+    bucket don't exactly tile it, front to back, which nominal duration
+    divisibility alone doesn't guarantee across a DST discontinuity. The
+    caller treats `None` exactly like "incomplete": drop this bucket.
     """
     bucket_end = candle_end_time(bucket_start, target_granularity)
     starts = []
@@ -124,6 +153,8 @@ def _expected_source_starts(
     while cursor < bucket_end:
         starts.append(cursor)
         cursor = candle_end_time(cursor, source_granularity)
+    if cursor != bucket_end:
+        return None
     return starts
 
 

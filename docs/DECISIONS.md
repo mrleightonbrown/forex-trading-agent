@@ -1657,3 +1657,49 @@ already covered. Full suite (502 tests), contract boundary tests (the
 new `candle_boundary.py` module picked up automatically, confirmed
 import-clean), and live integration tests (OANDA + Postgres) all
 passed.
+
+## 2026-09-15 — FX-25H.1: source/target boundary nesting fix
+
+One further gap in FX-25H's own fix, caught by the same external review
+and verified directly before implementing (reproduced end to end against
+the pre-fix code, not just derived on paper).
+
+**Bug (confirmed): nominal duration divisibility doesn't guarantee NY
+wall-clock boundary nesting across a DST discontinuity.** FX-25H's
+`_expected_source_starts` walked source candles forward from a target
+bucket's start until reaching (or, it turned out, passing) the bucket's
+end — with no check that it actually landed exactly on that end. `H6 %
+H3 == 0` passes the existing "whole multiple" validation, but on the
+2026-03-08 spring-forward day, `H3`'s own DST-shortened boundary lands
+at 07:00-10:00Z while the `H6` bucket it's supposed to help build ends
+at 09:00Z — the source candle straddles the target boundary by an hour
+rather than nesting inside it. Reproduced directly: `aggregate_candles`
+emitted an `H6` candle at 04:00Z whose close came from that overhanging
+`H3` candle — real contamination/look-ahead, not hypothetical.
+
+**Fix:** `_expected_source_starts` now returns `None` (treated by the
+caller exactly like "incomplete") if the walk's final cursor doesn't
+land exactly on the target bucket's own end. A specific DST-transition
+bucket for a given source/target pairing is dropped — the granularity
+*pairing* itself isn't rejected; an ordinary, non-transition `H3`→`H6`
+bucket (or any other nominally-divisible pairing, most days) still
+tiles perfectly and aggregates normally.
+
+**Verification:** the exact contamination reproduced above is now a
+regression test (`test_h3_source_does_not_exactly_tile_spring_forward_
+h6_bucket`), confirmed to fail against the pre-fix code and pass
+against the fix. A second, broader structural test
+(`test_no_emitted_bucket_is_ever_over_or_under_covered_by_its_sources`)
+builds a full, legitimately-tiled day of source candles (via the same
+canonical `candle_boundary` walker, as correctly-shaped input data, not
+a re-implementation of the logic under test) for five source/target
+pairings across both DST transition days, and confirms every emitted
+bucket's boundaries exactly match the target granularity's own
+canonical boundaries with none spuriously dropped — proving the fix
+doesn't introduce false negatives alongside the true-negative case
+above. All existing FX-24/FX-25H tests pass unchanged. Full suite (504
+tests), live integration tests, and pre-commit all passed.
+
+With this, the external review's full FX-24/FX-25 assessment is
+resolved. Per the agreed sequence in `docs/NEXT_STEPS.md`, work moves
+next to `FX-26` (paginated historical backfill) after a break.

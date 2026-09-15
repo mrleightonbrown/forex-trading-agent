@@ -22,6 +22,17 @@ script against this exact scenario) that the spring-forward `H4` bucket
 (06:00-07:00) followed by a normal 2-hour one (07:00-09:00), which the
 old `3h // 2h = 1` calculation would have silently accepted with only
 the first present.
+
+`test_h3_source_does_not_exactly_tile_spring_forward_h6_bucket` and
+`test_no_emitted_bucket_is_ever_over_or_under_covered_by_its_sources`
+are FX-25H.1's own regression: nominal duration divisibility
+(`H6 % H3 == 0`) does NOT guarantee NY wall-clock source boundaries stay
+nested inside the target boundary across a DST discontinuity — verified
+directly (before the fix) that the spring-forward `H6` bucket
+04:00-09:00Z pairs with `H3`'s own DST-shortened boundary landing at
+07:00-10:00Z, one hour past the `H6` close, and that `aggregate_candles`
+would silently pull that overhanging hour into the aggregate (a real,
+reproduced contamination/look-ahead) without this fix.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -29,6 +40,7 @@ from decimal import Decimal
 
 from forex_agent.domain.candle import Candle
 from forex_agent.domain.candle_aggregation import aggregate_candles
+from forex_agent.domain.candle_boundary import candle_end_time, candle_start_boundary
 from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
@@ -72,6 +84,20 @@ def _h2_candle(instant: datetime, price: str = "1.1000") -> Candle:
 
 def _ts(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> UtcTimestamp:
     return UtcTimestamp(datetime(year, month, day, hour, minute, tzinfo=UTC))
+
+
+def _source_candle(granularity: Granularity, instant: datetime, price: str = "1.1000") -> Candle:
+    p = Decimal(price)
+    flat = Ohlc(open=p, high=p, low=p, close=p)
+    return Candle(
+        instrument=EUR_USD,
+        granularity=granularity,
+        start_time=UtcTimestamp(instant),
+        bid=flat,
+        ask=flat,
+        volume=1,
+        is_finalized=True,
+    )
 
 
 # --- summer (EDT): confirmed against a live OANDA fetch -------------------
@@ -160,6 +186,79 @@ def test_daily_bucket_anchors_to_ny_close() -> None:
     assert len(aggregated) == 1
     assert aggregated[0].start_time == _ts(2026, 9, 10, 21)  # 17:00 EDT
     assert aggregated[0].granularity is Granularity.D
+
+
+# --- FX-25H.1: source/target boundary nesting -----------------------------
+
+
+def test_h3_source_does_not_exactly_tile_spring_forward_h6_bucket() -> None:
+    """The specific contamination this fixes: reproduced directly against
+    the pre-fix code (see docs/DECISIONS.md's FX-25H.1 entry) that
+    aggregate_candles emitted an H6 candle at 04:00Z whose close came
+    from an H3 member spanning 07:00-10:00Z -- an hour past the H6
+    bucket's own canonical end (09:00Z). The extreme price below would
+    dominate the aggregate's high/close if it leaked in; it must not.
+    """
+    candles = [
+        _source_candle(Granularity.H3, datetime(2026, 3, 8, 4, 0, tzinfo=UTC), "100"),
+        _source_candle(Granularity.H3, datetime(2026, 3, 8, 7, 0, tzinfo=UTC), "999"),
+    ]
+
+    aggregated = aggregate_candles(candles, Granularity.H6)
+
+    assert _ts(2026, 3, 8, 4) not in [c.start_time for c in aggregated]
+
+
+def test_no_emitted_bucket_is_ever_over_or_under_covered_by_its_sources() -> None:
+    """Positive-case structural check across multiple source/target pairs
+    and both DST transitions: given a FULL, legitimately-tiled day of
+    source candles (generated via the same canonical boundary walker
+    aggregate_candles itself uses, as a source of correctly-shaped input
+    data -- not a re-implementation of the logic under test), every
+    emitted bucket's own start/end must exactly match the target
+    granularity's own canonical boundaries, and the run must emit exactly
+    as many buckets as that day has target boundaries -- proving the
+    FX-25H.1 fix doesn't cause false negatives (over-strict rejection of
+    genuinely complete, correctly-tiled data) alongside the true-negative
+    case above.
+    """
+    pairs = [
+        (Granularity.H1, Granularity.H4),
+        (Granularity.H2, Granularity.H4),
+        (Granularity.H2, Granularity.H6),
+        (Granularity.H4, Granularity.D),
+        (Granularity.H1, Granularity.D),
+    ]
+    # One full NY trading day spanning each transition.
+    day_anchors = [
+        datetime(2026, 3, 7, 22, 0, tzinfo=UTC),  # spring-forward day
+        datetime(2026, 10, 31, 21, 0, tzinfo=UTC),  # fall-back day
+    ]
+
+    for source_granularity, target_granularity in pairs:
+        for day_start in day_anchors:
+            day_end = candle_end_time(day_start, Granularity.D)
+
+            source_candles = []
+            cursor = day_start
+            while cursor < day_end:
+                source_candles.append(_source_candle(source_granularity, cursor))
+                cursor = candle_end_time(cursor, source_granularity)
+
+            expected_target_boundaries = []
+            cursor = day_start
+            while cursor < day_end:
+                expected_target_boundaries.append(cursor)
+                cursor = candle_end_time(cursor, target_granularity)
+
+            aggregated = aggregate_candles(source_candles, target_granularity)
+            actual_target_boundaries = [c.start_time.value for c in aggregated]
+            case = f"{source_granularity} -> {target_granularity} on {day_start}"
+
+            assert actual_target_boundaries == expected_target_boundaries, case
+            for candle in aggregated:
+                boundary_start = candle_start_boundary(candle.start_time.value, target_granularity)
+                assert candle.start_time.value == boundary_start
 
 
 # --- H1 and finer are unaffected (regression) ------------------------------

@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-25H)_
+_Last updated: 2026-09-15 (FX-25H.1)_
 
 ## What exists
 
@@ -88,13 +88,21 @@ _Last updated: 2026-09-15 (FX-25H)_
   here rather than each computing candle duration their own way.
 - `aggregate_candles` (`forex_agent.domain.candle_aggregation`, FX-7,
   day-aligned bucketing fixed FX-24, completeness check hardened
-  FX-25H): buckets for day-aligned granularities are DST-aware via
-  `candle_boundary`; `H1` and finer are unaffected. A bucket's
+  FX-25H/FX-25H.1): buckets for day-aligned granularities are DST-aware
+  via `candle_boundary`; `H1` and finer are unaffected. A bucket's
   "complete" check (FX-25H) is exact expected-source-start-time-sequence
   matching, not a member count — a member count couldn't distinguish a
   genuinely DST-short bucket from one merely missing data, nor catch a
   duplicate-plus-missing source candle at the right total count (the
-  original FX-7 edge case, now closed by the same fix). Every aggregated
+  original FX-7 edge case, now closed by the same fix). That expected
+  sequence is itself only valid (FX-25H.1) if the last source candle
+  lands exactly on the target bucket's own end — nominal duration
+  divisibility (e.g. `H6 % H3 == 0`) doesn't guarantee NY wall-clock
+  source boundaries stay nested inside the target boundary across a DST
+  discontinuity (reproduced directly: an `H3`-sourced `H6` bucket on the
+  spring-forward day pulled in an hour of data from outside its own
+  canonical end); a bucket whose sources straddle rather than tile it is
+  dropped, not the granularity pairing generally. Every aggregated
   candle is tagged `source=AGGREGATED`; mixing `NATIVE` and `AGGREGATED`
   source candles in one call raises, same as mixing instruments or
   granularities.
