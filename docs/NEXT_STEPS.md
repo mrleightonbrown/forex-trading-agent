@@ -85,10 +85,17 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   `parameters` (all required), plus a `params_from_dict` helper.
   `parameters` is a tuple of string pairs, not a `dict`, so
   `TradeHypothesis` stays hashable.
-- EMA Trend v1 → Close-Channel Breakout v1 → Time-Series Momentum v1 →
-  backtest performance metrics → `TargetPosition`/FLAT semantics → Mean
-  Reversion v1 → Volatility Expansion v1 → regime-conditioned experiments
-  → Multi-timeframe Trend v1. None of this is built yet.
+- ~~EMA Trend v1 (`ema_crossover_v1`)~~ — complete (FX-14): the reference
+  strategy. `EmaCrossoverStrategy` (`domain/strategies/ema_crossover.py`),
+  20/50 SMA-seeded EMA crossover on synthetic-midpoint close, no ADX/RSI/
+  confirmation/optimization, exactly per spec. Verified against an
+  independent reference EMA calculation, through `run_backtest` +
+  `simulate_trades` on an engineered synthetic series with hand-verified
+  execution prices, and against live OANDA practice candles.
+- Close-Channel Breakout v1 → Time-Series Momentum v1 → backtest
+  performance metrics → `TargetPosition`/FLAT semantics → Mean Reversion
+  v1 → Volatility Expansion v1 → regime-conditioned experiments →
+  Multi-timeframe Trend v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

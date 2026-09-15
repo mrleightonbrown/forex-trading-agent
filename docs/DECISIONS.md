@@ -779,3 +779,59 @@ constructed `TradeHypothesis` directly (`test_trade_hypothesis.py`,
 production code, since no concrete strategy exists yet. All four updated;
 all existing tests pass unchanged in behavior, only in construction
 syntax.
+
+## 2026-09-15 — FX-14: EMA Trend v1 (`ema_crossover_v1`) — the reference strategy
+
+The first concrete `Strategy`, implemented exactly to spec: 20/50 EMA
+crossover on synthetic-midpoint close, no ADX filter, no RSI, no extra
+confirmation, no optimization. Lives in
+`domain/strategies/ema_crossover.py`, named `ema_crossover_v1` (not
+`trend_strategy` — there will be more than one trend strategy).
+
+**Decision: SMA-seeded EMA**, as confirmed before implementing — first
+value is the simple average of the first `period` closes, standard
+recurrence (`multiplier = 2/(period+1)`) after. Same seeding style as
+Wilder's smoothing in ADX (FX-12), chosen specifically so it's
+independently verifiable against outside references.
+
+**Verification, same rigor as ADX:** wrote a second, independent
+reference implementation of SMA-seeded EMA (float-based scratch script)
+against a fixed synthetic price series, confirmed the real `Decimal`
+implementation matches it exactly at every step
+(`test_ema_matches_independent_reference_calculation`). Then went
+further than FX-12's verification did: engineered a full synthetic price
+series producing exactly one clean bullish and one clean bearish
+crossover at known bars, and traced it through the *entire* real
+pipeline — `EmaCrossoverStrategy.evaluate()` directly, then
+`run_backtest`, then `simulate_trades` — with hand-computed expected
+entry/exit prices and times at each stage. All three levels agreed.
+
+**Decision: crossover, not continuous stance** — fires only on the bar
+where `sign(fast_ema - slow_ema)` flips (`previous_diff <= 0 and
+current_diff > 0` → LONG; `previous_diff >= 0 and current_diff < 0` →
+SHORT), never every bar one EMA simply stays above the other. This is
+what pairs correctly with FX-11's close-and-reverse exit rule — a
+continuous-stance signal would fire every bar and break that rule's
+same-direction-repeat-is-a-no-op logic. Confirmed via the engineered
+series: candle-by-candle evaluation returns `None` on every bar except
+the two actual crossings.
+
+**Decision: fully stateless** — recomputes the whole EMA sequence from
+the given window on every `evaluate()` call, no remembered state between
+calls. Doesn't add new asymptotic cost: `run_backtest`'s own reslicing is
+already O(n²), so a per-call O(n) EMA recompute doesn't change the
+complexity class. Consistent with "correctness over performance for now."
+
+**Decision:** `evaluate()` returns `None` (never raises) with fewer than
+`slow_period + 1` candles — the minimum needed for both a current and
+previous slow EMA to compare. Different from `classify_regime`, which
+raises on insufficient data: a `Strategy` is called by `run_backtest`
+starting from window-length 1 and must handle every length gracefully,
+not reject short windows.
+
+**Also decided:** constructor validates `fast_period`/`slow_period` with
+the same discipline as `classify_regime` (FX-12H.1) — `int`, not `bool`,
+`>= 1`, and `fast_period < slow_period`. `strategy_key` is a class-level
+constant (identifies the algorithm, independent of instance parameters);
+`strategy_version` defaults to `"1"`; `parameters` embeds the actual
+periods used via FX-13's `params_from_dict`.

@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-13)_
+_Last updated: 2026-09-15 (FX-14)_
 
 ## What exists
 
@@ -82,11 +82,21 @@ _Last updated: 2026-09-15 (FX-13)_
   in `domain/` alongside `aggregate_candles`/`find_gaps`. `run_strategy`
   structurally enforces "strategies must only evaluate finalized candles"
   before delegating to a strategy, rather than trusting each
-  implementation to check it. No concrete strategy implementation exists.
-  `TradeHypothesis` carries full provenance (FX-13): `timeframe`,
-  `strategy_key`, `strategy_version`, `parameters` (a hashable tuple of
-  string pairs, not a `dict` — `params_from_dict` builds it from a
-  strategy's typed params), all required on every hypothesis.
+  implementation to check it. `TradeHypothesis` carries full provenance
+  (FX-13): `timeframe`, `strategy_key`, `strategy_version`, `parameters`
+  (a hashable tuple of string pairs, not a `dict` — `params_from_dict`
+  builds it from a strategy's typed params), all required on every
+  hypothesis.
+- `EmaCrossoverStrategy` (`forex_agent.domain.strategies.ema_crossover`,
+  `strategy_key="ema_crossover_v1"`) — the first concrete `Strategy`
+  (FX-14), and the reference strategy the roadmap in `docs/DECISIONS.md`
+  is built around. 20/50 SMA-seeded EMA crossover on synthetic-midpoint
+  close, deliberately minimal (no ADX/RSI/confirmation/optimization).
+  Fires only on the bar the crossover actually happens, not every bar one
+  EMA stays above the other. Verified: against an independent reference
+  EMA calculation (same rigor as ADX), through `run_backtest` +
+  `simulate_trades` on an engineered synthetic series with hand-verified
+  execution prices, and against live OANDA practice candles.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead
@@ -137,7 +147,12 @@ _Last updated: 2026-09-15 (FX-13)_
 
 ## What does not exist yet
 
-- Any concrete strategy implementation — the framework only.
+- Any strategy besides `EmaCrossoverStrategy` — the rest of the roadmap
+  (Close-Channel Breakout, Time-Series Momentum, Mean Reversion,
+  Volatility Expansion, Multi-timeframe Trend) is not built yet.
+- Backtest performance metrics — no way yet to measure whether a
+  strategy's output is actually good (win rate, expectancy, Sharpe,
+  etc.), only to produce simulated trades.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.
