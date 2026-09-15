@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-20)_
+_Last updated: 2026-09-15 (FX-21)_
 
 ## What exists
 
@@ -161,6 +161,19 @@ _Last updated: 2026-09-15 (FX-20)_
   `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
   (confirming FLAT-closes-without-reopening end to end), and against
   live OANDA practice candles.
+- `RegimeSegmentedTrades` + `segment_trades_by_regime`
+  (`forex_agent.domain.regime_segmentation`, FX-21): buckets a
+  strategy's `SimulatedTrade`s by the `TrendRegime` (FX-12) in effect at
+  each trade's `entry_time` — `.trending`/`.ranging`/`.unclassified`
+  (the last for trades too early to have `2 * period` candles of
+  history, the normal case, not an error). Connects `classify_regime`
+  and `compute_metrics` for the first time; `compute_metrics` needed no
+  changes, exactly the composable segmentation FX-17 was designed for.
+  No strategy was modified — regime stays structurally external. First
+  used by `tests/replay/test_ema_regime_conditioned.py` (a live-OANDA
+  test asserting only structural properties, never a specific winner)
+  to produce a real empirical finding on EMA-vs-TRENDING, recorded in
+  `docs/DECISIONS.md`.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,
@@ -230,8 +243,15 @@ _Last updated: 2026-09-15 (FX-20)_
 - Any strategy besides `EmaCrossoverStrategy`,
   `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`,
   `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
-  regime-conditioned experiments and Multi-timeframe Trend v1 are not
-  built yet.
+  Multi-timeframe Trend v1 is not built yet (blocked on H4
+  candle-alignment reconciliation).
+- Control strategies (always-long, always-short, previous-bar-direction,
+  no-trade) — a no-skill baseline for judging whether any strategy's
+  metrics reflect real skill vs. sample noise. Flagged, undated; not a
+  prerequisite for anything built so far. A Mean-Reversion-vs-RANGING
+  regime-conditioned experiment (FX-21's own follow-up, same shape as
+  the EMA-vs-TRENDING one already done) is similarly flagged and
+  undated.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

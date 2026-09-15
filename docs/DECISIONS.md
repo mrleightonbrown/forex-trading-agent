@@ -1147,3 +1147,78 @@ breakout" no-op. Same series then traced through `run_backtest` +
 `simulate_trades`, confirming FLAT-closes-without-reopening end to end
 (4 hypotheses produce only 2 trades). Also verified against live OANDA
 practice candles.
+
+## 2026-09-15 — FX-21: regime-conditioned experiment (EMA vs. EMA-when-TRENDING)
+
+Connects `classify_regime` (FX-12) and `compute_metrics` (FX-17) for the
+first time via a new `domain/regime_segmentation.py`:
+`segment_trades_by_regime(trades, candles, *, period=14,
+threshold=Decimal("25")) -> RegimeSegmentedTrades` (`.trending`/
+`.ranging`/`.unclassified`, each `list[SimulatedTrade]`). No strategy
+was modified; regime stays structurally external, exactly as decided
+when regime detection was first built.
+
+**Decision: control strategies stay a separate, later story** —
+confirmed before implementing. This story answers "does regime
+filtering change EMA's own metrics", which is meaningful without a
+no-skill baseline; comparing against control strategies (always-long,
+always-short, previous-bar-direction, no-trade) is a different question,
+still flagged and undated.
+
+**Decision: EMA-vs-TRENDING only, not also Mean-Reversion-vs-RANGING in
+the same story** — confirmed before implementing, matching the
+established one-strategy(-or-one-comparison)-per-story precedent. The
+segmentation helper this story built is generic, so the Mean-Reversion/
+RANGING follow-up needs no new infrastructure when picked up.
+
+**Decision: a trade with insufficient preceding history (`< 2 * period`
+candles at its `entry_time`) is `unclassified`, not an error** — the
+normal case for early trades in any backtest. A trade whose
+`instrument` or `entry_time` doesn't match the candle series *does*
+raise — a mismatched pairing is caller error, same defensive philosophy
+as `simulate_trades` (FX-11H).
+
+**Decision: the live replay test (`tests/replay/test_ema_regime_
+conditioned.py`) asserts only structural properties** (every trade
+lands in exactly one bucket, `compute_metrics` doesn't raise on any
+non-empty bucket) — never that one bucket's metrics "beat" another's.
+Asserting a specific winner in a hard-coded test would be dishonest
+against non-reproducible live market data; the actual empirical
+question this story exists to answer is reported here, as data, not
+baked into a pass/fail assertion.
+
+**The empirical finding** (observed 2026-09-15, EUR/USD H1, default
+`EmaCrossoverStrategy()` 20/50 EMA, default `classify_regime` period=14/
+threshold=25, ~90 days / 1536 finalized candles):
+
+| | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| Baseline (all trades) | 26 | 0.192 | -0.00029 USD | 0.838 | -0.060 |
+| TRENDING-only | 10 | 0.100 | -0.00232 USD | 0.003 | -1.710 |
+| RANGING-only | 16 | 0.250 | +0.00099 USD | 1.688 | +0.174 |
+
+On this sample, filtering EMA's trades down to `TRENDING` did **not**
+help — it made every metric measured worse than both the unconditional
+baseline and the `RANGING`-only subset, which was the only one of the
+three with positive expectancy. This is the opposite of the naive
+"trend-following strategy should do better in a trending regime"
+intuition the roadmap set out to test.
+
+Read with real caution, not as a settled conclusion: `n=26` total
+(`n=10` TRENDING) is far too small a sample to be statistically
+meaningful either way — this is one 90-day window on one instrument at
+one granularity, with the reference `EmaCrossoverStrategy()`
+unmodified. What it *does* establish is exactly what this story set out
+to establish: regime-conditioning is not a free win that can be assumed
+into a strategy — on this sample it was actively counterproductive, so
+keeping it structurally separate and testing it as a hypothesis (not
+baking it into `EmaCrossoverStrategy` itself) was the right call. Worth
+re-running with more history once candle-backfill pagination exists
+(flagged in FX-13's roadmap entry) before drawing any firmer conclusion.
+
+**Verification:** the segmentation helper reuses FX-12's own already-
+verified trending/ranging fixtures directly (steadily increasing prices,
+perfectly flat prices) rather than re-deriving ADX arithmetic — its job
+is bucketing, not classification. Full suite (439 tests) passed,
+including the new replay test against live OANDA data (the run that
+produced the table above).

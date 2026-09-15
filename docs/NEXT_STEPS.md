@@ -154,8 +154,22 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
   (confirming FLAT-closes-without-reopening end to end), and against
   live OANDA practice candles.
-- Regime-conditioned experiments → Multi-timeframe Trend v1. None of
-  this is built yet.
+- ~~Regime-conditioned experiment: EMA vs. EMA-when-TRENDING~~ —
+  complete (FX-21). `segment_trades_by_regime` (`domain/
+  regime_segmentation.py`) buckets a strategy's simulated trades by the
+  `TrendRegime` in effect at entry; `compute_metrics` needed zero
+  changes (exactly the composable segmentation FX-17 was designed for).
+  **Empirical finding** (see `docs/DECISIONS.md` for the full table and
+  caveats): on a 90-day live EUR/USD H1 sample, filtering EMA's trades
+  to `TRENDING` made every metric worse than both the unconditional
+  baseline and `RANGING`-only — the opposite of the naive expectation,
+  though `n=26` is too small to be conclusive either way. Confirms the
+  value of keeping regime structurally external rather than assumed.
+  Mean-Reversion-vs-RANGING and control strategies remain separate,
+  undated follow-ups — the segmentation helper needs no changes for
+  either when picked up.
+- Multi-timeframe Trend v1. Not built yet — blocked on the H4
+  candle-alignment reconciliation flagged in FX-13's roadmap entry.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
