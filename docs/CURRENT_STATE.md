@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-18)_
+_Last updated: 2026-09-15 (FX-19)_
 
 ## What exists
 
@@ -125,6 +125,24 @@ _Last updated: 2026-09-15 (FX-18)_
   final-bar-not-actionable rule — the series' last hypothesis lands on
   the final candle and is correctly dropped — and against live OANDA
   practice candles.
+- `MeanReversionStrategy` (`forex_agent.domain.strategies.
+  mean_reversion`, `strategy_key="mean_reversion_v1"`) — the fourth
+  concrete `Strategy` (FX-19), and the first to actually emit
+  `TargetPosition.FLAT` (FX-18) rather than just carrying the renamed
+  field. Bollinger-Bands-style z-score: LONG when the current close is
+  `entry_threshold` population standard deviations below its own
+  `period`-bar rolling mean (oversold), SHORT when that far above
+  (overbought), FLAT when the z-score crosses back through zero — a real
+  zero-crossing test (same technique as FX-14's EMA crossover), not a
+  magnitude deadband, so it implements "exit z=0.0" literally. The
+  rolling window includes the current bar (standard Bollinger
+  definition, at the cost of a known self-referential-dampening
+  trade-off — documented, not treated as a defect); stddev is
+  population, not sample. Verified against an independently hand-derived
+  synthetic series with exact clean z-scores at every relevant bar,
+  through `run_backtest` + `simulate_trades` (confirming FLAT-closes-
+  without-reopening produces the right trade count end to end), and
+  against live OANDA practice candles.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,
@@ -192,11 +210,9 @@ _Last updated: 2026-09-15 (FX-18)_
 ## What does not exist yet
 
 - Any strategy besides `EmaCrossoverStrategy`,
-  `CloseChannelBreakoutStrategy`, and `TimeSeriesMomentumStrategy` — the
-  rest of the roadmap (Mean Reversion, Volatility Expansion,
-  Multi-timeframe Trend) is not built yet. `TargetPosition`/FLAT
-  semantics now exist (FX-18) but nothing emits FLAT yet — Mean
-  Reversion v1 will be the first.
+  `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`, and
+  `MeanReversionStrategy` — the rest of the roadmap (Volatility
+  Expansion, Multi-timeframe Trend) is not built yet.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

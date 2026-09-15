@@ -1030,3 +1030,56 @@ through the new code path. Full suite (379 tests, including the three
 live-OANDA strategy integration tests) passed; contract boundary tests
 picked up `target_position.py` automatically and confirmed it has zero
 forbidden imports and no env-var reads.
+
+## 2026-09-15 — FX-19: Mean Reversion v1
+
+The fourth concrete strategy (`domain/strategies/mean_reversion.py`,
+`strategy_key="mean_reversion_v1"`), and the first to actually emit
+`TargetPosition.FLAT` (FX-18) rather than just being renamed to carry
+it. Bollinger-Bands-style z-score: LONG when the current close is
+`entry_threshold` population standard deviations below its own
+`period`-bar rolling mean (oversold), SHORT when that far above
+(overbought), FLAT when the z-score crosses back through zero.
+
+**Decision: the rolling window includes the current bar** — confirmed
+before implementing (not FX-15's close-channel precedent of excluding
+it). This is the standard Bollinger Bands definition, at the cost of a
+known, accepted property of real Bollinger trading: an extreme move
+slightly inflates the very standard deviation used to judge it
+(self-referential dampening). Deliberately not treated as a defect.
+
+**Decision: FLAT exit is zero-crossing detection, not a deadband** —
+confirmed before implementing. The roadmap specified "exit z=0.0";
+since a `Decimal` z-score will essentially never equal exactly 0, this
+is implemented the same way as FX-14's EMA crossover (compare the
+current bar's z-score against the previous bar's, fire on a sign flip or
+exact zero) rather than introducing a made-up `exit_threshold` deadband
+parameter. This delivers the literal spec, not an approximation of it,
+and needed no new parameter. Entry always takes priority: the extreme
+checks run before the crossing check, so a bar that's both extreme and
+technically crossing is treated as a new entry, not a flat.
+
+**Also decided:** standard deviation is *population* (divide by
+`period`, not `period - 1`) — the conventional Bollinger definition,
+computed with `Decimal.sqrt()` (same technique as `backtest_metrics.py`'s
+Sharpe/Sortino). `period` must be `>= 2` (not `>= 1` like other
+strategies' lookback parameters) — a 1-bar window has zero variance by
+construction, so `period=1` would silently never fire; validated
+explicitly rather than left to produce a confusing always-`None`
+strategy. A zero-variance window (current or previous) suppresses the
+corresponding z-score computation (`None`) rather than dividing by zero.
+
+**Verification:** no seeded recurrence here (unlike EMA/ADX), but the
+window-inclusion decision above makes the arithmetic collaborative
+across the whole window rather than a simple ratio, so the same
+hand-derivation discipline was applied as everywhere else: an
+independently hand-derived synthetic series (period=5, a single +5/-5
+spike against a flat 100-baseline, chosen so the population z-score
+comes out to exact clean values — 2, -0.5, None, -2, 0.5 — at every
+relevant bar, verified with a standalone scratch calculation before
+writing the real implementation) exercises LONG entry, SHORT entry, a
+genuine zero-crossing FLAT after each, and a "hold" bar where nothing
+fires. The same series was then traced through `run_backtest` +
+`simulate_trades`, confirming FX-18's FLAT-closes-without-reopening
+behavior end to end (4 hypotheses produce only 2 trades). Also verified
+against live OANDA practice candles.

@@ -131,8 +131,19 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   three existing strategies mechanically updated to construct
   `target_position=`; no behavior change, none emit FLAT yet — that's
   Mean Reversion v1, next.
-- Mean Reversion v1 → Volatility Expansion v1 → regime-conditioned
-  experiments → Multi-timeframe Trend v1. None of this is built yet.
+- ~~Mean Reversion v1 (`mean_reversion_v1`)~~ — complete (FX-19).
+  `MeanReversionStrategy` (`domain/strategies/mean_reversion.py`): a
+  Bollinger-Bands-style z-score (window includes the current bar,
+  population stddev) — LONG when `entry_threshold` standard deviations
+  below the rolling mean, SHORT when that far above, FLAT on a genuine
+  zero-crossing (detected the same way as FX-14's EMA crossover, not a
+  deadband) — the first strategy to actually emit `TargetPosition.FLAT`
+  (FX-18). Verified against an independently hand-derived synthetic
+  series with exact z-scores at every stage, through `run_backtest` +
+  `simulate_trades` (confirming FLAT-closes-without-reopening produces
+  the right trade count), and against live OANDA practice candles.
+- Volatility Expansion v1 → regime-conditioned experiments →
+  Multi-timeframe Trend v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
