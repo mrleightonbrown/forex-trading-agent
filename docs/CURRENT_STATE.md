@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-15)_
+_Last updated: 2026-09-15 (FX-16)_
 
 ## What exists
 
@@ -109,6 +109,18 @@ _Last updated: 2026-09-15 (FX-15)_
   `simulate_trades` on an engineered series with hand-traced prices
   (including an edge case where entry and end-of-data force-close land on
   the same final candle), and against live OANDA practice candles.
+- `TimeSeriesMomentumStrategy` (`forex_agent.domain.strategies.
+  time_series_momentum`, `strategy_key="time_series_momentum_v1"`) — the
+  third concrete `Strategy` (FX-16). `return = current_close /
+  close_N_bars_ago - 1` against a single symmetric `threshold` (default
+  `Decimal("0")`, the pure baseline — a deadband is just `threshold > 0`,
+  no constructor shape change needed). Fires every qualifying bar, same
+  precedent as the close-channel breakout. Verified through
+  `run_backtest` + `simulate_trades` on an engineered series that
+  *naturally* (not specifically contrived for it) exercised FX-11H's
+  final-bar-not-actionable rule — the series' last hypothesis lands on
+  the final candle and is correctly dropped — and against live OANDA
+  practice candles.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead
@@ -159,10 +171,10 @@ _Last updated: 2026-09-15 (FX-15)_
 
 ## What does not exist yet
 
-- Any strategy besides `EmaCrossoverStrategy` and
-  `CloseChannelBreakoutStrategy` — the rest of the roadmap (Time-Series
-  Momentum, Mean Reversion, Volatility Expansion, Multi-timeframe Trend)
-  is not built yet.
+- Any strategy besides `EmaCrossoverStrategy`,
+  `CloseChannelBreakoutStrategy`, and `TimeSeriesMomentumStrategy` — the
+  rest of the roadmap (Mean Reversion, Volatility Expansion,
+  Multi-timeframe Trend) is not built yet.
 - Backtest performance metrics — no way yet to measure whether a
   strategy's output is actually good (win rate, expectancy, Sharpe,
   etc.), only to produce simulated trades.

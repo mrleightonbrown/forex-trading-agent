@@ -886,3 +886,38 @@ validation already permits equal entry/exit time), not a bug.
 **Also decided:** constructor validates `lookback` with the same
 discipline as every other parameterized indicator in this codebase now
 (`classify_regime`, `EmaCrossoverStrategy`) — `int`, not `bool`, `>= 1`.
+
+## 2026-09-15 — FX-16: Time-Series Momentum v1 (`time_series_momentum_v1`)
+
+The third concrete `Strategy`, deliberately minimal per the roadmap: just
+`return = current_close / close_N_bars_ago - 1` against a threshold — not
+RSI+MACD+ROC+stochastic combined into one "momentum" strategy, where
+nothing would be attributable. Lives in
+`domain/strategies/time_series_momentum.py`.
+
+**Decision: single symmetric `threshold: Decimal`**, not independent
+positive/negative thresholds — confirmed before implementing. LONG if
+`return > threshold`, SHORT if `return < -threshold`. Default
+`Decimal("0")` is the pure baseline, exactly as specified; a later
+deadband is just `threshold > 0`, no constructor shape change needed.
+`threshold` is `Decimal`, validated `>= 0` — same "never use float"
+discipline as every other threshold in this codebase (`classify_regime`'s
+ADX threshold).
+
+**Decision: fires every qualifying bar**, same precedent set by FX-15's
+close-channel breakout and for the identical reason — "current return vs.
+threshold" has no edge-detection concept in its definition, re-evaluated
+fresh each bar, and FX-11's same-direction-repeat-is-a-no-op already
+makes repeated firing architecturally safe.
+
+**Verification:** no recursive-smoothing risk here (a plain ratio, unlike
+EMA/ADX), so the independent-reference-implementation step wasn't needed
+— but the same hand-tracing discipline was applied: an engineered price
+series run through `evaluate()` directly, then `run_backtest`, then
+`simulate_trades`, with hand-computed expected values at every stage.
+This time the trace *naturally* produced an instance of FX-11H's
+final-bar-not-actionable rule (the series' last hypothesis happened to
+land on the final candle) rather than needing one specifically
+engineered for it, as FX-15's edge case did — a good sign the rule
+behaves correctly on realistic, not just contrived, data. Also verified
+against live OANDA practice candles.

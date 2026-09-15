@@ -102,10 +102,18 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   `simulate_trades` on an engineered series with hand-traced prices
   (including a same-candle entry/force-close edge case), and against
   live OANDA practice candles.
-- Time-Series Momentum v1 → backtest performance metrics →
-  `TargetPosition`/FLAT semantics → Mean Reversion v1 → Volatility
-  Expansion v1 → regime-conditioned experiments → Multi-timeframe Trend
-  v1. None of this is built yet.
+- ~~Time-Series Momentum v1 (`time_series_momentum_v1`)~~ — complete
+  (FX-16). `TimeSeriesMomentumStrategy` (`domain/strategies/
+  time_series_momentum.py`): `return = current_close / close_N_bars_ago -
+  1` against a single symmetric `threshold` (default 0, the pure
+  baseline — a deadband is just `threshold > 0`, no constructor change
+  needed). Fires every qualifying bar, same precedent as FX-15. Verified
+  through `run_backtest` + `simulate_trades` on an engineered series that
+  *naturally* (not contrived) exercised FX-11H's final-bar-not-actionable
+  rule, and against live OANDA practice candles.
+- Backtest performance metrics → `TargetPosition`/FLAT semantics → Mean
+  Reversion v1 → Volatility Expansion v1 → regime-conditioned experiments
+  → Multi-timeframe Trend v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
