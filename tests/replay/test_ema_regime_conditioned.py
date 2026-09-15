@@ -1,7 +1,17 @@
-"""FX-21: the regime-conditioned experiment itself. Runs EmaCrossoverStrategy
-against real OANDA practice H1 candles, segments the resulting trades by
-the TrendRegime in effect at entry, and compares unconditional vs.
-TRENDING-only vs. RANGING-only metrics.
+"""FX-21 (look-ahead fixed in FX-21H): the EMA entry-regime-attribution
+experiment. Runs EmaCrossoverStrategy unconditionally against real OANDA
+practice H1 candles, segments the resulting trades by the TrendRegime
+prevailing strictly BEFORE each trade's entry, and compares unconditional
+vs. TRENDING-only vs. RANGING-only metrics.
+
+This is entry-regime ATTRIBUTION, not regime-GATING: EMA runs exactly as
+it always does, taking every signal it would normally take; regime is
+only used afterward to label completed trades for comparison. It does
+NOT test "what if EMA refused to enter (or exited to FLAT) when the
+regime didn't match" — that is a different, unbuilt experiment that
+would change which trades occur at all, including a real design question
+about what a regime-mismatched reversal signal should do (ignore it,
+reverse anyway, or go FLAT instead) — see docs/DECISIONS.md.
 
 Auto-skipped when OANDA credentials aren't configured — same pattern as
 every other live test.

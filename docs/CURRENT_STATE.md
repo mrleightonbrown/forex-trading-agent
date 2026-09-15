@@ -162,18 +162,25 @@ _Last updated: 2026-09-15 (FX-21)_
   (confirming FLAT-closes-without-reopening end to end), and against
   live OANDA practice candles.
 - `RegimeSegmentedTrades` + `segment_trades_by_regime`
-  (`forex_agent.domain.regime_segmentation`, FX-21): buckets a
-  strategy's `SimulatedTrade`s by the `TrendRegime` (FX-12) in effect at
-  each trade's `entry_time` — `.trending`/`.ranging`/`.unclassified`
-  (the last for trades too early to have `2 * period` candles of
-  history, the normal case, not an error). Connects `classify_regime`
-  and `compute_metrics` for the first time; `compute_metrics` needed no
-  changes, exactly the composable segmentation FX-17 was designed for.
-  No strategy was modified — regime stays structurally external. First
-  used by `tests/replay/test_ema_regime_conditioned.py` (a live-OANDA
-  test asserting only structural properties, never a specific winner)
-  to produce a real empirical finding on EMA-vs-TRENDING, recorded in
-  `docs/DECISIONS.md`.
+  (`forex_agent.domain.regime_segmentation`, FX-21, look-ahead fixed
+  FX-21H): performs **entry-regime attribution** — buckets a strategy's
+  already-executed `SimulatedTrade`s by the `TrendRegime` (FX-12) in
+  effect strictly *before* each trade's `entry_time` (the entry candle
+  itself is excluded: only its open, not its high/low/close, is known
+  at the instant of entry) — `.trending`/`.ranging`/`.unclassified`
+  (the last for trades too early to have `2 * period` candles of prior
+  history, the normal case, not an error). This is attribution, not
+  regime-*gating*: EMA runs unconditionally and takes every signal it
+  normally would; regime only labels completed trades afterward. A true
+  gating experiment (which would change which trades occur, and needs
+  its own design pass) is a distinct, unbuilt future story. Connects
+  `classify_regime` and `compute_metrics` for the first time;
+  `compute_metrics` needed no changes, exactly the composable
+  segmentation FX-17 was designed for. No strategy was modified —
+  regime stays structurally external. First used by
+  `tests/replay/test_ema_regime_conditioned.py` (a live-OANDA test
+  asserting only structural properties, never a specific winner) to
+  produce a real empirical finding, recorded in `docs/DECISIONS.md`.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,
@@ -249,9 +256,11 @@ _Last updated: 2026-09-15 (FX-21)_
   no-trade) — a no-skill baseline for judging whether any strategy's
   metrics reflect real skill vs. sample noise. Flagged, undated; not a
   prerequisite for anything built so far. A Mean-Reversion-vs-RANGING
-  regime-conditioned experiment (FX-21's own follow-up, same shape as
-  the EMA-vs-TRENDING one already done) is similarly flagged and
-  undated.
+  entry-regime-attribution experiment (FX-21's own follow-up, same shape
+  as the EMA one already done) is similarly flagged and undated. True
+  regime-*gating* (an entry filter that changes which trades occur,
+  distinct from attribution) is also unbuilt — see FX-21H's entry in
+  `docs/DECISIONS.md`.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

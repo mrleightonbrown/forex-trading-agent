@@ -154,22 +154,36 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
   (confirming FLAT-closes-without-reopening end to end), and against
   live OANDA practice candles.
-- ~~Regime-conditioned experiment: EMA vs. EMA-when-TRENDING~~ —
-  complete (FX-21). `segment_trades_by_regime` (`domain/
-  regime_segmentation.py`) buckets a strategy's simulated trades by the
-  `TrendRegime` in effect at entry; `compute_metrics` needed zero
-  changes (exactly the composable segmentation FX-17 was designed for).
-  **Empirical finding** (see `docs/DECISIONS.md` for the full table and
-  caveats): on a 90-day live EUR/USD H1 sample, filtering EMA's trades
-  to `TRENDING` made every metric worse than both the unconditional
-  baseline and `RANGING`-only — the opposite of the naive expectation,
-  though `n=26` is too small to be conclusive either way. Confirms the
-  value of keeping regime structurally external rather than assumed.
-  Mean-Reversion-vs-RANGING and control strategies remain separate,
-  undated follow-ups — the segmentation helper needs no changes for
-  either when picked up.
-- Multi-timeframe Trend v1. Not built yet — blocked on the H4
-  candle-alignment reconciliation flagged in FX-13's roadmap entry.
+- ~~EMA entry-regime attribution~~ — complete (FX-21, look-ahead fixed
+  FX-21H). `segment_trades_by_regime` (`domain/regime_segmentation.py`)
+  buckets a strategy's already-executed simulated trades by the
+  `TrendRegime` prevailing strictly before entry; `compute_metrics`
+  needed zero changes (exactly the composable segmentation FX-17 was
+  designed for). This is attribution (label trades after the fact), not
+  gating (change which trades occur) — the two are explicitly distinct;
+  a true gating experiment remains unbuilt (see FX-21H's entry in
+  `docs/DECISIONS.md` for the reversal-vs-FLAT design question it
+  raises). **Empirical finding** (see `docs/DECISIONS.md` for the full
+  table and caveats): on a 90-day live EUR/USD H1 sample, EMA trades
+  entered during `TRENDING` performed worse on every metric than both
+  the unconditional baseline and `RANGING`-only trades — the opposite
+  of the naive expectation, though `n=26` is too small to be conclusive
+  either way. Confirms the value of keeping regime structurally external
+  rather than assumed. Mean-Reversion-vs-RANGING attribution, true
+  regime-gating, and control strategies all remain separate, undated
+  follow-ups.
+- Small strategy-suite hardening batch (flagged by the same external
+  review that produced FX-21H): `run_backtest` doesn't validate
+  `hypothesis.timeframe` against the candle series' actual granularity;
+  `MeanReversionStrategy` accepts `entry_threshold=0`, which silently
+  makes its FLAT crossing branch unreachable; `compute_metrics` checks
+  P&L currency but not instrument, so different same-currency
+  instruments (e.g. EUR_USD and GBP_USD) can currently be mixed. Not
+  built yet.
+- Control strategies, Mean-Reversion-vs-RANGING attribution, then
+  Multi-timeframe Trend v1 (as `FX-22` candle-alignment/OANDA H4
+  reconciliation followed by `FX-23`) — sequenced per the same external
+  review. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

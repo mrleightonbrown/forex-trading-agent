@@ -1,8 +1,13 @@
-"""FX-21: regime segmentation tests.
+"""FX-21 (look-ahead fixed in FX-21H): regime segmentation tests.
 
 Reuses FX-12's own already-verified fixtures (steadily increasing prices
 -> TRENDING, perfectly flat prices -> RANGING) rather than re-deriving
 ADX arithmetic — this module's job is bucketing, not classification.
+
+`test_entry_candles_own_ohlc_does_not_affect_classification` is the
+specific look-ahead regression FX-21H added: it proves the entry
+candle's own high/low/close cannot influence its trade's regime label,
+mirroring FX-11H's own look-ahead regression precedent.
 """
 
 from datetime import UTC, datetime
@@ -67,7 +72,7 @@ _RANGING_PRICES = ["100"] * 30
 
 def test_trending_trade_is_bucketed_as_trending() -> None:
     candles = _candles(_TRENDING_PRICES)
-    trade = _trade(29, 29)  # entered on the last, fully-historied candle
+    trade = _trade(29, 29)  # entered on the last candle; classified on candles 0-28
 
     result = segment_trades_by_regime([trade], candles, period=14)
 
@@ -100,8 +105,8 @@ def test_early_trade_with_insufficient_history_is_unclassified() -> None:
 
 def test_multiple_trades_sorted_into_different_buckets() -> None:
     candles = _candles(_TRENDING_PRICES)  # 30 candles, period=14 needs 28
-    early_trade = _trade(10, 10)  # prefix length 11 < 28: unclassified
-    late_trade = _trade(29, 29)  # prefix length 30 >= 28: trending
+    early_trade = _trade(10, 10)  # history (candles 0-9) length 10 < 28: unclassified
+    late_trade = _trade(29, 29)  # history (candles 0-28) length 29 >= 28: trending
 
     result = segment_trades_by_regime([early_trade, late_trade], candles, period=14)
 
@@ -132,6 +137,38 @@ def test_period_and_threshold_are_configurable() -> None:
 
     ranging = segment_trades_by_regime([trade], candles, period=3, threshold=Decimal("99"))
     assert ranging.ranging == [trade]
+
+
+# --- FX-21H: look-ahead regression ------------------------------------
+
+
+def test_entry_candles_own_ohlc_does_not_affect_classification() -> None:
+    """The specific bug FX-21H fixed: a trade's regime label must not
+    depend on its own entry candle's high/low/close, since only that
+    candle's open is known at the instant of entry (FX-11H).
+
+    Uses a choppy/oscillating 29-bar prefix (ADX ~3.53, RANGING at any
+    reasonable threshold) with a dramatically mutated 30th (entry) bar,
+    and a `threshold` chosen so that INCLUDING that mutated entry bar
+    would tip ADX from ~3.53 up to ~8.00 -- crossing the threshold to
+    TRENDING. The correct result is RANGING: the mutated entry candle
+    must be excluded entirely, not merely outvoted. Confirmed against
+    `_compute_adx` directly before writing this test (with vs. without
+    the entry candle: 3.53 vs. 8.00 for this exact series) -- the old
+    `candles[:entry_index + 1]` slicing would have produced TRENDING
+    here; the fixed `candles[:entry_index]` slicing must produce
+    RANGING.
+    """
+    choppy_prefix = [str(100 + (2 if i % 2 == 0 else -2)) for i in range(29)]
+    mutated_entry_price = "200"  # wildly outside the +-2 oscillation
+    candles = [*_candles(choppy_prefix), _flat_candle(29, mutated_entry_price)]
+    trade = _trade(29, 29)
+
+    result = segment_trades_by_regime([trade], candles, period=14, threshold=Decimal("6"))
+
+    assert result.ranging == [trade]
+    assert result.trending == []
+    assert result.unclassified == []
 
 
 # --- validation ---------------------------------------------------------

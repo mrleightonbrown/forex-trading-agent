@@ -1,15 +1,28 @@
-"""FX-21: connects `classify_regime` (FX-12) and `compute_metrics`
-(FX-17) — built for, and only for, the regime-conditioned experiment
-story: does filtering a strategy's trades down to one `TrendRegime`
-change its metrics? No strategy is modified; regime stays structurally
-external to every strategy, exactly as decided when regime detection was
-first built (see `docs/DECISIONS.md`).
+"""FX-21 (look-ahead fixed in FX-21H): connects `classify_regime` (FX-12)
+and `compute_metrics` (FX-17) to perform ENTRY-REGIME ATTRIBUTION — not
+regime-gating. This buckets trades a strategy already took
+unconditionally by the `TrendRegime` prevailing at each trade's entry;
+it does not change which trades occur. A true regime-*gating* strategy
+(one that refuses to enter, or exits to FLAT instead of reversing, when
+the regime doesn't match) is a different, unbuilt experiment with its
+own real design questions — see `docs/DECISIONS.md`. No strategy is
+modified here; regime stays structurally external to every strategy,
+exactly as decided when regime detection was first built.
 
 `compute_metrics` needed zero changes for this — it was deliberately
 designed (FX-17) to accept any `list[SimulatedTrade]` and report full
 stats for exactly that list, so "trending vs. ranging" is just filtering
 the trade list before calling it twice. This module supplies that
 filter.
+
+FX-21H: the original version of this module classified each trade using
+`candles[:entry_index + 1]` — INCLUDING the entry candle's own high/low/
+close, none of which are known at the instant of entry (FX-11H:
+execution happens at that candle's OPEN; only the open is known then).
+That is look-ahead bias, the same class of bug FX-11H fixed in
+`simulate_trades` itself. Fixed to `candles[:entry_index]`: only candles
+fully completed strictly before entry — the decision candle and
+earlier.
 """
 
 from dataclasses import dataclass
@@ -38,13 +51,15 @@ def segment_trades_by_regime(
 ) -> RegimeSegmentedTrades:
     """Buckets `trades` by the `TrendRegime` in effect at each trade's
     `entry_time`, classified via `classify_regime` on `candles` truncated
-    to (and including) that bar — never a look-ahead: only history up to
-    and including the entry bar is used to judge it.
+    to STRICTLY BEFORE the entry bar (FX-21H) — the entry candle itself
+    is excluded, since only its open (the execution price, per FX-11H)
+    is known at the instant of entry; its high/low/close are not.
 
     A trade is `unclassified`, not an error, if there isn't yet
-    `2 * period` candles of history at its `entry_time` — the minimum
-    `classify_regime` itself requires. This is the normal, expected case
-    for trades entered early in any backtest, not a caller mistake.
+    `2 * period` candles of history strictly before its `entry_time` —
+    the minimum `classify_regime` itself requires. This is the normal,
+    expected case for trades entered early in any backtest, not a
+    caller mistake.
 
     Raises `ValueError` if `candles` fails `require_consistent_series`
     (one instrument, one granularity, strictly ascending), or if any
@@ -75,7 +90,7 @@ def segment_trades_by_regime(
                 "correspond to any candle's start_time"
             )
 
-        history = candles[: entry_index + 1]
+        history = candles[:entry_index]  # FX-21H: strictly before entry, not including it
         if len(history) < minimum_required:
             unclassified.append(trade)
             continue

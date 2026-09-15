@@ -1222,3 +1222,57 @@ perfectly flat prices) rather than re-deriving ADX arithmetic — its job
 is bucketing, not classification. Full suite (439 tests) passed,
 including the new replay test against live OANDA data (the run that
 produced the table above).
+
+## 2026-09-15 — FX-21H: fixed regime look-ahead; corrected FX-21 framing
+
+**Correction, not a silent edit — the table and framing above are
+superseded by a confirmed bug**, caught by external review.
+`segment_trades_by_regime` classified each trade using
+`candles[:entry_index + 1]`, which includes the entry candle's own
+high/low/close. Per FX-11H, a trade executes at its entry candle's
+*open* — its high/low/close aren't known yet at that instant. This is
+the exact class of look-ahead bug FX-11H fixed in `simulate_trades`
+itself, just recurring one layer up in a story built on top of it.
+Fixed to `candles[:entry_index]`: only candles fully completed strictly
+before entry.
+
+**Also corrected: FX-21's own framing overstated what it built.** What
+exists is entry-regime *attribution* — EMA runs unconditionally, trades
+are labeled by regime after the fact for comparison. It is not
+regime-*gating* (an entry filter that would change which trades occur
+at all). The distinction matters most at a reversal: if `TRENDING` were
+a real entry filter and EMA produces a SHORT signal while LONG and the
+regime is `RANGING`, should the position close to FLAT, get ignored
+(stay LONG), or reverse anyway despite the filter? All three are
+defensible; none is implemented. **True regime-gating is recorded here
+as a distinct, unbuilt, undated future experiment** — not a rename of
+FX-21, not a trivial follow-up. `docs/CURRENT_STATE.md`/`NEXT_STEPS.md`
+updated to use "entry-regime attribution" throughout.
+
+**New regression test**
+(`test_entry_candles_own_ohlc_does_not_affect_classification`, FX-21H):
+a choppy 29-bar `RANGING` prefix (ADX ~3.53) with a dramatically
+mutated 30th (entry) bar, and a `threshold` chosen so that *including*
+that mutated bar would tip ADX to ~8.00 — crossing into `TRENDING`.
+Confirmed by temporarily reverting the fix that this test fails against
+the old code and passes against the new — a real regression test, not
+just a plausible-looking one.
+
+**Rerun finding:** rerunning the live experiment after the fix
+(EUR/USD H1, same ~90-day window shape, default `EmaCrossoverStrategy()`)
+produced bucket counts identical to the original run
+(`trending=10, ranging=16, unclassified=0`) and metrics differing only
+in the last few decimal places (a different live data window, one hour
+later than the original run — not the bug). For this specific sample,
+no trade's regime label was close enough to the ADX threshold boundary
+for the one extra (entry) candle to have flipped it. That does **not**
+excuse the bug — the targeted regression test above proves it was real
+and is now fixed — it just means this particular 90-day EUR/USD H1
+sample happened not to be sensitive to it. The qualitative conclusion
+from FX-21 stands, now on corrected machinery: `TRENDING`-only
+performed worse than both baseline and `RANGING`-only, `n=26` is still
+too small to be conclusive, and this is worth rerunning with more
+history once candle-backfill pagination exists.
+
+**Verification:** full suite (440 tests, one new regression test) and
+the live replay test all passed.
