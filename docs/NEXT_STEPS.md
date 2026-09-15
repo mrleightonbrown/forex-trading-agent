@@ -223,8 +223,31 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   "complete" threshold has to be computed per bucket from real elapsed
   time, not a fixed constant, or such a bucket gets silently dropped as
   falsely "incomplete."
-- Multi-timeframe Trend v1 (`FX-25`) — its former blocker is resolved;
-  not built yet.
+- ~~Multi-timeframe Trend v1~~ — complete (FX-25).
+  `MultiTimeframeTrendStrategy` (`domain/strategies/
+  multi_timeframe_trend.py`): an H1 EMA-crossover entry signal, gated
+  by H4's own EMA fast/slow *state* (bullish/bearish/neutral, not a
+  crossover event). First strategy needing two candle series at once —
+  `Strategy.evaluate()`'s signature is unchanged; the full H4 series is
+  a constructor argument, filtered on every call to only bars fully
+  closed strictly before the current H1 bar (proven no-look-ahead via a
+  mutation regression). Disagreement (or insufficient/neutral H4)
+  closes to `FLAT` rather than being ignored, resolving FX-21H's own
+  flagged reversal-vs-FLAT design question. Verified through a
+  hand-derived synchronized H1+H4 series covering all four outcomes,
+  through `run_backtest` + `simulate_trades`, and against live OANDA
+  candles at both granularities.
+
+**This closes out the original diversity-first strategy-suite roadmap**
+recorded in `docs/DECISIONS.md` (2026-09-15): six directional
+strategies, `TargetPosition`/FLAT semantics, backtest metrics, control
+strategies, two entry-regime-attribution experiments, and candle
+alignment are all complete. Remaining flagged, undated follow-ups: a
+`TrendRegime`-based (not just H4-based) general regime-gating strategy,
+candle-backfill pagination, and `CandleRepository.get_range`'s
+`source`-filter ergonomics (schema already prevents collisions; no
+consumer needs the filter yet). None of these block anything currently
+planned — the next roadmap, if any, is a fresh conversation.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

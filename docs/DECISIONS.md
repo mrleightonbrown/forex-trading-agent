@@ -1525,3 +1525,67 @@ genuinely short by even one candle. `CandleSource` round-trips through
 `aggregate_candles`, the OANDA adapter, and a live-Postgres DB test
 proving native/aggregated coexistence without collision. Full suite
 (474 tests) and live integration tests (OANDA + Postgres) all passed.
+
+## 2026-09-15 — FX-25: Multi-timeframe Trend Confirmation v1
+
+The last item on the original strategy-suite roadmap (`docs/DECISIONS.md`,
+2026-09-15's original entry), deliberately sequenced last and blocked
+on FX-24. `MultiTimeframeTrendStrategy`
+(`domain/strategies/multi_timeframe_trend.py`,
+`strategy_key="multi_timeframe_trend_v1"`): an H1 EMA-crossover entry
+signal, gated by H4's own EMA fast/slow *state*.
+
+**Decision: architectural note, not a silent redesign** — the first
+strategy needing two candle series. `Strategy.evaluate(candles:
+list[Candle])`'s signature is unchanged for every strategy, including
+this one; the full H4 series is a **constructor** argument (legitimate
+for backtesting, which always operates over already-fetched historical
+data), and `evaluate()` internally filters it, every call, to only H4
+bars fully closed strictly before the current H1 bar's `start_time`.
+Confirmed H4 boundaries always land exactly on H1 boundaries (both
+whole-UTC-hour quantized, post-FX-24), so `h4_start + 4h <=
+h1_current_start` is exactly the right cutoff.
+
+**Decision: H4 confirmation is the EMA relationship's current *state*,
+not a crossover *event*** — confirmed before implementing (AskUserQuestion).
+Reuses this codebase's own reference trend indicator (FX-14) rather than
+introducing a second indicator family (e.g. ADX +DI/-DI direction) purely
+for confirmation.
+
+**Decision: disagreement closes to FLAT, not ignored** — confirmed
+before implementing, resolving the reversal-vs-FLAT design question
+FX-21H's own entry explicitly flagged as unresolved. Because EMA
+crossovers structurally alternate direction, a disagreeing new H1
+signal is always opposite to whatever's currently open — so
+unconditional `FLAT` (FX-18) closes an opposing confirmed position and
+no-ops if already flat, with no same-direction case to special-case.
+Insufficient H4 history and a `NEUTRAL` H4 state (fast == slow exactly)
+are both treated identically to disagreement — unconfirmed is
+unconfirmed, not a distinct third case.
+
+**Verification:** a hand-derived synchronized H1+H4 series (worked out
+via a scratch script before implementing, same discipline as every
+strategy needing coordinated multi-part synthetic data) exercising all
+four outcomes — confirmed LONG, unconfirmed SHORT→FLAT, confirmed LONG
+again, confirmed SHORT once H4 flips bearish — through `evaluate()`
+directly and then through `run_backtest` + `simulate_trades` (4
+hypotheses producing 3 trades, confirming FLAT-closes-without-reopening
+end to end). A dedicated look-ahead regression
+(`test_h4_candles_not_yet_closed_are_not_visible`) mutates only an
+H4 bar not yet closed as of the decision bar and confirms the outcome
+is unaffected — confirmed by temporarily weakening the visibility
+filter and observing the test fail, same proof-of-regression discipline
+as FX-21H's own look-ahead fix. Also verified against live OANDA
+practice candles at both granularities simultaneously. Full suite (496
+tests) passed.
+
+This closes out the original diversity-first strategy-suite roadmap
+recorded in this file's 2026-09-15 entry: six directional strategies
+(EMA, close-channel breakout, time-series momentum, mean reversion,
+volatility expansion, multi-timeframe trend), `TargetPosition`/FLAT
+semantics, backtest metrics, control strategies, two entry-regime-
+attribution experiments, and candle alignment all complete. Remaining
+flagged, undated follow-ups: true regime-*gating* as a general concept
+(FX-25 is one concrete instance of it; a generalized version is still
+unbuilt), candle-backfill pagination, and the H4-alignment fix's own
+`get_range` source-filter ergonomics (not needed by anything built yet).

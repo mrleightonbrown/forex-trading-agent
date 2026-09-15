@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-24)_
+_Last updated: 2026-09-15 (FX-25)_
 
 ## What exists
 
@@ -184,6 +184,22 @@ _Last updated: 2026-09-15 (FX-24)_
   `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
   (confirming FLAT-closes-without-reopening end to end), and against
   live OANDA practice candles.
+- `MultiTimeframeTrendStrategy` (`forex_agent.domain.strategies.
+  multi_timeframe_trend`, `strategy_key="multi_timeframe_trend_v1"`,
+  FX-25) — the sixth concrete `Strategy`, and the first needing two
+  candle series at once. H1 EMA-crossover entry, gated by H4's own EMA
+  fast/slow *state* (not a crossover event): confirmed → `LONG`/`SHORT`;
+  H1 fires but H4 disagrees (or has insufficient history, or is
+  neutral) → `FLAT`, resolving FX-21H's own flagged reversal-vs-FLAT
+  question. `Strategy.evaluate(candles: list[Candle])`'s signature is
+  unchanged — the full H4 series is a constructor argument, filtered on
+  every call to only bars fully closed strictly before the current H1
+  bar (proven no-look-ahead via a mutation regression, same technique
+  as FX-21H's). Verified through a hand-derived synchronized H1+H4
+  series covering all four outcomes, through `run_backtest` +
+  `simulate_trades`, and against live OANDA candles at both
+  granularities. This closes out the original strategy-suite roadmap —
+  see `docs/DECISIONS.md`'s FX-25 entry.
 - `RegimeSegmentedTrades` + `segment_trades_by_regime`
   (`forex_agent.domain.regime_segmentation`, FX-21, look-ahead fixed
   FX-21H): performs **entry-regime attribution** — buckets a strategy's
@@ -296,16 +312,19 @@ _Last updated: 2026-09-15 (FX-24)_
 
 ## What does not exist yet
 
-- Any directional strategy besides `EmaCrossoverStrategy`,
+- Any strategy beyond the six now built (`EmaCrossoverStrategy`,
   `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`,
-  `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
-  Multi-timeframe Trend v1 (`FX-25`) is not built yet. Its former
-  blocker (H4 candle-alignment reconciliation) is resolved as of FX-24.
-- True regime-*gating* (an entry filter that changes which trades
-  occur, distinct from the entry-regime attribution both FX-21 and
-  FX-23 already did) — unbuilt, see FX-21H's entry in
-  `docs/DECISIONS.md` for the open reversal-vs-FLAT design question it
-  raises.
+  `MeanReversionStrategy`, `VolatilityExpansionBreakoutStrategy`,
+  `MultiTimeframeTrendStrategy`) — the original strategy-suite roadmap
+  is complete as of FX-25; anything further is a new roadmap, not
+  planned yet.
+- True regime-*gating* as a **general** concept (an entry filter that
+  changes which trades occur based on an external market-state
+  classification, distinct from the entry-regime attribution FX-21/
+  FX-23 did) — FX-25's H4 confirmation is one concrete instance of this
+  pattern using a second timeframe rather than `TrendRegime`, resolving
+  the reversal-vs-FLAT question FX-21H flagged; a `TrendRegime`-based
+  gating strategy specifically remains unbuilt.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.
