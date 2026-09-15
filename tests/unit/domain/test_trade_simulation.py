@@ -58,7 +58,14 @@ def _flat(minute: int, bid: str, ask: str, **overrides: object) -> Candle:
 
 def _hypothesis(minute: int, side: TradeSide, instrument: Instrument = EUR_USD) -> TradeHypothesis:
     return TradeHypothesis(
-        instrument=instrument, side=side, generated_at=_ts(minute), rationale="test"
+        instrument=instrument,
+        side=side,
+        generated_at=_ts(minute),
+        timeframe=Granularity.M1,
+        strategy_key="test_strategy",
+        strategy_version="1",
+        parameters=(),
+        rationale="test",
     )
 
 

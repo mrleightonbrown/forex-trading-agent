@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-13 (FX-12)_
+_Last updated: 2026-09-15 (FX-13)_
 
 ## What exists
 
@@ -83,6 +83,10 @@ _Last updated: 2026-09-13 (FX-12)_
   structurally enforces "strategies must only evaluate finalized candles"
   before delegating to a strategy, rather than trusting each
   implementation to check it. No concrete strategy implementation exists.
+  `TradeHypothesis` carries full provenance (FX-13): `timeframe`,
+  `strategy_key`, `strategy_version`, `parameters` (a hashable tuple of
+  string pairs, not a `dict` — `params_from_dict` builds it from a
+  strategy's typed params), all required on every hypothesis.
 - `run_backtest` (`forex_agent.domain.backtest`): walks candles to a
   `Strategy` one bar at a time (`candles[0:i+1]`, never further) and
   collects the `TradeHypothesis` values produced — the actual look-ahead

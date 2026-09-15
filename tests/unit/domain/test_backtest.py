@@ -67,6 +67,10 @@ class _AlwaysFireStrategy:
             instrument=current.instrument,
             side=TradeSide.LONG,
             generated_at=current.start_time,
+            timeframe=Granularity.M1,
+            strategy_key="always_fire_test_strategy",
+            strategy_version="1",
+            parameters=(),
             rationale="always fires",
         )
 
@@ -81,6 +85,10 @@ class _WrongInstrumentStrategy:
             instrument=GBP_USD,
             side=TradeSide.LONG,
             generated_at=current.start_time,
+            timeframe=Granularity.M1,
+            strategy_key="wrong_instrument_test_strategy",
+            strategy_version="1",
+            parameters=(),
             rationale="wrong instrument bug",
         )
 
@@ -99,6 +107,10 @@ class _StaleTimestampStrategy:
             instrument=candles[-1].instrument,
             side=TradeSide.LONG,
             generated_at=self._first_seen,
+            timeframe=Granularity.M1,
+            strategy_key="stale_timestamp_test_strategy",
+            strategy_version="1",
+            parameters=(),
             rationale="buggy",
         )
 

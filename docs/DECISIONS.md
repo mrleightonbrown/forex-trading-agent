@@ -749,3 +749,33 @@ which depends on strategies and metrics existing first.
 
 Recording this here so the plan survives past this conversation — nothing
 in this entry has been implemented yet.
+
+## 2026-09-15 — FX-13: strategy metadata/hypothesis enrichment
+
+First story of the roadmap above, implemented as planned. `TradeHypothesis`
+gained four required fields:
+
+- `timeframe: Granularity` — the granularity the signal was generated on.
+- `strategy_key: str` — identifies the algorithm (e.g. `"ema_crossover_v1"`
+  — the `_v1` is part of the algorithm's own identity).
+- `strategy_version: str` — tracks revisions to that algorithm's
+  implementation/parameterization independently of `strategy_key`, per
+  the decision recorded above.
+- `parameters: tuple[tuple[str, str], ...]` — deliberately a tuple of
+  string pairs, not a `dict`: a `dict` field would make this frozen
+  dataclass unhashable, breaking the pattern every other domain value
+  object follows. A `hash()` regression test confirms `TradeHypothesis`
+  stays hashable. `params_from_dict` converts a strategy's own typed
+  parameters (e.g. `{"fast_period": 20}`) into this shape by
+  stringifying each value, so strategies don't hand-write tuple literals.
+
+All four fields are required, no defaults — the entire point of this
+enrichment is that no future concrete `Strategy` can omit its own
+identity.
+
+**Scope of the breaking change, as anticipated:** exactly 4 test files
+constructed `TradeHypothesis` directly (`test_trade_hypothesis.py`,
+`test_strategy.py`, `test_backtest.py`, `test_trade_simulation.py`) — no
+production code, since no concrete strategy exists yet. All four updated;
+all existing tests pass unchanged in behavior, only in construction
+syntax.

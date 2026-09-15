@@ -45,6 +45,10 @@ _HYPOTHESIS = TradeHypothesis(
     instrument=EUR_USD,
     side=TradeSide.LONG,
     generated_at=UtcTimestamp(datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)),
+    timeframe=Granularity.M1,
+    strategy_key="test_strategy",
+    strategy_version="1",
+    parameters=(),
     rationale="test",
 )
 

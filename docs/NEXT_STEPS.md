@@ -79,12 +79,16 @@ This closes out CLAUDE.md's current M0–M4 phase (items 1–11).
 ## Now underway: concrete strategy suite (FX-EPIC-03 + FX-EPIC-04)
 
 Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
-(2026-09-15 entry) — not repeated here. Proposed order: strategy metadata/
-hypothesis enrichment → EMA Trend v1 → Close-Channel Breakout v1 →
-Time-Series Momentum v1 → backtest performance metrics → `TargetPosition`/
-FLAT semantics → Mean Reversion v1 → Volatility Expansion v1 →
-regime-conditioned experiments → Multi-timeframe Trend v1. Nothing in
-that list is built yet.
+(2026-09-15 entries) — not repeated here. Proposed order:
+- ~~Strategy metadata/hypothesis enrichment~~ — complete (FX-13):
+  `TradeHypothesis` gained `timeframe`/`strategy_key`/`strategy_version`/
+  `parameters` (all required), plus a `params_from_dict` helper.
+  `parameters` is a tuple of string pairs, not a `dict`, so
+  `TradeHypothesis` stays hashable.
+- EMA Trend v1 → Close-Channel Breakout v1 → Time-Series Momentum v1 →
+  backtest performance metrics → `TargetPosition`/FLAT semantics → Mean
+  Reversion v1 → Volatility Expansion v1 → regime-conditioned experiments
+  → Multi-timeframe Trend v1. None of this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
