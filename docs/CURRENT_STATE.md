@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-19)_
+_Last updated: 2026-09-15 (FX-20)_
 
 ## What exists
 
@@ -143,6 +143,24 @@ _Last updated: 2026-09-15 (FX-19)_
   through `run_backtest` + `simulate_trades` (confirming FLAT-closes-
   without-reopening produces the right trade count end to end), and
   against live OANDA practice candles.
+- `VolatilityExpansionBreakoutStrategy` (`forex_agent.domain.strategies.
+  volatility_expansion`, `strategy_key="volatility_expansion_breakout_v1"`)
+  — the fifth concrete `Strategy` (FX-20). LONG/SHORT when the current
+  close breaks a Donchian high/low channel (built from actual highs/
+  lows, unlike FX-15's close-based channel — a deliberate reversal,
+  since ATR already requires and accepts the midpoint-averaged highs/
+  lows anyway) *and* the short-period/long-period ATR ratio is at least
+  `expansion_threshold` — a breakout with no expansion, or an expansion
+  with no fresh breakout, opens nothing. FLAT when the expansion ends
+  (ratio crosses back below `expansion_threshold`, reused directly as
+  the exit boundary — no separate deadband parameter, same reasoning as
+  FX-19). True Range/Wilder ATR smoothing duplicated locally from
+  `regime_detection.py`'s own ADX logic (deliberate, documented, not
+  shared via a helper — see `docs/DECISIONS.md`). Verified against an
+  independently hand-derived synthetic series covering all five
+  `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
+  (confirming FLAT-closes-without-reopening end to end), and against
+  live OANDA practice candles.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,
@@ -210,9 +228,10 @@ _Last updated: 2026-09-15 (FX-19)_
 ## What does not exist yet
 
 - Any strategy besides `EmaCrossoverStrategy`,
-  `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`, and
-  `MeanReversionStrategy` — the rest of the roadmap (Volatility
-  Expansion, Multi-timeframe Trend) is not built yet.
+  `CloseChannelBreakoutStrategy`, `TimeSeriesMomentumStrategy`,
+  `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
+  regime-conditioned experiments and Multi-timeframe Trend v1 are not
+  built yet.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

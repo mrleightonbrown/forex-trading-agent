@@ -142,8 +142,20 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   series with exact z-scores at every stage, through `run_backtest` +
   `simulate_trades` (confirming FLAT-closes-without-reopening produces
   the right trade count), and against live OANDA practice candles.
-- Volatility Expansion v1 → regime-conditioned experiments →
-  Multi-timeframe Trend v1. None of this is built yet.
+- ~~Volatility Expansion Breakout v1
+  (`volatility_expansion_breakout_v1`)~~ — complete (FX-20).
+  `VolatilityExpansionBreakoutStrategy` (`domain/strategies/
+  volatility_expansion.py`): LONG/SHORT on a Donchian high/low channel
+  breakout combined with an ATR14/ATR50-style expansion filter (both
+  required); FLAT when the expansion itself ends (ratio crosses back
+  below `expansion_threshold`, reused as the exit boundary — no separate
+  deadband parameter, same reasoning as FX-19). Verified against an
+  independently hand-derived synthetic series covering all five
+  `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
+  (confirming FLAT-closes-without-reopening end to end), and against
+  live OANDA practice candles.
+- Regime-conditioned experiments → Multi-timeframe Trend v1. None of
+  this is built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

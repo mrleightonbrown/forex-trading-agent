@@ -1083,3 +1083,67 @@ fires. The same series was then traced through `run_backtest` +
 `simulate_trades`, confirming FX-18's FLAT-closes-without-reopening
 behavior end to end (4 hypotheses produce only 2 trades). Also verified
 against live OANDA practice candles.
+
+## 2026-09-15 — FX-20: Volatility Expansion Breakout v1
+
+The fifth concrete strategy (`domain/strategies/volatility_expansion.py`,
+`strategy_key="volatility_expansion_breakout_v1"`). LONG/SHORT when the
+current close breaks a Donchian high/low channel *and* the short-period/
+long-period ATR ratio is at least `expansion_threshold`; FLAT when the
+expansion itself ends. A breakout with no volatility expansion behind it
+is not traded, and an expansion with no fresh breakout doesn't open
+anything either — both filters are required, not either alone.
+
+**Decision: the Donchian channel is built from actual highs/lows, not
+FX-15's close-based channel** — confirmed before implementing, and a
+reversal of FX-15's own reasoning. ATR already requires and accepts the
+synthetic-midpoint-averaged highs/lows for True Range (FX-12H's
+caveat), so using those same highs/lows for the breakout range is
+consistent with an already-accepted trade-off, not a new one — and
+"range breakout" is conventionally a high/low Donchian definition in
+technical analysis, which FX-15's close-based channel deliberately
+wasn't (it had no other reason to touch highs/lows at all). The
+triggering price stays the current bar's *close* against that channel,
+not the current high/low — keeps the trigger on the same close-based
+footing as every other strategy; only the reference channel changed.
+
+**Decision: FLAT exit reuses `expansion_threshold` itself as the
+crossing boundary** — confirmed before implementing, same reasoning as
+FX-19's zero-crossing exit: the previous bar's ratio was `>=
+expansion_threshold` and the current bar's isn't, i.e. the expansion
+that justified entry has literally ended. No separate `exit_threshold`
+parameter, avoiding an arbitrary second default value. Entry always
+takes priority structurally (the contraction check only runs when the
+current ratio is *not* `>= expansion_threshold`, so there's no
+overlapping-priority question to resolve, unlike FX-19 where both
+checks could theoretically be reached the same bar).
+
+**Also decided:** `expansion_threshold` must be `> 1`, not merely `>= 0`
+— a ratio at or below 1.0 isn't expansion at all (short-term vol at/below
+the long-term baseline), so `1.0` is rejected as a meaningless threshold
+for this parameter specifically, not just a degenerate one.
+`short_period < long_period` is required (same shape as FX-14's
+`fast_period < slow_period`). True Range/Wilder-smoothing logic is
+**duplicated locally**, not extracted from `regime_detection.py` into a
+shared helper — matches every other strategy file's established
+self-containment (none of the four prior strategies share their own
+synthetic-midpoint-close one-liner either). Flagged here as a
+deliberate, revisit-if-a-third-consumer-appears deferral, not an
+oversight — `regime_detection.py`'s ADX only needs an internal
+unscaled running-sum form of smoothed TR for its DI ratio (the
+period-scaling cancels out), while this strategy needs the actual
+divided-through ATR average reported per bar, so the two aren't even
+quite the same shape without some rework either way.
+
+**Verification:** an independently hand-derived synthetic candle series
+(a quiet high=101/low=100/close=100.5 baseline with two wide single-bar
+bursts — one up, one down — and one moderate bar that breaks the
+channel without enough range to trigger expansion) computed via a
+standalone scratch script before writing the real implementation,
+covering all five `evaluate()` outcomes: LONG (breakout + expansion),
+SHORT (breakdown + expansion), FLAT on contraction after each, a
+"breakout without expansion" no-op, and an "expansion without a fresh
+breakout" no-op. Same series then traced through `run_backtest` +
+`simulate_trades`, confirming FLAT-closes-without-reopening end to end
+(4 hypotheses produce only 2 trades). Also verified against live OANDA
+practice candles.
