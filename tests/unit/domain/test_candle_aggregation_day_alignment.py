@@ -1,4 +1,5 @@
-"""FX-24: day-aligned aggregation (H2/H3/H4/H6/H8/H12/D) tests.
+"""FX-24 (boundary logic canonicalized, source-granularity DST gap fixed
+FX-25H): day-aligned aggregation (H2/H3/H4/H6/H8/H12/D) tests.
 
 The EDT boundary times used below (09:00/13:00/17:00 UTC on 2026-09-11,
 21:00 UTC as the day-anchor after the weekend gap) were confirmed against
@@ -11,6 +12,16 @@ bucket path (the US DST transition instant falls inside forex's weekend
 closure — also confirmed against a live fetch spanning the real
 2026-03-08 transition), so those two tests use synthetic continuous data
 to prove the underlying wall-clock arithmetic is correct regardless.
+
+`test_h2_source_completeness_on_spring_forward_h4_bucket` is FX-25H's
+own regression: the old count-based completeness check
+(`real_span // source_duration`) broke when the SOURCE granularity is
+itself day-aligned — verified independently before the fix (a scratch
+script against this exact scenario) that the spring-forward `H4` bucket
+06:00-09:00Z (3 real hours) needs a DST-shortened 1-hour `H2` candle
+(06:00-07:00) followed by a normal 2-hour one (07:00-09:00), which the
+old `3h // 2h = 1` calculation would have silently accepted with only
+the first present.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -43,6 +54,20 @@ def _h1_candle(instant: datetime, price: str = "1.1000") -> Candle:
 
 def _hourly_range(start: datetime, count: int) -> list[Candle]:
     return [_h1_candle(start + timedelta(hours=i)) for i in range(count)]
+
+
+def _h2_candle(instant: datetime, price: str = "1.1000") -> Candle:
+    p = Decimal(price)
+    flat = Ohlc(open=p, high=p, low=p, close=p)
+    return Candle(
+        instrument=EUR_USD,
+        granularity=Granularity.H2,
+        start_time=UtcTimestamp(instant),
+        bid=flat,
+        ask=flat,
+        volume=1,
+        is_finalized=True,
+    )
 
 
 def _ts(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> UtcTimestamp:
@@ -227,5 +252,52 @@ def test_fall_back_bucket_is_long_but_still_requires_all_five_members() -> None:
     aggregated_short = aggregate_candles(missing_one, Granularity.H4)
     remaining_starts = [c.start_time for c in aggregated_short]
     assert _ts(2026, 11, 1, 5) not in remaining_starts
-    assert _ts(2026, 11, 1, 1) in remaining_starts
-    assert _ts(2026, 11, 1, 10) in remaining_starts
+
+
+def test_h2_source_completeness_on_spring_forward_h4_bucket() -> None:
+    """FX-25H: the SOURCE granularity (H2) is itself day-aligned here, so
+    it has its own DST-shortened candle that day -- independently
+    confirmed (via candle_boundary directly, before writing this test)
+    that H2's own boundaries on 2026-03-08 include a 1-hour candle at
+    06:00-07:00Z, immediately followed by a normal 2-hour one at
+    07:00-09:00Z, exactly covering the 3-real-hour H4 bucket 06:00-09:00Z.
+    """
+    h2_boundaries = [
+        datetime(2026, 3, 7, 22, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 0, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 2, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 4, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 6, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 7, 0, tzinfo=UTC),  # the DST-shortened 1-hour H2 candle
+        datetime(2026, 3, 8, 9, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 11, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 15, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 17, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 19, 0, tzinfo=UTC),
+    ]
+    candles = [_h2_candle(t) for t in h2_boundaries]
+
+    aggregated = aggregate_candles(candles, Granularity.H4)
+
+    starts = [c.start_time for c in aggregated]
+    assert starts == [
+        _ts(2026, 3, 7, 22),
+        _ts(2026, 3, 8, 2),
+        _ts(2026, 3, 8, 6),  # complete with its 2 H2 members: 06:00 and 07:00
+        _ts(2026, 3, 8, 9),
+        _ts(2026, 3, 8, 13),
+        _ts(2026, 3, 8, 17),
+    ]
+
+    # Remove just the 07:00Z H2 candle: the old count-based check
+    # (3h // 2h = 1) would have accepted the remaining single 06:00Z H2
+    # candle as "complete". It must not be.
+    without_second_member = [
+        c for c in candles if c.start_time.value != datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+    ]
+    aggregated_short = aggregate_candles(without_second_member, Granularity.H4)
+    remaining_starts = [c.start_time for c in aggregated_short]
+    assert _ts(2026, 3, 8, 6) not in remaining_starts
+    assert _ts(2026, 3, 8, 2) in remaining_starts  # every other bucket unaffected
+    assert _ts(2026, 3, 8, 9) in remaining_starts

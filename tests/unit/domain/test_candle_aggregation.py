@@ -38,6 +38,24 @@ def test_empty_input_returns_empty_output() -> None:
     assert aggregate_candles([], Granularity.M5) == []
 
 
+def test_duplicate_plus_missing_member_is_not_falsely_complete() -> None:
+    """FX-25H: the original FX-7 edge case a member-COUNT check can't
+    catch -- minute 2 is duplicated and minute 3 is missing, so there are
+    still exactly 5 records for a 5-minute bucket (a count check would
+    accept it), but they are the WRONG 5. Must be dropped, not silently
+    aggregated as if genuinely complete.
+    """
+    candles = [
+        _m1(0, "1.1000", "1.1010", "1.0995", "1.1005"),
+        _m1(1, "1.1005", "1.1020", "1.1000", "1.1015"),
+        _m1(2, "1.1015", "1.1018", "1.0990", "1.1000"),
+        _m1(2, "1.1015", "1.1018", "1.0990", "1.1000"),  # duplicate, not minute 3
+        _m1(4, "1.0995", "1.1002", "1.0980", "1.0999"),
+    ]
+
+    assert aggregate_candles(candles, Granularity.M5) == []
+
+
 def test_aggregates_one_complete_bucket() -> None:
     candles = [
         _m1(0, "1.1000", "1.1010", "1.0995", "1.1005", volume=10),

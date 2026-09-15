@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-25)_
+_Last updated: 2026-09-15 (FX-25H)_
 
 ## What exists
 
@@ -75,18 +75,29 @@ _Last updated: 2026-09-15 (FX-25)_
   `alignmentTimezone=America/New_York` explicitly (FX-24, confirmed
   live to already match the practice API's own default) and tags every
   candle `source=NATIVE`.
+- `candle_boundary.candle_start_boundary`/`candle_end_time`
+  (`forex_agent.domain.candle_boundary`, FX-25H): the one canonical,
+  DST-aware definition of "when does a candle of a given granularity
+  starting at a given instant actually close" — `H2`/`H3`/`H4`/`H6`/
+  `H8`/`H12`/`D` anchor to 17:00 `America/New_York` via `zoneinfo`
+  (matching OANDA's own native candles, confirmed live); `H1` and finer
+  use plain epoch-floor arithmetic (no DST ambiguity there). Extracted
+  after FX-25 independently reimplemented (and got wrong, for the
+  fall-back case) its own fixed-duration H4 assumption — both
+  `aggregate_candles` and `MultiTimeframeTrendStrategy` now import from
+  here rather than each computing candle duration their own way.
 - `aggregate_candles` (`forex_agent.domain.candle_aggregation`, FX-7,
-  day-aligned bucketing fixed FX-24): buckets for `H2`/`H3`/`H4`/`H6`/
-  `H8`/`H12`/`D` are anchored to 17:00 `America/New_York` via
-  `zoneinfo`, DST-aware — matching OANDA's own native candles for those
-  granularities (confirmed against a live fetch, not assumed); `H1` and
-  finer are unaffected (no DST ambiguity — NY's UTC offset is always a
-  whole number of hours). A bucket spanning a DST transition is
-  genuinely 3 or 5 real hours, not 4 — its "complete" threshold is
-  computed per bucket from real elapsed time, not a fixed constant.
-  Every aggregated candle is tagged `source=AGGREGATED`; mixing
-  `NATIVE` and `AGGREGATED` source candles in one call now raises,
-  same as mixing instruments or granularities.
+  day-aligned bucketing fixed FX-24, completeness check hardened
+  FX-25H): buckets for day-aligned granularities are DST-aware via
+  `candle_boundary`; `H1` and finer are unaffected. A bucket's
+  "complete" check (FX-25H) is exact expected-source-start-time-sequence
+  matching, not a member count — a member count couldn't distinguish a
+  genuinely DST-short bucket from one merely missing data, nor catch a
+  duplicate-plus-missing source candle at the right total count (the
+  original FX-7 edge case, now closed by the same fix). Every aggregated
+  candle is tagged `source=AGGREGATED`; mixing `NATIVE` and `AGGREGATED`
+  source candles in one call raises, same as mixing instruments or
+  granularities.
 - `IngestCandles` and `AggregateCandles` (`application/use_cases/`): the
   former wires `MarketDataPort.get_candles` to
   `CandleRepository.upsert_many`; the latter reads a range via
@@ -186,20 +197,25 @@ _Last updated: 2026-09-15 (FX-25)_
   live OANDA practice candles.
 - `MultiTimeframeTrendStrategy` (`forex_agent.domain.strategies.
   multi_timeframe_trend`, `strategy_key="multi_timeframe_trend_v1"`,
-  FX-25) — the sixth concrete `Strategy`, and the first needing two
-  candle series at once. H1 EMA-crossover entry, gated by H4's own EMA
-  fast/slow *state* (not a crossover event): confirmed → `LONG`/`SHORT`;
-  H1 fires but H4 disagrees (or has insufficient history, or is
-  neutral) → `FLAT`, resolving FX-21H's own flagged reversal-vs-FLAT
-  question. `Strategy.evaluate(candles: list[Candle])`'s signature is
-  unchanged — the full H4 series is a constructor argument, filtered on
-  every call to only bars fully closed strictly before the current H1
-  bar (proven no-look-ahead via a mutation regression, same technique
-  as FX-21H's). Verified through a hand-derived synchronized H1+H4
-  series covering all four outcomes, through `run_backtest` +
-  `simulate_trades`, and against live OANDA candles at both
-  granularities. This closes out the original strategy-suite roadmap —
-  see `docs/DECISIONS.md`'s FX-25 entry.
+  FX-25, H4 visibility canonicalized FX-25H) — the sixth concrete
+  `Strategy`, and the first needing two candle series at once. H1
+  EMA-crossover entry, gated by H4's own EMA fast/slow *state* (not a
+  crossover event): confirmed → `LONG`/`SHORT`; H1 fires but H4
+  disagrees (or has insufficient history, or is neutral) → `FLAT`,
+  resolving FX-21H's own flagged reversal-vs-FLAT question.
+  `Strategy.evaluate(candles: list[Candle])`'s signature is unchanged —
+  the full H4 series is a constructor argument, filtered on every call
+  to only bars fully closed strictly before the current H1 bar, using
+  `candle_boundary.candle_end_time` (FX-25H — the original version used
+  a fixed "4 elapsed hours" assumption that disagreed with FX-24's own
+  DST-aware logic and was wrong on a fall-back day; proven no-look-ahead
+  via a mutation regression, same technique as FX-21H's). Also rejects a
+  driving series that isn't `Granularity.H1` (FX-25H). Verified through
+  a hand-derived synchronized H1+H4 series covering all four outcomes,
+  through `run_backtest` + `simulate_trades`, and against live OANDA
+  candles at both granularities. This closes out the original
+  strategy-suite roadmap — see `docs/DECISIONS.md`'s FX-25/FX-25H
+  entries.
 - `RegimeSegmentedTrades` + `segment_trades_by_regime`
   (`forex_agent.domain.regime_segmentation`, FX-21, look-ahead fixed
   FX-21H): performs **entry-regime attribution** — buckets a strategy's

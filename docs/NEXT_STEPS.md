@@ -238,16 +238,57 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   through `run_backtest` + `simulate_trades`, and against live OANDA
   candles at both granularities.
 
+- ~~Canonical candle boundary hardening~~ — complete (FX-25H). New
+  `domain/candle_boundary.py` (`candle_start_boundary`/`candle_end_time`)
+  is now the one DST-aware definition of candle duration, shared by
+  `aggregate_candles` and `MultiTimeframeTrendStrategy` — closes two
+  real bugs an external review caught: FX-25's H4 visibility filter used
+  a fixed "4 elapsed hours" assumption that disagreed with FX-24's own
+  logic (confirmed wrong on a fall-back day); FX-24's completeness check
+  broke when the *source* granularity was itself day-aligned (confirmed:
+  a spring-forward `H4` bucket built from `H2` source candles). Bucket
+  completeness is now exact expected-boundary-sequence matching, not a
+  member count — also closes the original FX-7 duplicate-plus-missing
+  edge case in the same change. `MultiTimeframeTrendStrategy` also now
+  rejects a non-`H1` driving series.
+
 **This closes out the original diversity-first strategy-suite roadmap**
 recorded in `docs/DECISIONS.md` (2026-09-15): six directional
 strategies, `TargetPosition`/FLAT semantics, backtest metrics, control
 strategies, two entry-regime-attribution experiments, and candle
-alignment are all complete. Remaining flagged, undated follow-ups: a
-`TrendRegime`-based (not just H4-based) general regime-gating strategy,
-candle-backfill pagination, and `CandleRepository.get_range`'s
-`source`-filter ergonomics (schema already prevents collisions; no
-consumer needs the filter yet). None of these block anything currently
-planned — the next roadmap, if any, is a fresh conversation.
+alignment (now hardened) are all complete.
+
+**Agreed next sequence** (per the same external review that produced
+FX-25H), prioritizing a real research bottleneck over more strategies —
+the ~90-day/26-trade samples used so far are enough to prove the
+machinery works, not enough to judge whether any strategy has durable
+expectancy:
+
+1. `FX-26` — Paginated, resumable historical backfill. Currently bounded
+   to one 5000-candle request; needs to become years × several pairs ×
+   multiple timeframes, with idempotent writes, an explicit ingestion
+   checkpoint, gap detection after backfill, and a deterministic final
+   dataset regardless of page size.
+2. `FX-27` — `CandleRepository.get_range(source=...)` provenance
+   filtering. Narrow: `source: CandleSource | None = None`, where `None`
+   explicitly means "all sources", not an implicit choice between them.
+   Not urgent (FX-24's schema already prevents silent collisions), but
+   needed once both `NATIVE` and `AGGREGATED` rows commonly coexist.
+3. Research dataset build: EUR/USD, GBP/USD, USD/JPY, USD/CAD, multiple
+   years, H1/H4 — using FX-26.
+4. `FX-28` — true `TrendRegime`-based gating (FX-25 proved the pattern
+   using H4 confirmation; this is the `TrendRegime` version specifically,
+   run as explicit paired experiments — unconditional vs. entry-regime
+   attribution vs. actual gating are three different, separately
+   informative comparisons, per FX-21/FX-23's already-corrected
+   machinery) — deliberately sequenced *after* the larger dataset exists,
+   since the question worth answering is "does gating survive real
+   history", not just "can gating be implemented."
+
+No new technical strategies are planned for now — six directional
+strategies plus four controls is enough; the project's focus shifts from
+building trading ideas to evaluating which of them survive more history,
+more pairs, more regimes, and out-of-sample testing.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

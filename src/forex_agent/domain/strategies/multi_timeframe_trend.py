@@ -1,6 +1,7 @@
-"""FX-25: multi-timeframe trend confirmation — the last item on the
-original strategy-suite roadmap, deliberately sequenced last and blocked
-on resolving H4 candle alignment first (FX-24).
+"""FX-25 (H4 visibility canonicalized FX-25H): multi-timeframe trend
+confirmation — the last item on the original strategy-suite roadmap,
+deliberately sequenced last and blocked on resolving H4 candle alignment
+first (FX-24).
 
 The first strategy needing two candle series at once. `Strategy.
 evaluate(candles: list[Candle])`'s signature is unchanged — every other
@@ -8,10 +9,19 @@ strategy still implements exactly that. This one takes the full H4
 series as a constructor argument (legitimate for backtesting, which
 always operates over already-fetched historical data) and internally
 filters it, on every `evaluate()` call, to only H4 bars that have fully
-closed strictly before the current H1 bar's `start_time`. H4 bucket
-boundaries always land exactly on H1 boundaries (both are whole-UTC-hour
-quantized, post-FX-24), so `h4_start + 4h <= h1_current_start` is exactly
-the right cutoff — not one bar early, not a look-ahead.
+closed strictly before the current H1 bar's `start_time`, using
+`candle_boundary.candle_end_time` — the same canonical, DST-aware
+boundary logic `aggregate_candles` (FX-24) uses, not a fixed "4 elapsed
+hours" assumption.
+
+FX-25H: the original version of this module computed H4 visibility as
+`h4_start + 4h <= h1_current_start` — a fixed-duration assumption that
+disagreed with FX-24's own DST-aware boundary logic and was WRONG on a
+DST transition day (verified: an H4 candle starting 2026-11-01T05:00Z
+actually closes at 10:00Z, not the assumed 09:00Z — real look-ahead).
+Two independent interpretations of H4 duration was the bug; both this
+module and `aggregate_candles` now share exactly one, via
+`candle_boundary`.
 
 H1 signal: the same SMA-seeded EMA crossover *event* as
 `EmaCrossoverStrategy` (fires only on the bar the crossover happens),
@@ -34,13 +44,11 @@ from decimal import Decimal
 from typing import ClassVar
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_boundary import candle_end_time
 from forex_agent.domain.candle_series import require_consistent_series
 from forex_agent.domain.granularity import Granularity
-from forex_agent.domain.granularity_duration import fixed_duration
 from forex_agent.domain.target_position import TargetPosition
 from forex_agent.domain.trade_hypothesis import TradeHypothesis, params_from_dict
-
-_H4_DURATION_SECONDS = fixed_duration(Granularity.H4).total_seconds()
 
 
 class MultiTimeframeTrendStrategy:
@@ -87,6 +95,12 @@ class MultiTimeframeTrendStrategy:
     def evaluate(self, candles: list[Candle]) -> TradeHypothesis | None:
         if len(candles) < self.h1_slow_period + 1:
             return None
+        if candles[-1].granularity is not Granularity.H1:
+            raise ValueError(
+                f"driving candles must be Granularity.H1, got {candles[-1].granularity} -- "
+                "this strategy is explicitly H1/H4; a generic any-timeframe version is a "
+                "different, unbuilt strategy"
+            )
         if self.h4_candles and candles[-1].instrument != self.h4_candles[0].instrument:
             raise ValueError(
                 f"h1 candle instrument ({candles[-1].instrument.symbol}) does not match "
@@ -111,8 +125,8 @@ class MultiTimeframeTrendStrategy:
             c
             for c in self.h4_candles
             if c.is_finalized
-            and c.start_time.value.timestamp() + _H4_DURATION_SECONDS
-            <= current_candle.start_time.value.timestamp()
+            and candle_end_time(c.start_time.value, Granularity.H4)
+            <= current_candle.start_time.value
         ]
         h4_bias = _h4_bias(h4_visible, self.h4_fast_period, self.h4_slow_period)
 

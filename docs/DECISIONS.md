@@ -1589,3 +1589,71 @@ flagged, undated follow-ups: true regime-*gating* as a general concept
 (FX-25 is one concrete instance of it; a generalized version is still
 unbuilt), candle-backfill pagination, and the H4-alignment fix's own
 `get_range` source-filter ergonomics (not needed by anything built yet).
+
+## 2026-09-15 — FX-25H: canonical candle boundary hardening
+
+External review of FX-24/FX-25 caught two real, confirmed correctness
+bugs and one design gap — verified directly against computed boundaries
+before implementing, same discipline as every prior DST fix.
+
+**Bug 1 (confirmed): FX-25 reimplemented H4 duration and got it wrong.**
+`MultiTimeframeTrendStrategy`'s H4 visibility filter used a fixed
+`start + 4h` assumption instead of FX-24's own DST-aware boundary logic
+— two independent interpretations of "how long is an H4 candle" existing
+side by side, one of them wrong. Verified: an H4 candle starting
+2026-11-01T05:00Z (fall-back day) actually closes at 10:00Z (5 real
+hours), not the assumed 09:00Z — at 09:00Z, the old code would have
+treated that candle as already visible, a real look-ahead.
+
+**Bug 2 (confirmed): FX-24's own completeness check breaks when the
+SOURCE granularity is itself day-aligned.** `real_span // source_
+duration` assumed the source candle's own duration is fixed, which
+isn't true when the source is e.g. `H2` feeding an `H4` aggregation.
+Verified: the spring-forward `H4` bucket 06:00-09:00Z (3 real hours)
+genuinely needs two `H2` candles — 06:00-07:00 (itself DST-shortened to
+1 real hour) and 07:00-09:00 (a normal 2 hours) — but `3h // 2h = 1`
+would have accepted just the first as "complete".
+
+**Fix: one canonical boundary function, not two DST calculations.** New
+`domain/candle_boundary.py`: `candle_start_boundary`/`candle_end_time`,
+the exact `zoneinfo`-based logic FX-24 already proved correct, extracted
+so `aggregate_candles` and `MultiTimeframeTrendStrategy` share one
+definition of candle completion instead of each computing its own.
+
+**Fix: completeness is now exact-boundary-sequence matching, not a
+count.** `aggregate_candles` generates the expected source-candle
+start-time sequence for a bucket (walking `candle_end_time` forward one
+source candle at a time — correctly DST-aware even when the source
+itself is day-aligned) and requires the actual member start-times to
+match exactly. This closes Bug 2 *and* the original FX-7 edge case in
+the same change: `12:00,12:01,12:02,12:02,12:04` (five records for a
+five-minute bucket, but `12:02` duplicated and `12:03` missing) — a
+count check accepts this; exact-sequence matching correctly rejects it.
+
+**Also added: `MultiTimeframeTrendStrategy` now rejects a driving series
+that isn't `Granularity.H1`.** Its parameters, docstring, and design are
+explicitly H1/H4; a generic any-timeframe version is a different,
+unbuilt strategy, not implied by this one silently accepting e.g. `M15`.
+
+**Also corrected: a reversed docstring sentence** in the FX-24 code
+(now in `candle_boundary.py`). The arithmetic is wall-clock (a
+`zoneinfo`-aware `datetime + timedelta` advances the WALL-CLOCK reading
+by exactly N hours, always) — and it's precisely that wall-clock
+fidelity that makes the corresponding real/UTC-elapsed span become 3 or
+5 hours across a DST transition, not the other way around. The code was
+always correct; the explanation had the causality backwards.
+
+**Verification:** both bugs reproduced and confirmed via direct
+computation against `candle_boundary` before writing any fix (matching
+the same "verify with an independent script before implementing"
+discipline used throughout this project). Three new regressions, each
+confirmed to fail against the pre-fix code and pass against the fix:
+fall-back H4 visibility (05:00Z not visible at 09:00Z, visible at
+10:00Z), spring-forward H2→H4 completeness (1 of 2 required H2 candles
+→ dropped), and the duplicate+missing source-candle case. All existing
+FX-24/FX-25 tests pass unchanged against the refactored shared logic —
+confirms the fix is a correction, not a behavior change for every case
+already covered. Full suite (502 tests), contract boundary tests (the
+new `candle_boundary.py` module picked up automatically, confirmed
+import-clean), and live integration tests (OANDA + Postgres) all
+passed.

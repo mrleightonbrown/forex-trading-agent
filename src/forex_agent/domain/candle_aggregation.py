@@ -1,57 +1,40 @@
-"""FX-7 (day-aligned bucketing fixed FX-24): pure candle aggregation — no
-I/O, no repository access.
+"""FX-7 (day-aligned bucketing fixed FX-24, boundary logic canonicalized
+FX-25H): pure candle aggregation — no I/O, no repository access.
 
 Reading source candles back out of storage and persisting aggregates is a
 separate concern (a future use case), not built here.
 
-FX-24: OANDA's day-aligned granularities (H2/H3/H4/H6/H8/H12/D — confirmed
-live against the practice API, not assumed) anchor to 17:00
-`America/New_York`, DST-shifting in UTC terms — NOT epoch-UTC-floored
-fixed-duration buckets, which is what this module used for every
-granularity until now. `H1` and finer are unaffected: an hour is a fixed
-duration with no DST ambiguity (`America/New_York`'s UTC offset is always
-a whole number of hours), so epoch-floored hour buckets already agree
-with NY-local hour buckets.
+FX-25H: "is this bucket complete" used to be a member COUNT check
+(`target_duration // source_duration`, or a DST-adjusted real-time
+variant of the same idea). That breaks when the SOURCE granularity is
+itself day-aligned (e.g. `H2` feeding an `H4` aggregation): a DST
+transition can shorten one of the source candles too, so the true
+expected count isn't simply `real_span // source_duration` — verified
+directly (the spring-forward `H4` bucket 06:00-09:00Z, 3 real hours,
+needs a 1-hour `H2` candle followed by a normal 2-hour one; naive
+division gives 1, not the correct 2). It also silently accepted a
+duplicate-plus-missing source candle at the RIGHT count but the WRONG
+shape (the original FX-7 edge case: `12:00,12:01,12:02,12:02,12:04` —
+five records, but `12:03` is missing and `12:02` doubled).
 
-A day-aligned bucket that contains a DST transition genuinely spans 3 or
-5 real hours, not 4 (or whatever the target duration nominally is) — a
-"complete" bucket's expected member count therefore has to be computed
-per bucket from its own real elapsed time, not a single fixed constant.
-Real forex data never actually exercises this (US DST transitions happen
-at 2am local on a Sunday, entirely inside the weekend closure — confirmed
-against a live fetch spanning the real March 2026 transition), but the
-function doesn't get to assume that; it's a general-purpose aggregator.
+Completeness is now judged by generating the EXACT expected source
+candle start-times for a bucket (via `candle_boundary.candle_end_time`,
+walked forward one source candle at a time) and requiring the actual
+member start-times to match that sequence exactly — count, gaps, and
+duplicates are all covered by the same check.
 """
 
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_boundary import candle_end_time, candle_start_boundary
 from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.granularity_duration import fixed_duration
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.timestamps import UtcTimestamp
-
-_NY_ZONE = ZoneInfo("America/New_York")
-_NY_DAILY_ALIGNMENT_HOUR = 17  # matches OANDA's own default dailyAlignment=17
-
-# Day-aligned per OANDA's own documented granularity semantics: H1 and
-# finer are hour-aligned (no DST ambiguity); these are day-aligned to a
-# 17:00 America/New_York close instead of epoch-UTC midnight.
-_DAY_ALIGNED_GRANULARITIES = frozenset(
-    {
-        Granularity.H2,
-        Granularity.H3,
-        Granularity.H4,
-        Granularity.H6,
-        Granularity.H8,
-        Granularity.H12,
-        Granularity.D,
-    }
-)
 
 
 def aggregate_candles(candles: list[Candle], into: Granularity) -> list[Candle]:
@@ -61,17 +44,20 @@ def aggregate_candles(candles: list[Candle], into: Granularity) -> list[Candle]:
 
     Buckets for `into` in `H2`/`H3`/`H4`/`H6`/`H8`/`H12`/`D` are anchored
     to 17:00 `America/New_York` (FX-24), matching OANDA's own native
-    candles for those granularities — DST-aware via `zoneinfo`, not a
-    fixed UTC duration walked from the Unix epoch. Every other target
-    granularity keeps the original epoch-UTC-floored fixed-duration
-    bucketing (`H1` and finer have no DST ambiguity to account for).
+    candles for those granularities — DST-aware via
+    `candle_boundary.candle_start_boundary`, not a fixed UTC duration
+    walked from the Unix epoch. Every other target granularity keeps the
+    original epoch-UTC-floored fixed-duration bucketing (`H1` and finer
+    have no DST ambiguity to account for).
 
-    A trailing (or DST-shortened) bucket not yet fully covered by the
-    source candles is dropped rather than emitted partial — call again
-    once more source candles are available for it. "Fully covered" is
-    judged against each bucket's own real elapsed time for day-aligned
-    targets, not a single fixed count, since a bucket spanning a DST
-    transition is genuinely 3 or 5 hours long, not the nominal duration.
+    A trailing, DST-shortened, or gappy/duplicated bucket is dropped
+    rather than emitted wrong — call again once the source candles for
+    it are complete. "Complete" (FX-25H) means the bucket's actual member
+    start-times exactly match the expected source-candle boundary
+    sequence for that bucket, generated via `candle_boundary.
+    candle_end_time` — not a member count, which can't distinguish a
+    genuinely short DST bucket from a bucket that's merely missing data,
+    nor catch a duplicate-plus-missing pair at the right total count.
 
     Every aggregated candle's `source` is `CandleSource.AGGREGATED`
     (FX-24) — never `NATIVE`, regardless of the source candles' own
@@ -105,82 +91,40 @@ def aggregate_candles(candles: list[Candle], into: Granularity) -> list[Candle]:
         raise ValueError(
             f"{into.value}'s duration is not a whole multiple of {source_granularity.value}'s"
         )
-    day_aligned = into in _DAY_ALIGNED_GRANULARITIES
 
     buckets: dict[datetime, list[Candle]] = defaultdict(list)
     for candle in candles:
-        buckets[_bucket_start(candle.start_time.value, into, target_duration)].append(candle)
+        buckets[candle_start_boundary(candle.start_time.value, into)].append(candle)
 
     aggregated = []
     for bucket_start in sorted(buckets):
         members = sorted(buckets[bucket_start], key=lambda c: c.start_time.value)
-        expected_count = _expected_member_count(
-            bucket_start, target_duration, source_duration, day_aligned
-        )
-        if len(members) < expected_count:
+        actual_starts = [m.start_time.value for m in members]
+        expected_starts = _expected_source_starts(bucket_start, into, source_granularity)
+        if actual_starts != expected_starts:
             continue
         aggregated.append(_aggregate_bucket(instrument, into, UtcTimestamp(bucket_start), members))
 
     return aggregated
 
 
-def _bucket_start(start_time: datetime, granularity: Granularity, duration: timedelta) -> datetime:
-    if granularity in _DAY_ALIGNED_GRANULARITIES:
-        return _ny_aligned_bucket_start(start_time, duration)
-    return _epoch_bucket_start(start_time, duration)
-
-
-def _epoch_bucket_start(start_time: datetime, duration: timedelta) -> datetime:
-    bucket_seconds = duration.total_seconds()
-    bucket_index = int(start_time.timestamp() // bucket_seconds)
-    return datetime.fromtimestamp(bucket_index * bucket_seconds, tz=start_time.tzinfo)
-
-
-def _ny_aligned_bucket_start(start_time: datetime, duration: timedelta) -> datetime:
-    """The bucket boundary (as a UTC `datetime`) containing `start_time`,
-    for a `duration` that evenly divides 24 hours, anchored to 17:00
-    `America/New_York`.
-
-    Wall-clock arithmetic throughout: adding `duration` to a
-    `zoneinfo`-aware `datetime` advances by that many REAL hours, which
-    may render as a different number of wall-clock hours across a DST
-    transition (confirmed independently: exactly one 3-hour bucket on the
-    spring-forward day, one 5-hour bucket on the fall-back day, every
-    other bucket a clean N hours) — this is deliberate, and matches how
-    OANDA's own day-aligned candles behave, not a bug to normalize away.
+def _expected_source_starts(
+    bucket_start: datetime, target_granularity: Granularity, source_granularity: Granularity
+) -> list[datetime]:
+    """The exact sequence of source-candle start-times a COMPLETE
+    `target_granularity` bucket beginning at `bucket_start` must contain
+    — walked one source candle at a time via `candle_end_time`, so a
+    DST-shortened/lengthened source candle (when the source is itself
+    day-aligned) is accounted for exactly, not assumed away by a fixed
+    per-bucket count.
     """
-    local = start_time.astimezone(_NY_ZONE)
-    day_start = local.replace(hour=_NY_DAILY_ALIGNMENT_HOUR, minute=0, second=0, microsecond=0)
-    if local < day_start:
-        day_start -= timedelta(days=1)
-
-    if duration == timedelta(days=1):
-        return day_start.astimezone(UTC)
-
-    bucket_start = day_start
-    while bucket_start + duration <= local:
-        bucket_start += duration
-    return bucket_start.astimezone(UTC)
-
-
-def _ny_aligned_bucket_end(bucket_start: datetime, duration: timedelta) -> datetime:
-    """The next boundary after `bucket_start` (already a bucket boundary,
-    in UTC), `duration` later in `America/New_York` wall-clock terms."""
-    local = bucket_start.astimezone(_NY_ZONE)
-    return (local + duration).astimezone(UTC)
-
-
-def _expected_member_count(
-    bucket_start: datetime,
-    target_duration: timedelta,
-    source_duration: timedelta,
-    day_aligned: bool,
-) -> int:
-    if not day_aligned:
-        return target_duration // source_duration
-    bucket_end = _ny_aligned_bucket_end(bucket_start, target_duration)
-    real_span = bucket_end - bucket_start
-    return real_span // source_duration
+    bucket_end = candle_end_time(bucket_start, target_granularity)
+    starts = []
+    cursor = bucket_start
+    while cursor < bucket_end:
+        starts.append(cursor)
+        cursor = candle_end_time(cursor, source_granularity)
+    return starts
 
 
 def _aggregate_bucket(

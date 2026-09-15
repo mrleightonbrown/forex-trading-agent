@@ -277,6 +277,67 @@ def test_neutral_h4_bias_is_treated_as_unconfirmed() -> None:
     assert hypothesis.target_position is TargetPosition.FLAT
 
 
+def test_fall_back_h4_candle_not_visible_until_its_real_close() -> None:
+    """FX-25H's own regression: an H4 candle starting 2026-11-01T05:00Z
+    (fall-back day) actually closes at 10:00Z (5 real hours), NOT the
+    naive fixed-duration 09:00Z the original FX-25 code assumed --
+    independently confirmed via candle_boundary directly before writing
+    this test. Uses h4_fast_period=1 (EMA(1) is just the raw close) and
+    h4_slow_period=2 (needs exactly 3 H4 candles) so a single candle's
+    visibility flips the bias between "insufficient history" (None,
+    unconfirmed) and a clean BULLISH read -- a minimal, direct probe of
+    the visibility cutoff itself, not a full crossover trace.
+    """
+    background = [
+        _flat_candle(UtcTimestamp(datetime(2026, 10, 31, 21, 0, tzinfo=UTC)), Granularity.H4, 100),
+        _flat_candle(UtcTimestamp(datetime(2026, 11, 1, 1, 0, tzinfo=UTC)), Granularity.H4, 100),
+    ]
+    fall_back_candle = _flat_candle(
+        UtcTimestamp(datetime(2026, 11, 1, 5, 0, tzinfo=UTC)), Granularity.H4, 200
+    )
+    h4_candles = [*background, fall_back_candle]
+
+    def _h1_crossover_ending_at(hour: int, minute: int = 0) -> list[Candle]:
+        base = datetime(2026, 11, 1, hour - 3, minute, tzinfo=UTC)
+        closes = [100, 100, 100, 110]
+        return [
+            _flat_candle(UtcTimestamp(base + timedelta(hours=i)), Granularity.H1, closes[i])
+            for i in range(4)
+        ]
+
+    strategy = MultiTimeframeTrendStrategy(
+        h4_candles=h4_candles,
+        h1_fast_period=2,
+        h1_slow_period=3,
+        h4_fast_period=1,
+        h4_slow_period=2,
+    )
+
+    # Decision bar 09:00Z: the fall-back candle's real close (10:00Z) is
+    # still in the future -- only 2 H4 candles visible, insufficient for
+    # h4_slow_period+1=3 -> unconfirmed -> FLAT, not the LONG the naive
+    # fixed-duration assumption would have wrongly confirmed.
+    not_yet_visible = strategy.evaluate(_h1_crossover_ending_at(9))
+    assert not_yet_visible is not None
+    assert not_yet_visible.target_position is TargetPosition.FLAT
+
+    # Decision bar 10:00Z: now genuinely closed -> 3 H4 candles visible,
+    # bias BULLISH (the 200 close dominates EMA(1)) -> confirmed LONG.
+    now_visible = strategy.evaluate(_h1_crossover_ending_at(10))
+    assert now_visible is not None
+    assert now_visible.target_position is TargetPosition.LONG
+
+
+def test_rejects_driving_candles_that_are_not_h1() -> None:
+    strategy = MultiTimeframeTrendStrategy(
+        h4_candles=_h4_candles(4), h1_fast_period=2, h1_slow_period=3
+    )
+    wrong_granularity = [_flat_candle(_h1_ts(h), Granularity.M15, 100) for h in range(4)]
+
+    with pytest.raises(ValueError, match="H1"):
+        strategy.evaluate(wrong_granularity)
+
+
 def test_rejects_h1_instrument_mismatch_with_h4() -> None:
     strategy = MultiTimeframeTrendStrategy(
         h4_candles=_h4_candles(4), h1_fast_period=2, h1_slow_period=3
