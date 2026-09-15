@@ -190,12 +190,24 @@ Full roadmap, rationale, and epic mapping recorded in `docs/DECISIONS.md`
   zero hypotheses always. All four run through the unmodified
   `run_backtest`/`simulate_trades`/`compute_metrics` pipeline, and
   against live OANDA practice candles.
-- Mean-Reversion-vs-RANGING entry-regime attribution (`FX-23`), then
-  candle-alignment/OANDA H4 reconciliation (`FX-24`) followed by
+- ~~Mean-Reversion-vs-RANGING entry-regime attribution~~ — complete
+  (FX-23). No new domain code — reused FX-21's `segment_trades_by_regime`
+  with `MeanReversionStrategy`/`RANGING` in place of
+  `EmaCrossoverStrategy`/`TRENDING`. **Empirical finding** (see
+  `docs/DECISIONS.md` for the full table): on the same ~90-day EUR/USD
+  H1 sample, filtering Mean Reversion's trades to `RANGING` — the regime
+  it's naively expected to suit — made every metric worse, while
+  `TRENDING`-only was the best-performing bucket either regime
+  experiment has produced so far (profit factor 4.49). The mirror image
+  of FX-21's own surprise; two independent experiments now agree the
+  naive "strategy type should match regime type" intuition doesn't hold
+  on the data observed so far. `n=57` is larger than FX-21's `n=26` but
+  still not a basis for strategy-selection decisions.
+- Candle-alignment/OANDA H4 reconciliation (`FX-24`) followed by
   Multi-timeframe Trend v1 (`FX-25`) — sequenced per the same external
   review that produced FX-21H (renumbered from that review's original
   FX-22/FX-23 suggestion to keep FX-N matching actual build order — see
-  FX-22's entry in `docs/DECISIONS.md`). None of this is built yet.
+  FX-22's entry in `docs/DECISIONS.md`). Neither built yet.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-22)_
+_Last updated: 2026-09-15 (FX-23)_
 
 ## What exists
 
@@ -183,6 +183,10 @@ _Last updated: 2026-09-15 (FX-22)_
   `tests/replay/test_ema_regime_conditioned.py` (a live-OANDA test
   asserting only structural properties, never a specific winner) to
   produce a real empirical finding, recorded in `docs/DECISIONS.md`.
+  Second use (FX-23): `MeanReversionStrategy` vs. `RANGING`, same
+  attribution framing, same ~90-day EUR/USD H1 window. Both experiments
+  so far found the "obvious" regime pairing underperforming the "wrong"
+  one — see `docs/DECISIONS.md` for both tables.
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
   `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
   `strategy_key`s `always_long_v1`/`always_short_v1`/
@@ -276,12 +280,11 @@ _Last updated: 2026-09-15 (FX-22)_
   `MeanReversionStrategy`, and `VolatilityExpansionBreakoutStrategy` —
   Multi-timeframe Trend v1 (`FX-25`) is not built yet (blocked on H4
   candle-alignment reconciliation, `FX-24`).
-- A Mean-Reversion-vs-RANGING entry-regime-attribution experiment
-  (`FX-23`, same shape as the EMA one already done via
-  `segment_trades_by_regime`) — flagged, undated. True regime-*gating*
-  (an entry filter that changes which trades occur, distinct from
-  attribution) is also unbuilt — see FX-21H's entry in
-  `docs/DECISIONS.md`.
+- True regime-*gating* (an entry filter that changes which trades
+  occur, distinct from the entry-regime attribution both FX-21 and
+  FX-23 already did) — unbuilt, see FX-21H's entry in
+  `docs/DECISIONS.md` for the open reversal-vs-FLAT design question it
+  raises.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

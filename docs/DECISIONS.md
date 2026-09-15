@@ -1377,3 +1377,50 @@ four against real OANDA candles, rather than four near-duplicate live
 files — none of the four have numerical logic worth a dedicated
 live-data check beyond confirming they run cleanly and produce
 well-formed output. Full suite (459 tests) passed.
+
+## 2026-09-15 — FX-23: Mean-Reversion-vs-RANGING entry-regime attribution
+
+The roadmap's other named example, now that `segment_trades_by_regime`
+(FX-21, look-ahead fixed FX-21H) exists. No new domain code — reuses
+the same infrastructure FX-21 built, swapping `EmaCrossoverStrategy`/
+`TRENDING` for `MeanReversionStrategy`/`RANGING`. New
+`tests/replay/test_mean_reversion_regime_conditioned.py`, structurally
+identical to FX-21's own replay test (including the same entry-regime-
+*attribution*, not gating, framing, stated explicitly in its docstring
+this time rather than needing a correction afterward).
+
+**The empirical finding** (observed 2026-09-15, EUR/USD H1, default
+`MeanReversionStrategy()` period=20/entry_threshold=2.0, default
+`classify_regime` period=14/threshold=25, same ~90-day / 1536-candle
+window as FX-21's EMA experiment):
+
+| | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| Baseline (all trades) | 57 | 0.649 | -0.000008 USD | 0.990 | -0.003 |
+| TRENDING-only | 20 | 0.700 | +0.000904 USD | 4.490 | +0.598 |
+| RANGING-only | 37 | 0.622 | -0.000501 USD | 0.567 | -0.182 |
+
+On this sample, filtering Mean Reversion's trades down to `RANGING` —
+the regime it's naively expected to work best in — made things **worse**
+on every metric, while `TRENDING`-only was the standout performer
+(profit factor 4.49, the best number any strategy has produced in
+either regime experiment so far). This is the same shape of surprise as
+FX-21's EMA finding, just inverted: both experiments now show the
+"obvious" regime pairing underperforming the "wrong" one on their
+respective samples.
+
+Same caution as FX-21: `n=57` (`n=37` RANGING, `n=20` TRENDING) is a
+larger sample than FX-21's `n=26` but still one 90-day window on one
+instrument/granularity — not a basis for strategy-selection decisions.
+Taken together, though, two independent experiments now agree that the
+naive "strategy type should match regime type" intuition does not hold
+on the data observed so far, which is exactly the kind of finding that
+justifies keeping regime structurally external (FX-EPIC-05's original
+design decision) rather than hard-coding a regime filter into either
+strategy. Worth revisiting with more history once candle-backfill
+pagination exists, and worth keeping in mind before any future strategy
+bakes in a "should trade better in regime X" assumption without testing
+it the same way.
+
+**Verification:** full suite (460 tests) and the live replay test both
+passed.
