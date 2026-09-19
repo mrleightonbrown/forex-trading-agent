@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-27H.1, research dataset gap-check)_
+_Last updated: 2026-09-19 (FX-28)_
 
 ## What exists
 
@@ -312,9 +312,9 @@ _Last updated: 2026-09-19 (FX-27H.1, research dataset gap-check)_
   (the last for trades too early to have `2 * period` candles of prior
   history, the normal case, not an error). This is attribution, not
   regime-*gating*: EMA runs unconditionally and takes every signal it
-  normally would; regime only labels completed trades afterward. A true
-  gating experiment (which would change which trades occur, and needs
-  its own design pass) is a distinct, unbuilt future story. Connects
+  normally would; regime only labels completed trades afterward — see
+  `EmaCrossoverTrendRegimeGatedStrategy` (FX-28, below) for the actual
+  gating counterpart. Connects
   `classify_regime` and `compute_metrics` for the first time;
   `compute_metrics` needed no changes, exactly the composable
   segmentation FX-17 was designed for. No strategy was modified —
@@ -326,6 +326,27 @@ _Last updated: 2026-09-19 (FX-27H.1, research dataset gap-check)_
   attribution framing, same ~90-day EUR/USD H1 window. Both experiments
   so far found the "obvious" regime pairing underperforming the "wrong"
   one — see `docs/DECISIONS.md` for both tables.
+- `EmaCrossoverTrendRegimeGatedStrategy` (`forex_agent.domain.strategies.
+  ema_crossover_trend_regime_gated`, `strategy_key=
+  "ema_crossover_trend_regime_gated_v1"`, FX-28) — the true
+  `TrendRegime`-*gating* counterpart to attribution, above: the same EMA
+  crossover event as `EmaCrossoverStrategy`, but a crossover only
+  confirms (`LONG`/`SHORT`) if `classify_regime` says
+  `TrendRegime.TRENDING`; `RANGING` or insufficient regime history closes
+  to `FLAT` instead — same FLAT-vs-None precedent as
+  `MultiTimeframeTrendStrategy`. **Proven** (not just observed): for this
+  specific pairing, gated trades are entry/exit/P&L-*identical* to
+  `segment_trades_by_regime`'s own TRENDING bucket, because
+  `EmaCrossoverStrategy` never self-emits FLAT (every crossover is a
+  direction reversal) and the gate classifies at the exact same decision
+  bars attribution already does — locked in as a regression test.
+  Verified across the full 10-year, 5-instrument research dataset
+  (chunked for practical runtime against `run_backtest`'s documented
+  O(n²) scaling); real per-instrument metrics in `docs/DECISIONS.md` —
+  TRENDING-conditioning helped 3 of 5 instruments and hurt 1, no
+  universal answer. Continuous (every-bar, not just at entry) regime
+  monitoring during a held trade remains unbuilt — explicitly raised and
+  deferred, not overlooked.
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
   `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
   `strategy_key`s `always_long_v1`/`always_short_v1`/
@@ -420,13 +441,14 @@ _Last updated: 2026-09-19 (FX-27H.1, research dataset gap-check)_
   `MultiTimeframeTrendStrategy`) — the original strategy-suite roadmap
   is complete as of FX-25; anything further is a new roadmap, not
   planned yet.
-- True regime-*gating* as a **general** concept (an entry filter that
-  changes which trades occur based on an external market-state
-  classification, distinct from the entry-regime attribution FX-21/
-  FX-23 did) — FX-25's H4 confirmation is one concrete instance of this
-  pattern using a second timeframe rather than `TrendRegime`, resolving
-  the reversal-vs-FLAT question FX-21H flagged; a `TrendRegime`-based
-  gating strategy specifically remains unbuilt.
+- Continuous regime monitoring during a held trade — `EmaCrossoverTrend
+  RegimeGatedStrategy` (FX-28, below) checks the regime only at entry
+  decision bars, matching `segment_trades_by_regime`'s own convention.
+  Whether checking every bar and force-exiting mid-trade on a regime
+  deterioration behaves differently was explicitly raised and deferred
+  (user chose to accept FX-28's proven entry-gating-equals-attribution
+  finding and close the story rather than build this) — a distinct,
+  unbuilt experiment if picked up later.
 - Position sizing / account-currency P&L — `simulate_trades`' `pnl` is
   per-unit only; multiplying by real position size is Risk Engine
   territory, not decided yet.

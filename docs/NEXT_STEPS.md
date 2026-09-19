@@ -343,14 +343,21 @@ expectancy:
      candle boundary once, before either call. Regression-tested
      (confirmed to fail pre-fix with the exact false positive seen live,
      pass post-fix).
-4. `FX-28` — true `TrendRegime`-based gating (FX-25 proved the pattern
-   using H4 confirmation; this is the `TrendRegime` version specifically,
-   run as explicit paired experiments — unconditional vs. entry-regime
-   attribution vs. actual gating are three different, separately
-   informative comparisons, per FX-21/FX-23's already-corrected
-   machinery) — deliberately sequenced *after* the larger dataset exists,
-   since the question worth answering is "does gating survive real
-   history", not just "can gating be implemented."
+4. ~~`FX-28` — true `TrendRegime`-based gating~~ — complete.
+   `EmaCrossoverTrendRegimeGatedStrategy` built; ran the three-way
+   comparison (unconditional / entry-regime attribution / actual gating)
+   across all 5 research-dataset instruments, full 10-year H1 history.
+   **Central finding**: proved (not just observed) that "gated" and
+   "TRENDING-only attribution" trades are entry/exit/P&L-identical for
+   this specific pairing — a base strategy with no native FLAT, gated at
+   the same decision bars attribution already inspects, structurally
+   cannot diverge from post-hoc filtering. Put to the user on discovery:
+   extend to continuous (every-bar) regime monitoring, or accept the
+   equivalence as the finding and close. Chose to close. Per-instrument:
+   TRENDING-conditioning helped GBP_USD/USD_JPY/XAU_USD, hurt EUR_USD,
+   roughly neutral for USD_CAD — no universal answer, consistent with
+   FX-21/23's own earlier finding at smaller scale. Full details and the
+   real numbers in `docs/DECISIONS.md`.
 
 No new technical strategies are planned for now — six directional
 strategies plus four controls is enough; the project's focus shifts from

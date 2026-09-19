@@ -1988,3 +1988,145 @@ anywhere in the dataset — every unexplained gap resolves into one of two
 recognized, confirmed-not-assumed categories (calendar holidays or
 XAU/USD's daily settlement gap). The research dataset is sound; `FX-28`
 can proceed against it.
+
+## 2026-09-19 — FX-28: TrendRegime-based gating — a proven equivalence, not a new result
+
+New `EmaCrossoverTrendRegimeGatedStrategy` (`domain/strategies/
+ema_crossover_trend_regime_gated.py`): the same SMA-seeded EMA crossover
+event as `EmaCrossoverStrategy` (FX-14), gated by `classify_regime`
+(FX-12) — a crossover only confirms if `TrendRegime.TRENDING`;
+`RANGING`, or insufficient regime history (`< 2 * regime_period`
+candles), closes to FLAT rather than being ignored, matching
+`MultiTimeframeTrendStrategy`'s already-settled FLAT-vs-None precedent
+(FX-25/FX-21H). Direction-agnostic gate, since ADX measures trend
+strength, not direction — both LONG and SHORT crossovers require the
+same `TRENDING` condition.
+
+**Decision: the regime classification uses the exact same `candles`
+prefix `evaluate()` receives** (through and including the signal bar),
+not a further-truncated slice — verified, not assumed, to be exactly
+equivalent to FX-21H's own established look-ahead-safe convention in
+`segment_trades_by_regime` (`candles[:entry_index]`): since execution
+happens at the *next* bar's open (FX-11H), `entry_index` there always
+equals the signal bar's index + 1, so the two slices are identical.
+
+**The central finding — discovered empirically, then proven, not just
+observed**: running the three-way comparison (unconditional /
+attribution / actual gating) against the full FX-26/27 research dataset
+showed the "Gated" leg's metrics coming back numerically IDENTICAL to
+the "TRENDING-only attribution" leg, for every one of the 5 instruments
+— not just similar, matching to every decimal place shown. Checked
+directly rather than trusted: compared the actual trade sets
+(entry_time, exit_time, pnl) for a sample chunk — identical, not merely
+same-count.
+
+This is provable, not coincidental, given two properties of this
+specific pairing: (1) `EmaCrossoverStrategy` never self-emits FLAT —
+every crossover event is a direction reversal, so an unconditional
+trade always closes exactly at the *next* crossover event, whatever its
+regime; (2) the gate fires at those same event bars using the same
+regime classification attribution already uses. Consequence: a gated
+position opened on a TRENDING event always closes at the next event
+bar too — either a TRENDING reversal into a new position, or a RANGING
+gate to FLAT — and either way, that's the *identical* exit bar/price an
+unconditional reversal would have used for that same trade. So "gated,
+realized" trades and "unconditional trades entered during TRENDING"
+are entry/exit/P&L-identical by construction, not by chance. Locked in
+as a regression test (`tests/unit/domain/strategies/
+test_ema_crossover_trend_regime_gated.py::
+test_gated_trades_exactly_equal_the_trending_attribution_bucket`,
+regression-proof discipline applied: reverted the gate condition,
+confirmed the test fails, restored, confirmed it passes).
+
+**This is a real finding about *this specific pairing*, not a general
+law of regime-gating.** FX-25's H4-confirmation gate uses information
+external to the H1 signal's own timing (a second timeframe) — an
+attribution equivalent isn't even expressible the same way there. The
+equivalence here is specific to gating a base strategy that (a) only
+ever alternates LONG/SHORT with no native FLAT, and (b) is gated using
+information available at the exact same decision bars attribution
+already inspects.
+
+**Decision, put to the user after discovering this**: extend to a
+genuinely different mechanism (continuous regime monitoring — checking
+every bar, not just at entry, and force-exiting a held position if the
+regime deteriorates mid-trade) vs. accept the equivalence itself as the
+finding and close the story. User chose to accept and close — the
+proven equivalence is itself the answer to "does gating add anything
+beyond attribution" for this construction: no, not by design, and now
+that's known with certainty rather than assumed either way. Continuous
+regime monitoring remains a distinct, unbuilt experiment if picked up
+later.
+
+**Performance note, confirmed before running, not assumed**: `run_
+backtest`'s documented O(n²) scaling (full history reslice + full
+EMA/ADX recompute every step) is fine at FX-21's ~1,500-candle sample
+but was untested at real research-dataset scale. Timed directly: 4,000
+H1 candles took ~9.4s (EMA) / ~10.0s (gated); extrapolating to a full
+~62,000-candle series would be over half an hour per instrument per
+strategy — impractical for one session. Confirmed 6,200 candles
+(~1 year) at ~22s/~26s, consistent with the O(n²) extrapolation. Ran
+the real comparison chunked into ~6,000-candle contiguous windows per
+instrument (not exact calendar years — simpler, equally valid for this
+purpose), trades pooled across chunks before computing metrics. The
+~51-candle EMA warm-up "lost" at each chunk boundary is under 1% of
+each chunk, not a change in what's being measured. This was a practical
+choice for this one-off empirical run only, not a change to `run_
+backtest`'s own architecture.
+
+**Empirical results** (full 10-year H1 history, all 5 research-dataset
+instruments, default `EmaCrossoverStrategy()` 20/50 EMA and default
+`classify_regime`/gate period=14/threshold=25):
+
+| Instrument | Leg | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|---|
+| EUR_USD | Unconditional | 1157 | 0.318 | -0.00016 USD | 0.933 | -0.023 |
+| EUR_USD | TRENDING-only | 295 | 0.308 | -0.00069 USD | 0.750 | -0.104 |
+| EUR_USD | RANGING-only | 862 | 0.321 | 0.00002 USD | 1.009 | 0.003 |
+| EUR_USD | Gated (actual) | 295 | 0.308 | -0.00069 USD | 0.750 | -0.104 |
+| GBP_USD | Unconditional | 1169 | 0.293 | -0.00024 USD | 0.926 | -0.024 |
+| GBP_USD | TRENDING-only | 304 | 0.322 | 0.00026 USD | 1.071 | 0.020 |
+| GBP_USD | RANGING-only | 865 | 0.282 | -0.00042 USD | 0.868 | -0.047 |
+| GBP_USD | Gated (actual) | 304 | 0.322 | 0.00026 USD | 1.071 | 0.020 |
+| USD_JPY | Unconditional | 1106 | 0.314 | 0.02960 JPY | 1.096 | 0.028 |
+| USD_JPY | TRENDING-only | 286 | 0.322 | 0.04519 JPY | 1.125 | 0.035 |
+| USD_JPY | RANGING-only | 820 | 0.311 | 0.02417 JPY | 1.083 | 0.025 |
+| USD_JPY | Gated (actual) | 286 | 0.322 | 0.04519 JPY | 1.125 | 0.035 |
+| USD_CAD | Unconditional | 1195 | 0.269 | -0.00048 CAD | 0.829 | -0.062 |
+| USD_CAD | TRENDING-only | 288 | 0.306 | -0.00049 CAD | 0.831 | -0.065 |
+| USD_CAD | RANGING-only | 907 | 0.257 | -0.00047 CAD | 0.829 | -0.061 |
+| USD_CAD | Gated (actual) | 288 | 0.306 | -0.00049 CAD | 0.831 | -0.065 |
+| XAU_USD | Unconditional | 1125 | 0.295 | 1.07617 USD | 1.111 | 0.026 |
+| XAU_USD | TRENDING-only | 308 | 0.308 | 2.25569 USD | 1.187 | 0.039 |
+| XAU_USD | RANGING-only | 817 | 0.290 | 0.63151 USD | 1.072 | 0.018 |
+| XAU_USD | Gated (actual) | 308 | 0.308 | 2.25569 USD | 1.187 | 0.039 |
+
+(Gated rows equal their instrument's TRENDING-only row exactly — the
+proven structural equivalence above, not a coincidence or a copy-paste
+error in this table.)
+
+Read with the same caution as FX-21/23: this is one specific base
+strategy, one default parameter set, one gate. On this much larger
+sample (n=1,100-1,200 unconditional trades per instrument, vs. FX-21's
+n=26), TRENDING-conditioning is a mixed bag across instruments — it
+helped GBP_USD, USD_JPY, and XAU_USD (higher win rate, expectancy,
+profit factor, and Sharpe than the unconditional baseline) but hurt
+EUR_USD, and was roughly neutral for USD_CAD. There is no single
+instrument-independent answer to "should EMA crossover be
+regime-gated" on this data — consistent with FX-21/23's own earlier,
+smaller-sample finding that the naive "trend-following should do
+better when ADX confirms a trend" intuition doesn't hold uniformly.
+
+**Verification**: 16 unit tests (four `evaluate()` outcome categories
+plus constructor validation plus the structural-equivalence regression,
+all against oracle-verified fixtures — TRENDING/RANGING classifications
+confirmed by running the already-independently-verified
+`classify_regime`, FX-12, against each candidate series rather than
+hand-deriving ADX arithmetic), a live-OANDA smoke test (same pattern as
+every other concrete strategy), and a three-way structural replay test
+(same pattern as FX-21's own — structural assertions only, no hard-coded
+winner). Full suite: 562 passed; the same 6 pre-existing weekend-related
+live-OANDA failures as FX-26/27, plus this story's own live-smoke test
+failing with the identical "0 candles in the last 4 hours" signature
+(today is still Saturday) — confirmed not a regression, same as every
+prior story's weekend-timing note. Lint/format/mypy/pre-commit clean.
