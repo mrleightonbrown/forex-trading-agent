@@ -9,7 +9,7 @@ Requires a live Postgres with the FX-5 migration applied — run
 """
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -103,6 +103,32 @@ async def test_upsert_many_is_idempotent_for_identical_candle(session: AsyncSess
     await repo.upsert_many([candle])
 
     assert await _row_count(session) == 1
+
+
+@pytest.mark.asyncio
+async def test_upsert_many_handles_a_batch_exceeding_asyncpgs_param_limit(
+    session: AsyncSession,
+) -> None:
+    """Regression: asyncpg caps bound query parameters at 32767. Each
+    candle contributes 14 params, so a single unbatched statement over
+    3000 candles (42,000 params) fails outright -- confirmed live while
+    building the FX-27 research dataset (a real 5000-candle backfill
+    page hit this). `upsert_many` must internally batch regardless of
+    how many candles a single call is given."""
+    repo = SqlAlchemyCandleRepository(session)
+    candles = [
+        _candle(
+            bid_close="1.0000",
+            is_finalized=True,
+            start_time=UtcTimestamp(START.value + timedelta(minutes=m)),
+        )
+        for m in range(3000)
+    ]
+
+    written = await repo.upsert_many(candles)
+
+    assert written == 3000
+    assert await _row_count(session) == 3000
 
 
 @pytest.mark.asyncio

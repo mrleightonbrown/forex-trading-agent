@@ -27,6 +27,15 @@ _UPDATABLE_COLUMNS = (
     "is_finalized",
 )
 
+# asyncpg caps bound query parameters at 32767 (its own wire-protocol
+# limit, not Postgres' own -- see asyncpg.exceptions.InterfaceError). Each
+# candle contributes 14 params (one per `_row_values` column), so a single
+# unbatched statement over a full 5000-candle page (FX-26's own page cap)
+# would need 70,000 -- confirmed live while building the FX-27 research
+# dataset. Batching keeps every statement comfortably under the cap
+# regardless of how large a page callers request.
+_MAX_ROWS_PER_STATEMENT = 1000
+
 
 class SqlAlchemyCandleRepository:
     """Implements `CandleRepository` via a Postgres `ON CONFLICT DO UPDATE`
@@ -40,12 +49,14 @@ class SqlAlchemyCandleRepository:
         if not candles:
             return 0
 
-        stmt = pg_insert(CandleRow).values([_row_values(c) for c in candles])
-        stmt = stmt.on_conflict_do_update(
-            index_elements=_CONFLICT_KEY,
-            set_={column: getattr(stmt.excluded, column) for column in _UPDATABLE_COLUMNS},
-        )
-        await self._session.execute(stmt)
+        for i in range(0, len(candles), _MAX_ROWS_PER_STATEMENT):
+            batch = candles[i : i + _MAX_ROWS_PER_STATEMENT]
+            stmt = pg_insert(CandleRow).values([_row_values(c) for c in batch])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=_CONFLICT_KEY,
+                set_={column: getattr(stmt.excluded, column) for column in _UPDATABLE_COLUMNS},
+            )
+            await self._session.execute(stmt)
         await self._session.commit()
         return len(candles)
 
