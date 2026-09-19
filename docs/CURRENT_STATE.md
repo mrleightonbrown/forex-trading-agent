@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-28)_
+_Last updated: 2026-09-19 (FX-31)_
 
 ## What exists
 
@@ -339,21 +339,48 @@ _Last updated: 2026-09-19 (FX-28)_
   `segment_trades_by_regime`'s own TRENDING bucket, because
   `EmaCrossoverStrategy` never self-emits FLAT (every crossover is a
   direction reversal) and the gate classifies at the exact same decision
-  bars attribution already does — locked in as a regression test that
-  runs on one continuous, non-chunked series (so this proof is NOT
-  affected by the issue below). **The per-instrument performance
-  numbers ARE affected and are WITHDRAWN**: the original 10-year,
-  5-instrument run was chunked into ~6,000-candle windows for practical
-  runtime against `run_backtest`'s documented O(n²) scaling, which was
-  wrongly believed to only cost "under 1%" — external review caught,
-  independently confirmed (`docs/DECISIONS.md`'s correction entry): a
-  chunk boundary force-closes any open position and reseeds every
-  strategy's EMA/ADX state from scratch, genuinely changing the trade
-  path, not just trimming a warm-up period. Provisional until `FX-29`
-  (a continuous/incremental backtest engine, in progress) reruns the
-  comparison for real. Continuous (every-bar, not just at entry) regime
-  monitoring during a held trade remains unbuilt — explicitly raised and
-  deferred, not overlooked.
+  bars attribution already does — locked in as a regression test.
+  **The per-instrument performance table was withdrawn and has since
+  been rerun for real** (FX-29, below) — see `docs/DECISIONS.md` for
+  the confirmed, continuous-history numbers: TRENDING-conditioning
+  helps GBP_USD/USD_JPY/XAU_USD, hurts EUR_USD, is roughly neutral for
+  USD_CAD. Continuous (every-bar, not just at entry) regime monitoring
+  during a held trade remains unbuilt — explicitly raised and deferred,
+  not overlooked.
+- `IncrementalSmaSeededEma`/`IncrementalAdx` (`forex_agent.domain.
+  incremental_ema`/`incremental_adx`, FX-29): O(1)-per-update
+  counterparts to every strategy's own from-scratch `_sma_seeded_ema`/
+  `classify_regime` recompute, proven bit-for-bit identical to them
+  (checked step-by-step, not just at the end; stress-tested against
+  1,500 real H1 candles with 0 mismatches). `IncrementalStrategy` +
+  `run_backtest_incremental` (`forex_agent.domain.incremental_strategy`)
+  — same guarantees as `Strategy`/`run_backtest`, one O(n) forward pass,
+  no reslicing. `IncrementalEmaCrossoverStrategy`/
+  `IncrementalEmaCrossoverTrendRegimeGatedStrategy` — same
+  `strategy_key`s as their slow counterparts (same strategy, faster
+  implementation), golden-parity-tested trade-for-trade against them.
+  Existing `Strategy`/`run_backtest`/`simulate_trades` and all 8
+  existing strategies are completely unmodified — this is additive
+  infrastructure, not a replacement, and the slow path remains the
+  permanent correctness reference. Measured: a full 62,194-candle H1
+  series in 0.19s (EMA) / 0.47s (gated) — down from an extrapolated
+  35-40 minutes each with the old O(n²) engine. Used to rerun FX-28's
+  withdrawn comparison continuously (no chunking); the corrected table
+  is in `docs/DECISIONS.md`.
+- Ingestion watermark hardening (FX-30/FX-31, prompted by the same
+  external review, explicitly noted as not affecting already-loaded
+  research data): `BackfillCandles` now floors both `earliest_ingested`
+  and `latest_ingested` to genuine candle boundaries via
+  `candle_boundary.candle_start_boundary` (never rounds up — a
+  mid-candle `end` may still be forming, so rounding up could falsely
+  claim an unformed candle as covered) — closes the root cause behind
+  FX-27H.1's `DetectDataGaps` symptom. `IngestionWatermarkRepository`
+  gained `acquire_lock`/`release_lock` (a Postgres session-level
+  advisory lock in the real implementation, held for a whole
+  `BackfillCandles` call), serializing concurrent backfills for the
+  same series instead of letting them race and clobber each other's
+  progress — confirmed via a live-Postgres concurrency test (8/8
+  failures pre-fix, 5/5 passes post-fix).
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
   `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
   `strategy_key`s `always_long_v1`/`always_short_v1`/
@@ -466,12 +493,21 @@ _Last updated: 2026-09-19 (FX-28)_
   (below) is a one-off operational script, not a recurring job; nothing
   yet re-runs backfill on a schedule to keep the dataset current going
   forward.
-- Backtest performance optimization for large candle sets (`O(n²)`
-  reslicing in `run_backtest`, plus every strategy's own from-scratch
-  EMA/ADX recompute each call) — no longer "not needed": FX-28's own
-  chunking workaround for this exact limitation produced invalid
-  performance numbers (see above), making this `FX-29`'s explicit scope
-  now, not deferred further.
+- Incremental (O(1)-per-bar) versions of the other 8 existing
+  strategies — FX-29 built the incremental engine and converted only
+  the two `EmaCrossover*` strategies FX-28's rerun needed; the slow
+  `Strategy`/`run_backtest` path remains the only option for everything
+  else, which is fine at ~1,500-candle sample sizes but would hit the
+  same O(n²) wall any of them tried at full research-dataset scale.
+- Continuous (every-bar) regime monitoring during a held trade — FX-28
+  and FX-29's gating strategy only checks the regime at entry decision
+  bars; a variant that force-exits mid-trade on a regime deterioration
+  is a distinct, unbuilt experiment, explicitly raised and deferred by
+  user choice.
+- A scheduled/automatic recurring backfill service — FX-31's
+  concurrency protection makes this safe to build later, but nothing
+  currently triggers `BackfillCandles` other than the one-off
+  `scripts/build_research_dataset.py` run.
 
 ## Next
 

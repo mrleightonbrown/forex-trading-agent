@@ -21,6 +21,25 @@ interval can't represent two disjoint covered ranges, and pretending
 otherwise would be a real correctness bug, not a convenience. Backward
 and forward extensions are each fetched as their own paginated
 sub-operation; a request needing both is handled as two, backward first.
+
+FX-30: the watermark's own `earliest_ingested`/`latest_ingested` are now
+always genuine candle boundaries, not whatever literal `start`/`end` a
+caller happened to pass in (e.g. a wall-clock `datetime.now()`, which is
+almost never exactly on an hour). FX-27H.1 caught this indirectly (a
+misaligned `earliest_ingested` made `DetectDataGaps` report a false-
+positive gap); this closes it at the source instead of leaving every
+future consumer to defend against it individually. Both bounds are
+FLOORED (via `candle_boundary.candle_start_boundary`), never rounded up:
+flooring `earliest` is just "the first candle we can vouch for starts no
+earlier than this"; flooring `latest` matters more subtly — a requested
+`end` is very often "now", almost always mid-candle, and the candle
+containing it may still be forming. Rounding `latest` UP to that candle's
+close would claim coverage of a candle that might not exist yet; flooring
+it instead means the watermark only ever claims candles that are already
+fully behind the requested `end`. This changes NOTHING about what's
+actually fetched from the provider (`split_into_pages` already computes
+its own page boundaries the same way it always did) — only what gets
+recorded as covered.
 """
 
 from dataclasses import dataclass
@@ -30,6 +49,7 @@ from forex_agent.application.ports.ingestion_watermark_repository import (
     IngestionWatermarkRepository,
 )
 from forex_agent.application.ports.market_data_port import MarketDataPort
+from forex_agent.domain.candle_boundary import candle_start_boundary
 from forex_agent.domain.candle_pagination import split_into_pages
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
@@ -66,52 +86,67 @@ class BackfillCandles:
         if end.value <= start.value:
             raise ValueError("end must be after start")
 
-        existing = await self.watermarks.get_watermark(instrument, granularity)
-        pages_fetched = 0
-        candles_written = 0
+        # FX-31: held for this whole call, not just one set_watermark
+        # -- serializes concurrent backfills for the same series (the
+        # second blocks until the first fully completes) instead of
+        # letting them race: read the same starting watermark, compute
+        # conflicting page plans, and clobber each other's progress.
+        # Irrelevant to a sequential one-off dataset load, but matters
+        # once anything schedules backfills automatically.
+        await self.watermarks.acquire_lock(instrument, granularity)
+        try:
+            existing = await self.watermarks.get_watermark(instrument, granularity)
+            pages_fetched = 0
+            candles_written = 0
 
-        if existing is None:
-            pages, written = await self._extend_forward(
-                instrument, granularity, start, end, floor_earliest=start
-            )
-            pages_fetched += pages
-            candles_written += written
-        else:
-            existing_earliest, existing_latest = existing
-            touches = start.value <= existing_latest.value and existing_earliest.value <= end.value
-            if not touches:
-                raise ValueError(
-                    f"requested range [{start.value.isoformat()}, {end.value.isoformat()}) "
-                    "does not overlap or touch the currently ingested range "
-                    f"[{existing_earliest.value.isoformat()}, {existing_latest.value.isoformat()}) "
-                    f"for {instrument.symbol} {granularity.value}; backfilling a disjoint "
-                    "historical period isn't supported by a single contiguous watermark -- "
-                    "request a range that bridges the gap instead"
-                )
-
-            if start.value < existing_earliest.value:
-                pages, written = await self._extend_backward(
-                    instrument,
-                    granularity,
-                    start,
-                    existing_earliest,
-                    ceiling_latest=existing_latest,
-                )
-                pages_fetched += pages
-                candles_written += written
-
-            if end.value > existing_latest.value:
-                current = await self.watermarks.get_watermark(instrument, granularity)
-                assert current is not None
+            if existing is None:
+                floor_earliest = UtcTimestamp(candle_start_boundary(start.value, granularity))
                 pages, written = await self._extend_forward(
-                    instrument, granularity, existing_latest, end, floor_earliest=current[0]
+                    instrument, granularity, start, end, floor_earliest=floor_earliest
                 )
                 pages_fetched += pages
                 candles_written += written
+            else:
+                existing_earliest, existing_latest = existing
+                touches = (
+                    start.value <= existing_latest.value and existing_earliest.value <= end.value
+                )
+                if not touches:
+                    raise ValueError(
+                        f"requested range [{start.value.isoformat()}, {end.value.isoformat()}) "
+                        "does not overlap or touch the currently ingested range "
+                        f"[{existing_earliest.value.isoformat()}, "
+                        f"{existing_latest.value.isoformat()}) for {instrument.symbol} "
+                        f"{granularity.value}; backfilling a disjoint historical period isn't "
+                        "supported by a single contiguous watermark -- request a range that "
+                        "bridges the gap instead"
+                    )
 
-        final = await self.watermarks.get_watermark(instrument, granularity)
-        assert final is not None
-        return BackfillResult(pages_fetched, candles_written, final[0], final[1])
+                if start.value < existing_earliest.value:
+                    pages, written = await self._extend_backward(
+                        instrument,
+                        granularity,
+                        start,
+                        existing_earliest,
+                        ceiling_latest=existing_latest,
+                    )
+                    pages_fetched += pages
+                    candles_written += written
+
+                if end.value > existing_latest.value:
+                    current = await self.watermarks.get_watermark(instrument, granularity)
+                    assert current is not None
+                    pages, written = await self._extend_forward(
+                        instrument, granularity, existing_latest, end, floor_earliest=current[0]
+                    )
+                    pages_fetched += pages
+                    candles_written += written
+
+            final = await self.watermarks.get_watermark(instrument, granularity)
+            assert final is not None
+            return BackfillResult(pages_fetched, candles_written, final[0], final[1])
+        finally:
+            await self.watermarks.release_lock(instrument, granularity)
 
     async def _extend_forward(
         self,
@@ -134,7 +169,14 @@ class BackfillCandles:
             )
             candles_written += await self.candles.upsert_many(fetched)
             pages_fetched += 1
-            await self.watermarks.set_watermark(instrument, granularity, floor_earliest, page.end)
+            # FX-30: floor to a genuine boundary -- only the LAST page's
+            # `.end` can ever be non-aligned (clamped to a raw, possibly
+            # mid-candle `range_end`); flooring an already-aligned value
+            # is a no-op, so this is safe to apply unconditionally.
+            aligned_latest = UtcTimestamp(candle_start_boundary(page.end.value, granularity))
+            await self.watermarks.set_watermark(
+                instrument, granularity, floor_earliest, aligned_latest
+            )
         return pages_fetched, candles_written
 
     async def _extend_backward(

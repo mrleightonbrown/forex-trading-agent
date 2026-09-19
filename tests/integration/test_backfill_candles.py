@@ -8,6 +8,7 @@ separately covered elsewhere.
 Requires a live Postgres with the FX-26 migration applied.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -145,3 +146,51 @@ async def test_interrupted_backfill_resumes_without_refetching_or_duplicating_ag
     assert result.latest_ingested == _ts(25)
     stored_after = await candle_repo.get_range(TEST_INSTRUMENT, Granularity.M1, _ts(0), _ts(25))
     assert len(stored_after) == 25  # no duplicates, nothing missing
+
+
+@pytest.mark.asyncio
+async def test_concurrent_backfills_for_the_same_series_do_not_race(
+    session: AsyncSession,
+) -> None:
+    """FX-31: two BackfillCandles calls for the SAME series, each its
+    own session/connection (genuinely concurrent, not just interleaved
+    coroutines sharing one connection), requesting overlapping ranges at
+    the same time via `asyncio.gather`. Without `acquire_lock`/
+    `release_lock` serializing them, both could read the same starting
+    watermark, independently compute conflicting page plans, and their
+    interleaved `set_watermark` calls could clobber each other -- ending
+    with a watermark that doesn't match what either call, or a
+    sequential run of both, actually produced. With the lock, the second
+    call simply blocks until the first fully completes, so the result is
+    always equivalent to running them one after another: the union of
+    both ranges, fully covered, nothing missing."""
+    candles = _dense_candles(100)
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async with session_factory() as session_a, session_factory() as session_b:
+        use_case_a = BackfillCandles(
+            market_data=FakeMarketDataPort(candles),
+            candles=SqlAlchemyCandleRepository(session_a),
+            watermarks=SqlAlchemyIngestionWatermarkRepository(session_a),
+            max_candles_per_page=3,  # small pages -> many await points -> real interleaving
+        )
+        use_case_b = BackfillCandles(
+            market_data=FakeMarketDataPort(candles),
+            candles=SqlAlchemyCandleRepository(session_b),
+            watermarks=SqlAlchemyIngestionWatermarkRepository(session_b),
+            max_candles_per_page=3,
+        )
+
+        await asyncio.gather(
+            use_case_a(TEST_INSTRUMENT, Granularity.M1, _ts(0), _ts(60)),
+            use_case_b(TEST_INSTRUMENT, Granularity.M1, _ts(40), _ts(100)),
+        )
+
+    final_watermark = await SqlAlchemyIngestionWatermarkRepository(session).get_watermark(
+        TEST_INSTRUMENT, Granularity.M1
+    )
+    assert final_watermark == (_ts(0), _ts(100))
+    stored = await SqlAlchemyCandleRepository(session).get_range(
+        TEST_INSTRUMENT, Granularity.M1, _ts(0), _ts(100)
+    )
+    assert len(stored) == 100  # nothing missing, nothing lost to a clobbered watermark

@@ -34,3 +34,21 @@ class IngestionWatermarkRepository(Protocol):
         `(earliest, latest)` — an upsert, not an incremental update; the
         caller is responsible for computing the correct new bounds."""
         ...
+
+    async def acquire_lock(self, instrument: Instrument, granularity: Granularity) -> None:
+        """Blocks until this series' watermark is exclusively held by
+        the caller (FX-31). `BackfillCandles` holds this for the
+        duration of a whole backfill call — not just one `set_watermark`
+        — so two concurrent backfills for the same series are
+        serialized (the second blocks until the first fully completes)
+        rather than racing: reading the same starting watermark,
+        computing conflicting page plans, and one's `set_watermark`
+        calls silently clobbering the other's.
+        """
+        ...
+
+    async def release_lock(self, instrument: Instrument, granularity: Granularity) -> None:
+        """Releases a lock acquired via `acquire_lock`. Must be called
+        even if the caller's own work raised — see `BackfillCandles`'s
+        `try`/`finally`."""
+        ...

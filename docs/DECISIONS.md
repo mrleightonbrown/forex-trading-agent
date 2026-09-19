@@ -2186,3 +2186,216 @@ mitigation, not a subtle edge case. `FX-29` (next) replaces the
 workaround with a real fix: an incremental backtest engine that
 processes the full history continuously, with parity-tested guarantees
 against the existing slow engine on small data.
+
+## 2026-09-19 — FX-29: scalable continuous backtest engine
+
+Replaces FX-28's withdrawn chunking workaround with a real fix, per the
+same external review that caught it: an incremental backtest path that
+processes a full H1 series continuously — no artificial boundaries, no
+position/indicator-state resets — validated trade-for-trade against the
+existing engine, then used to rerun FX-28's comparison for real.
+
+**Scope, confirmed empirically before building anything**: `simulate_
+trades` is already O(n) (one indexed pass) and needed no change — it
+already force-closes only at the true end of whatever candle list it's
+given; the problem was always that FX-28 gave it artificially-truncated
+lists. The O(n²) cost is entirely `run_backtest`'s full-history reslice
+plus each strategy's own from-scratch EMA/ADX recompute every call.
+`segment_trades_by_regime` (attribution) is *not* O(n²) over candles —
+its cost scales with trade-count × average history length, confirmed
+directly (below) to be tolerable as-is, no incremental treatment needed.
+
+**New, additive-only infrastructure** — nothing existing touched:
+- `domain/incremental_ema.py` (`IncrementalSmaSeededEma`) and `domain/
+  incremental_adx.py` (`IncrementalAdx`): O(1)-per-update primitives
+  replicating `_sma_seeded_ema`'s and `_compute_adx`'s exact math (same
+  Decimal operations, same order) one bar at a time. Deliberately
+  shared/reusable rather than per-strategy-duplicated (a departure from
+  this codebase's usual convention) — performance/correctness-critical
+  shared infrastructure benefits from one well-tested implementation,
+  not several near-duplicates.
+- `domain/incremental_strategy.py`: `IncrementalStrategy` protocol
+  (`on_candle(candle) -> TradeHypothesis | None`, stateful) and
+  `run_backtest_incremental` — same validation guards as `run_backtest`,
+  one O(n) forward pass, no reslicing, no candle ever re-shown.
+- `IncrementalEmaCrossoverStrategy` and `IncrementalEmaCrossoverTrend
+  RegimeGatedStrategy` — same `strategy_key`/parameters as their
+  existing counterparts (same strategy, faster implementation, not a
+  new identity). `EmaCrossoverStrategy`/`EmaCrossoverTrendRegimeGated
+  Strategy` themselves are completely unmodified and remain the
+  permanent ground-truth reference.
+
+**Verification, exact parity at every level, not just aggregates**:
+- `IncrementalSmaSeededEma`/`IncrementalAdx` checked step-by-step
+  against `_sma_seeded_ema`/`_compute_adx` on synthetic series, then
+  stress-tested against 1,500 real H1 candles (`IncrementalAdx`): 0
+  mismatches across 1,473 steps.
+- `IncrementalEmaCrossoverStrategy`/`IncrementalEmaCrossoverTrendRegime
+  GatedStrategy` checked hypothesis-for-hypothesis against the slow
+  engine over a 400-candle synthetic series exercising both confirmed
+  and gated-FLAT outcomes — exact equality on the first attempt for the
+  EMA strategy; the gated strategy needed one real bug fix first (an
+  inverted `regime is TrendRegime.RANGING` gate condition, caught by
+  mypy's Optional-narrowing complaints during cleanup, not by a test
+  failure — fixed before any test ran against it).
+- Golden parity tests at the exact acceptance-criterion granularity
+  (side, entry time/price, exit time/price, P&L) added explicitly, not
+  left as an implication of hypothesis-level parity.
+
+**Performance, measured**: 62,194 real H1 candles (EUR/USD), full
+continuous run: `IncrementalEmaCrossoverStrategy` 0.19s,
+`IncrementalEmaCrossoverTrendRegimeGatedStrategy` 0.47s — down from an
+extrapolated 35-40 minutes each with the old O(n²) engine at this scale.
+`segment_trades_by_regime` (unmodified): ~200-225s per instrument
+(~3.5 minutes) — confirmed, not just estimated, and treated as
+acceptable for a one-off analysis run; not optimized further in this
+story.
+
+**FX-28's comparison rerun, continuously, all 5 instruments, full
+10-year H1 history** (replaces the withdrawn table):
+
+| Instrument | Leg | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|---|
+| EUR_USD | Unconditional | 1165 | 0.317 | -0.00015 USD | 0.938 | -0.021 |
+| EUR_USD | TRENDING-only | 296 | 0.311 | -0.00070 USD | 0.746 | -0.106 |
+| EUR_USD | RANGING-only | 869 | 0.319 | 0.00004 USD | 1.017 | 0.006 |
+| EUR_USD | Gated (actual) | 296 | 0.311 | -0.00070 USD | 0.746 | -0.106 |
+| GBP_USD | Unconditional | 1181 | 0.292 | -0.00024 USD | 0.928 | -0.024 |
+| GBP_USD | TRENDING-only | 307 | 0.326 | 0.00029 USD | 1.081 | 0.023 |
+| GBP_USD | RANGING-only | 874 | 0.280 | -0.00042 USD | 0.866 | -0.048 |
+| GBP_USD | Gated (actual) | 307 | 0.326 | 0.00029 USD | 1.081 | 0.023 |
+| USD_JPY | Unconditional | 1119 | 0.312 | 0.02636 JPY | 1.085 | 0.025 |
+| USD_JPY | TRENDING-only | 293 | 0.317 | 0.03225 JPY | 1.090 | 0.026 |
+| USD_JPY | RANGING-only | 826 | 0.310 | 0.02427 JPY | 1.083 | 0.025 |
+| USD_JPY | Gated (actual) | 293 | 0.317 | 0.03225 JPY | 1.090 | 0.026 |
+| USD_CAD | Unconditional | 1205 | 0.269 | -0.00047 CAD | 0.831 | -0.061 |
+| USD_CAD | TRENDING-only | 289 | 0.304 | -0.00046 CAD | 0.841 | -0.060 |
+| USD_CAD | RANGING-only | 916 | 0.258 | -0.00047 CAD | 0.827 | -0.062 |
+| USD_CAD | Gated (actual) | 289 | 0.304 | -0.00046 CAD | 0.841 | -0.060 |
+| XAU_USD | Unconditional | 1132 | 0.293 | 1.24596 USD | 1.129 | 0.030 |
+| XAU_USD | TRENDING-only | 313 | 0.304 | 2.67158 USD | 1.224 | 0.046 |
+| XAU_USD | RANGING-only | 819 | 0.289 | 0.70112 USD | 1.080 | 0.020 |
+| XAU_USD | Gated (actual) | 313 | 0.304 | 2.67158 USD | 1.224 | 0.046 |
+
+Gated rows equal their instrument's TRENDING-only row exactly, again —
+the proven structural equivalence holds identically under continuous
+processing (expected: it's a property of the strategy pairing at each
+decision bar, independent of how the backtest is executed).
+
+Trade counts shifted modestly from the withdrawn chunked table (e.g.
+EUR_USD unconditional: 1165 continuous vs. 1157 chunked) — confirming
+the chunking bug was real and did distort results, exactly as the
+external review predicted, though the shift is modest here rather than
+dramatic. **Qualitative conclusions are unchanged**: TRENDING-
+conditioning helps GBP_USD, USD_JPY, and XAU_USD (higher win rate,
+expectancy, profit factor, and Sharpe than unconditional) and hurts
+EUR_USD; USD_CAD is essentially a wash (win rate improves 0.269→0.304,
+expectancy is flat within rounding). No single instrument-independent
+answer to "should EMA crossover be regime-gated" — this table is now
+trustworthy evidence for that conclusion, not an exploratory
+approximation.
+
+**Verification**: 32 new tests across the incremental primitives,
+strategies, and golden parity checks. Full-suite tally (including
+FX-30/FX-31, below) recorded at the end of that entry rather than
+duplicated here.
+
+## 2026-09-19 — FX-30: ingestion watermark boundary semantics
+
+The first of two smaller hardening items the same external review
+flagged, explicitly said to not affect the research data already
+loaded. `FX-27H.1`'s fix was a symptom: `DetectDataGaps` got a false-
+positive gap because a watermark's `earliest_ingested` was a literal
+wall-clock query time (`2016-09-19T19:14:34Z`, from `build_research_
+dataset.py`'s own `datetime.now()`), not a genuine candle boundary.
+That story fixed the *consumer*; this closes it at the *source* instead
+of leaving every future consumer to defend against it individually.
+
+**Traced precisely before changing anything**: `split_into_pages`
+already snaps its own cursor via `candle_start_boundary`, so every
+page's `.start` is always boundary-aligned, and non-final pages' `.end`
+too (`_advance`'s closed-form/exact-walk construction). The ONLY leak
+is the *final* page's `.end`, clamped directly to a caller's raw,
+possibly mid-candle `range_end` — and `BackfillCandles.__call__`'s
+`floor_earliest=start` on a series' very first backfill, using the
+caller's raw `start` unmodified. Both are `BackfillCandles`' own
+bookkeeping, not `split_into_pages`' fault.
+
+**Decision: floor both bounds, never round up** — considered and
+rejected rounding `latest` up to "the nearest boundary" as the more
+obviously-symmetric fix. It's wrong: a requested `end` is very often
+"now", almost always mid-candle, and the candle containing it may
+still be forming. Rounding up would claim a candle that might not
+exist yet as covered. Flooring both bounds means the watermark only
+ever claims candles that are already fully behind the requested `end`
+— conservative, never overstates coverage. (Built and tested a
+`round_up_to_candle_boundary` helper before this reasoning, then
+deleted it and its tests once the flooring analysis showed rounding up
+was actively the wrong choice, not just unnecessary — caught before
+shipping, not after.)
+
+**No change to what's fetched**: `split_into_pages` calls inside
+`_extend_forward`/`_extend_backward` still receive the exact same raw
+`range_start`/`range_end` as before — only what gets recorded via
+`set_watermark` changes (the final page's `.end` and the first-ever
+`floor_earliest`, both floored via `candle_boundary.candle_start_
+boundary`). Existing FX-26 tests (all already boundary-aligned
+fixtures) passed unmodified, confirming no behavior change for the
+common case.
+
+**Verification**: two new regression tests reproducing the exact
+production scenario (a `start`/`end` a few seconds past a minute
+boundary) and the specific risk a naive round-up fix would reintroduce
+(a mid-candle `end` must never claim the next, possibly-forming candle
+as covered). Regression-proof discipline applied: reverted both fixes,
+confirmed both new tests fail, restored, confirmed they pass. Existing
+FX-26 unit and live-Postgres integration suites unaffected.
+
+## 2026-09-19 — FX-31: ingestion watermark concurrency protection
+
+The second smaller hardening item, also explicitly forward-looking —
+"irrelevant to the sequential one-off dataset load, but matters later
+when the scheduler exists." Two concurrent `BackfillCandles` calls for
+the same `(instrument, granularity)` could previously read the same
+starting watermark, independently compute conflicting page plans, and
+their interleaved `set_watermark` calls could clobber each other.
+
+**Decision: a Postgres session-level advisory lock
+(`pg_advisory_lock`/`pg_advisory_unlock`), held for the whole
+`BackfillCandles.__call__`, not just one `set_watermark`** — new
+`acquire_lock`/`release_lock` methods on the `IngestionWatermarkRepository`
+port, implemented in the SQL adapter via a stable key (SHA-256 of
+`"{instrument}:{granularity}"`, truncated to a signed 64-bit int —
+not Python's own `hash()`, which is process-salted and not stable
+across runs/processes). Session-level (not transaction-scoped)
+specifically because `BackfillCandles` commits once per page, many
+times per call — a transaction-scoped row lock would be released at
+the first commit, long before the call actually finishes. The `Fake`
+double uses one real `asyncio.Lock` per key, so concurrent-caller tests
+get the same genuine serialization guarantee, not a no-op stand-in.
+
+**Considered and rejected**: `SELECT ... FOR UPDATE` on the watermark
+row itself — released at each of `BackfillCandles`' own per-page
+commits, defeating the purpose; would need restructuring the existing
+crash-safety design (durable per-page progress) to hold one long
+transaction instead, a much bigger, riskier change for a
+still-forward-looking concern.
+
+**Verification, and an honest note on the discipline used**: a live-
+Postgres test runs two genuinely concurrent `BackfillCandles` calls
+(separate sessions/connections, `asyncio.gather`, small pages to
+maximize real await-point interleaving) for the same series with
+overlapping ranges, asserting the final watermark and stored candles
+exactly match what a sequential run of both would produce. Async
+interleaving timing isn't fully deterministic, so a single failing run
+pre-fix wouldn't be a fully reliable demonstration on its own — ran the
+un-fixed version 8 times before restoring the fix: **8/8 failed**,
+confirming the race is reliably reproducible at this contention level,
+not a rare fluke. Ran the fixed version 5 times after restoring: 5/5
+passed.
+
+**Full suite, both stories**: 597 passed, the same 6 pre-existing
+weekend-related live-OANDA failures as FX-26/27/28 plus FX-29's own
+unrelated live-smoke test (same "0 candles in the last 4 hours"
+signature, today is still Saturday) — confirmed not a regression.
+Lint/format/mypy/pre-commit clean.

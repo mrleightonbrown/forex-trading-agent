@@ -97,6 +97,50 @@ async def test_fresh_backfill_pages_and_persists_the_whole_range() -> None:
     assert len(market_data.requests) == 5
 
 
+# --- watermark boundary alignment (FX-30) --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_watermark_bounds_are_floored_to_candle_boundaries_on_fresh_backfill() -> None:
+    """Regression: found live while gap-checking the FX-27 research
+    dataset -- a wall-clock `start`/`end` (e.g. a script's own
+    `datetime.now()`, essentially never exactly on a candle boundary)
+    must not leak into the watermark verbatim. `earliest_ingested` must
+    floor to the boundary at or before the requested `start`;
+    `latest_ingested` must floor to the boundary at or before the
+    requested `end` (not round up -- the candle containing a mid-candle
+    `end` may still be forming and must not be claimed as covered)."""
+    use_case, _market_data, _repo, watermarks = _use_case(
+        _dense_candles(23), max_candles_per_page=5
+    )
+    misaligned_start = UtcTimestamp(_ts(0).value + timedelta(seconds=14, microseconds=34))
+    misaligned_end = UtcTimestamp(_ts(23).value + timedelta(seconds=45))
+
+    result = await use_case(EUR_USD, Granularity.M1, misaligned_start, misaligned_end)
+
+    assert result.earliest_ingested == _ts(0)  # floored down from :14.000034
+    assert result.latest_ingested == _ts(23)  # floored down from :45, NOT rounded up to _ts(24)
+    assert await watermarks.get_watermark(EUR_USD, Granularity.M1) == (_ts(0), _ts(23))
+
+
+@pytest.mark.asyncio
+async def test_watermark_latest_is_not_rounded_up_into_a_still_forming_candle() -> None:
+    """The specific risk a naive "round to nearest boundary" fix would
+    reintroduce: requesting up to a mid-candle `end` must never claim
+    the *next* candle (which might not exist/be finalized yet) as
+    covered."""
+    use_case, _market_data, _repo, _watermarks = _use_case(
+        _dense_candles(23), max_candles_per_page=5
+    )
+    # 30 seconds into what would be candle 23 -- that candle isn't even
+    # in the fixture (_dense_candles(23) only has candles 0..22).
+    end_mid_candle_23 = UtcTimestamp(_ts(23).value + timedelta(seconds=30))
+
+    result = await use_case(EUR_USD, Granularity.M1, _ts(0), end_mid_candle_23)
+
+    assert result.latest_ingested == _ts(23)  # NOT _ts(24)
+
+
 # --- forward extension ----------------------------------------------------
 
 

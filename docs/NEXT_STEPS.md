@@ -343,48 +343,59 @@ expectancy:
      candle boundary once, before either call. Regression-tested
      (confirmed to fail pre-fix with the exact false positive seen live,
      pass post-fix).
-4. ~~`FX-28` — true `TrendRegime`-based gating~~ — strategy complete,
-   **performance table WITHDRAWN, pending FX-29**.
+4. ~~`FX-28` — true `TrendRegime`-based gating~~ — complete.
    `EmaCrossoverTrendRegimeGatedStrategy` built; ran the three-way
    comparison (unconditional / entry-regime attribution / actual gating)
    across all 5 research-dataset instruments, full 10-year H1 history.
-   **Central finding, still valid**: proved (not just observed) that
-   "gated" and "TRENDING-only attribution" trades are entry/exit/P&L-
-   identical for this specific pairing — a base strategy with no native
-   FLAT, gated at the same decision bars attribution already inspects,
-   structurally cannot diverge from post-hoc filtering. Locked in as a
-   regression test that runs on one continuous series, unaffected by the
-   issue below. **Per-instrument performance numbers withdrawn**:
-   external review caught, independently confirmed, that chunking the
-   10-year backtest into ~6,000-candle windows (for `run_backtest`'s
-   documented O(n²) scaling) force-closes open positions and reseeds
-   every strategy's EMA/ADX state at each artificial boundary — a real
-   change to the simulated trade path, not the "<1%" cost originally
-   claimed. See `docs/DECISIONS.md`'s correction entry for the
-   independent confirmation (228 continuous vs. 226 chunked trades on
-   the same 12,000-candle window). The specific "helped X, hurt Y"
-   claims are provisional until `FX-29` reruns them on a continuous
-   engine.
-5. `FX-29` — Scalable Continuous Backtest Engine. Replaces FX-28's
-   chunking workaround with a real fix: process the full ~62,000-candle
-   H1 series per instrument continuously (no artificial chunk
-   boundaries), preserving open-position state and EMA/ADX indicator
-   state across the whole run. Must produce byte-identical hypotheses
-   and trades to the existing `run_backtest`/`simulate_trades` on small
-   datasets — golden parity tests required, trade-for-trade (side, entry
-   time/price, exit time/price, P&L). `simulate_trades` itself is
-   already O(n) (a single indexed pass) and needs no change; the O(n²)
-   cost is entirely `run_backtest`'s full-history reslice plus each
-   strategy's own from-scratch EMA/ADX recompute per call — an
-   incremental engine needs strategies that maintain O(1)-per-bar state
-   instead. Once built: rerun FX-28's five-instrument comparison and
-   replace the withdrawn table with continuous-history results. Not yet
-   started as of this writing.
+   **Central finding**: proved (not just observed) that "gated" and
+   "TRENDING-only attribution" trades are entry/exit/P&L-identical for
+   this specific pairing — a base strategy with no native FLAT, gated at
+   the same decision bars attribution already inspects, structurally
+   cannot diverge from post-hoc filtering. Locked in as a regression
+   test. Its own performance table was briefly withdrawn (chunking bug,
+   see FX-29) and has since been rerun for real.
+5. ~~`FX-29` — Scalable Continuous Backtest Engine~~ — complete.
+   Replaced FX-28's chunking workaround with a real fix: `Incremental
+   SmaSeededEma`/`IncrementalAdx` (O(1)-per-bar, proven bit-for-bit
+   identical to the slow recompute), `IncrementalStrategy`/
+   `run_backtest_incremental` (one O(n) forward pass), and incremental
+   counterparts to the two `EmaCrossover*` strategies (same
+   `strategy_key`s, golden-parity-tested trade-for-trade against the
+   unmodified slow originals). `simulate_trades` needed no change — it
+   was already O(n); the O(n²) cost was entirely `run_backtest`'s
+   reslicing plus each strategy's own from-scratch recompute per call.
+   Measured: a full 62,194-candle H1 series in 0.19s (EMA) / 0.47s
+   (gated), down from an extrapolated 35-40 minutes each. Reran FX-28's
+   comparison continuously, all 5 instruments, full 10-year H1 history
+   — the corrected table (replacing the withdrawn one) is in
+   `docs/DECISIONS.md`: gated == TRENDING-only again, confirming the
+   structural equivalence is independent of execution strategy;
+   TRENDING-conditioning helps GBP_USD/USD_JPY/XAU_USD, hurts EUR_USD,
+   is roughly neutral for USD_CAD. Trade counts shifted modestly from
+   the withdrawn table (confirming the chunking bug was real, if modest
+   in this case), qualitative conclusions unchanged.
+6. ~~`FX-30` — ingestion watermark boundary semantics~~ — complete.
+   `BackfillCandles` now floors both `earliest_ingested` and
+   `latest_ingested` to genuine candle boundaries (never rounds up — a
+   mid-candle `end` may still be forming) — closes the root cause behind
+   FX-27H.1's `DetectDataGaps` symptom rather than leaving every future
+   consumer to defend against it. No change to what's actually fetched
+   from the provider, only to what the watermark records.
+7. ~~`FX-31` — ingestion watermark concurrency protection~~ — complete.
+   `IngestionWatermarkRepository` gained `acquire_lock`/`release_lock`
+   (a Postgres session-level advisory lock in the real implementation),
+   serializing concurrent `BackfillCandles` calls for the same series.
+   Confirmed via a live-Postgres concurrency test: 8/8 failures without
+   the lock, 5/5 passes with it. Forward-looking — irrelevant to the
+   sequential one-off dataset load already done, matters once anything
+   schedules backfills automatically.
 
 No new technical strategies are planned — six directional strategies
 plus four controls is enough; the project's focus shifts from
 building trading ideas to evaluating which of them survive more history,
-more pairs, more regimes, and out-of-sample testing.
+more pairs, more regimes, and out-of-sample testing. The research
+dataset and backtest engine are now both trustworthy at full scale —
+FX-28's rerun table is real evidence, not an exploratory approximation.
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
