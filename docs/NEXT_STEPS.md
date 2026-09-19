@@ -319,6 +319,30 @@ expectancy:
      per call (preserves `BackfillCandles`' existing crash-safety unit).
      Regression-tested with a 3000-candle upsert (confirmed to fail
      pre-fix with the same `InterfaceError` seen live, pass post-fix).
+3a. ~~Research dataset gap-check~~ — complete, at the user's request before
+    `FX-28`. `scripts/check_research_dataset_gaps.py` ran `DetectDataGaps`
+    over all 10 series' full backfilled ranges, filtered to the standard
+    forex weekly closure (Friday 17:00–Sunday 17:00 `America/New_York`),
+    and reported everything left over. Of 162,121 raw missing slots, 97%
+    were ordinary weekly closures. The remaining 5,826 were investigated,
+    not just filtered and forgotten: the four FX pairs' residuals cluster
+    on named holidays (Christmas, New Year's, Thanksgiving) — expected,
+    matches `find_gaps`' documented no-holiday-calendar scope. XAU_USD's
+    much larger residual is dominated by a clean daily 17:00-NY gap on
+    ordinary trading days (OANDA's commodities settlement/rollover quote
+    gap) plus metals-specific holiday early-closes — both confirmed via a
+    live OANDA re-fetch (Thanksgiving 2016 window returns zero candles at
+    the flagged hours, matching what's stored: genuinely absent upstream,
+    not a backfill bug). No unexplainable scattered gaps found anywhere.
+   - `FX-27H.1` — `DetectDataGaps` false-positive fix, found by the gap
+     check's own first run. A non-boundary-aligned `start` (e.g. a
+     watermark's wall-clock `earliest_ingested`) made it report its
+     rounded-down boundary candle as missing even when present — `get_
+     range`'s `>= start` filter and `find_gaps`' own boundary-rounding
+     disagreed on a misaligned `start`. Fixed by snapping `start` to its
+     candle boundary once, before either call. Regression-tested
+     (confirmed to fail pre-fix with the exact false positive seen live,
+     pass post-fix).
 4. `FX-28` — true `TrendRegime`-based gating (FX-25 proved the pattern
    using H4 confirmation; this is the `TrendRegime` version specifically,
    run as explicit paired experiments — unconditional vs. entry-regime

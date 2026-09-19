@@ -1913,3 +1913,78 @@ it doesn't affect correctness of what *was* ingested.
 was asked): no `DetectDataGaps` sweep across the new dataset, no
 data-quality report. That's available as a natural next check before
 `FX-28` uses this dataset, but wasn't requested here.
+
+## 2026-09-19 — Research dataset gap-check (+ FX-27H.1: DetectDataGaps fix)
+
+**Requested by the user** before proceeding to `FX-28`, following up on
+the "not done as part of this step" note above.
+
+**Decision: filter at the script level, not by adding a market calendar
+to domain code.** `domain/candle_gaps.py` already documents this
+explicitly: "Deliberately no market-calendar awareness ... Callers should
+pass ranges already known to be within a trading session." A raw 10-year
+range is not such a range. Rather than silently redesigning `find_gaps`/
+`DetectDataGaps` to add calendar awareness (a real architectural change
+CLAUDE.md says to flag and stop before making, not do quietly),
+`scripts/check_research_dataset_gaps.py` is the caller-side
+responsibility that docstring already describes: run `DetectDataGaps`
+over each series' full range, then filter out the standard forex weekly
+closure (Friday 17:00 to Sunday 17:00 `America/New_York`) before
+reporting anything as a real gap — reusing the exact NY-17:00 session
+boundary this codebase already anchors day-aligned candles to (FX-24),
+not a new convention invented for this script.
+
+**FX-27H.1: the gap check's own first run surfaced a real bug, not just
+data findings.** Every series showed exactly one suspicious "unexplained"
+gap at its very first candle slot. Checked directly against Postgres
+before assuming anything: the flagged candle (e.g. `XAU_USD H1` at
+`2016-09-19T19:00:00Z`) *was* present in the table. Root cause:
+`DetectDataGaps` passed the watermark's raw `earliest_ingested`
+(`2016-09-19T19:14:34Z` — a wall-clock reading from when the backfill
+script ran, not a candle boundary) straight to both `get_range` and
+`find_gaps`. `find_gaps` rounds this down to `19:00:00` when building its
+expected-slot list, but `get_range`'s own `start_time >= start` filter
+used the unrounded `19:14:34`, silently excluding the genuinely-present
+`19:00:00` candle from `stored`. Any caller passing a non-boundary-
+aligned `start` was guaranteed at least one false-positive gap at the
+start of its range — an edge case none of the existing tests exercised,
+since they all used already-aligned timestamps. Fixed: `DetectDataGaps`
+now snaps `start` to its own candle boundary once, before either call, so
+both see the same window. Regression-tested the usual way (reverted,
+confirmed the new test reproduces the exact false positive, restored,
+confirmed it passes) before trusting the rest of the gap-check results.
+
+**Findings, re-run after the fix**: 162,121 raw missing candle slots
+across the 10 series; 97% (156,295) were ordinary weekly closures. The
+remaining 5,826 were investigated individually by category, not just
+filtered and left unexplained:
+
+- **The four FX pairs** (~420 H1 / ~102 H4 unexplained each): distribution
+  by (weekday, NY hour) is spread thin across ~120 distinct buckets with
+  no dominant peak (max count 14 in any one bucket) — the signature of
+  scattered, date-shifting annual holidays (Christmas, New Year's,
+  Thanksgiving — each lands on a different weekday each year), not a
+  systematic or scattered-random problem. Matches `find_gaps`' documented
+  no-holiday-calendar limitation exactly as expected.
+- **XAU_USD** (3,524 H1 / 208 H4 unexplained — notably larger): distribution
+  analysis showed ~2,607 of the H1 gaps concentrated in one clean,
+  extremely regular bucket — every Monday/Tuesday/Wednesday/Thursday and
+  Sunday at exactly 17:00 NY (confirmed: 521-522 occurrences each, ~5×
+  ~522 ≈ the dominant share). This is OANDA's daily settlement/rollover
+  quote gap specific to how it quotes commodities (gold trades don't
+  continue through the NY 17:00 day-rollover the way FX pairs do) — the
+  same explanation for the XAU_USD candle-count shortfall already noted
+  when the dataset was built (59,112 vs. ~62,200 H1 candles for the FX
+  pairs). The remaining ~918 H1 gaps cluster around specific holiday
+  dates with *extra* missing hours beyond the daily 17:00 gap — spot-
+  checked directly (not assumed): a live re-fetch of `XAU_USD` H1 for
+  Thanksgiving 2016-11-24 (`12:00`–`23:00 UTC`) returned candles only
+  through `17:00 UTC`, then nothing — confirming OANDA itself has no data
+  for those hours (an early-close pattern specific to metals around US
+  holidays), not a backfill defect.
+
+**Conclusion**: no scattered, unexplainable single-candle dropouts found
+anywhere in the dataset — every unexplained gap resolves into one of two
+recognized, confirmed-not-assumed categories (calendar holidays or
+XAU/USD's daily settlement gap). The research dataset is sound; `FX-28`
+can proceed against it.

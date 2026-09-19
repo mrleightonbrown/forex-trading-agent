@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-27H, research dataset build)_
+_Last updated: 2026-09-19 (FX-27H.1, research dataset gap-check)_
 
 ## What exists
 
@@ -156,15 +156,45 @@ _Last updated: 2026-09-19 (FX-27H, research dataset build)_
   before running. Surfaced FX-27H (above) — this was the backfill's first
   real run at full page size, and the very first page failed until that
   fix landed.
+- Research dataset gap-check: `scripts/check_research_dataset_gaps.py`
+  runs `DetectDataGaps` over every series' full backfilled range, then
+  filters out the standard forex weekly closure (Friday 17:00–Sunday
+  17:00 `America/New_York`, the same boundary FX-24 already anchors
+  day-aligned candles to) before reporting anything as unexplained —
+  `find_gaps`/`DetectDataGaps` are deliberately calendar-unaware (see
+  below), so this filtering is the caller-side responsibility their own
+  docs describe, kept in the script rather than added to domain code.
+  Result: of 162,121 raw missing candle slots across all 10 series, 97%
+  were ordinary weekly closures; the 5,826 remaining split into two
+  explained categories, confirmed rather than assumed — the four FX
+  pairs' residual (~420 H1/~100 H4 each) clusters on named calendar
+  holidays (Christmas, New Year's, Thanksgiving) our weekly-only filter
+  doesn't know about, and XAU_USD's much larger residual (3,524 H1/208
+  H4) is dominated by a clean, regular daily gap at 17:00 NY on ordinary
+  trading days — OANDA's daily settlement/rollover quote gap specific to
+  how it quotes commodities (confirmed via a live re-fetch of one
+  Thanksgiving-2016 window: OANDA itself returns no candles there, not a
+  backfill bug) — plus a smaller scatter around metals-specific holiday
+  early-closes (e.g. the day before Thanksgiving), also confirmed live.
+  No scattered, unexplainable single-candle dropouts found anywhere.
+  Surfaced FX-27H.1 (above) — the gap check's own first run had one
+  false-positive "gap" per series, from `DetectDataGaps` itself, not the
+  data; fixed before trusting the rest of the results.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
   latent day-alignment bug FX-24 already fixed elsewhere — verified and
   regression-tested). Rejects candles spanning more than one instrument
   (FX-11H — a candle from a different instrument could previously mask a
-  real gap). No market-calendar awareness (weekends/holidays) — callers
-  pass ranges
-  already known to be within a trading session.
+  real gap). `DetectDataGaps` snaps `start` to its own candle boundary
+  before fetching or checking for gaps (FX-27H.1) — a non-boundary-
+  aligned `start` previously made `get_range`'s `>= start` filter and
+  `find_gaps`' own boundary-rounding disagree, falsely reporting a
+  genuinely-present boundary candle as missing. No market-calendar
+  awareness (weekends/holidays) — callers pass ranges already known to
+  be within a trading session (see the research dataset gap-check,
+  above, for the caller-side weekly-closure filtering this implies in
+  practice).
 - `TradeHypothesis`, `Strategy` Protocol, `run_strategy`
   (`forex_agent.domain.strategy`) — the strategy framework. No I/O; lives
   in `domain/` alongside `aggregate_candles`/`find_gaps`. `run_strategy`
