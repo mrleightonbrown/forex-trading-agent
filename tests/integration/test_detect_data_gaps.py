@@ -42,6 +42,19 @@ def _m1(minute: int) -> Candle:
     )
 
 
+def _h1(hour: int) -> Candle:
+    flat = Ohlc(open=Decimal("1.1"), high=Decimal("1.1"), low=Decimal("1.1"), close=Decimal("1.1"))
+    return Candle(
+        instrument=TEST_INSTRUMENT,
+        granularity=Granularity.H1,
+        start_time=UtcTimestamp(datetime(2026, 1, 1, hour, 0, 0, tzinfo=UTC)),
+        bid=flat,
+        ask=flat,
+        volume=1,
+        is_finalized=True,
+    )
+
+
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
@@ -73,5 +86,31 @@ async def test_no_gaps_when_fully_stored(session: AsyncSession) -> None:
     use_case = DetectDataGaps(candles=repo)
 
     gaps = await use_case(TEST_INSTRUMENT, Granularity.M1, _ts(0), _ts(5))
+
+    assert gaps == []
+
+
+@pytest.mark.asyncio
+async def test_does_not_falsely_report_the_boundary_candle_as_missing(
+    session: AsyncSession,
+) -> None:
+    """Regression, found live while gap-checking the FX-27 research
+    dataset: a non-boundary-aligned `start` (e.g. a watermark's own
+    wall-clock `earliest_ingested`) must not make `DetectDataGaps` claim
+    its rounded-down boundary candle is missing when it's actually
+    present. `find_gaps` rounds `start` down to the nearest H1 boundary
+    (00:00) when building its expected list; `get_range`'s own
+    `start_time >= start` filter previously used the *unrounded* `start`
+    (00:14:00), excluding the genuinely-present 00:00 candle from
+    `stored` -- a guaranteed false positive whenever `start` isn't
+    already boundary-aligned."""
+    repo = SqlAlchemyCandleRepository(session)
+    await repo.upsert_many([_h1(0), _h1(1), _h1(2)])  # fully covered, no real gaps
+    use_case = DetectDataGaps(candles=repo)
+
+    misaligned_start = UtcTimestamp(datetime(2026, 1, 1, 0, 14, 0, tzinfo=UTC))
+    end = UtcTimestamp(datetime(2026, 1, 1, 3, 0, 0, tzinfo=UTC))
+
+    gaps = await use_case(TEST_INSTRUMENT, Granularity.H1, misaligned_start, end)
 
     assert gaps == []
