@@ -27,14 +27,17 @@ non-finalized candle), the strategy was left with partially-mutated
 state from whatever candles it *did* process before the raise, so even
 a subsequent *correct* call on that same instance no longer matched a
 fresh instance's output. Fixed two ways: (1) `IncrementalStrategy`
-gained `reset()`, called unconditionally at the start of every
-`run_backtest_incremental` call -- reusing an instance across replay
-calls is no longer silently wrong, matching `run_backtest`'s own
-implicit "each call is independent" semantics. (2) `candles` is now
-validated IN FULL (including every candle's finalized status) before
-`reset()` or any `on_candle()` call -- an invalid input series is
-rejected before any state exists to contaminate, not partway through
-processing it.
+gained `reset()`, called truly unconditionally at the very start of
+every `run_backtest_incremental` call -- before even the empty-`candles`
+early return, not just before validation/replay (a second round of
+review caught that the first version of this fix still skipped `reset()`
+on an empty list, despite this same claim of "unconditionally" already
+being written down -- fixed by moving the call, not by softening the
+claim). Reusing an instance across replay calls is no longer silently
+wrong, matching `run_backtest`'s own implicit "each call is independent"
+semantics. (2) `candles` is validated IN FULL (including every candle's
+finalized status) before any `on_candle()` call -- an invalid input
+series is rejected before any replay can partially mutate state.
 
 `reset()` is kept on the strategy itself (not, say, always constructing
 a fresh instance internally from a factory) deliberately: the same
@@ -55,13 +58,15 @@ class IncrementalStrategy(Protocol):
     """Same contract as `Strategy`, one bar at a time, but stateful --
     implementations must assume every candle is already finalized
     (`run_backtest_incremental` validates that up front, before calling
-    `reset()` or `on_candle` at all)."""
+    `on_candle` at all)."""
 
     def reset(self) -> None:
         """Clear all internal state back to what a freshly-constructed
-        instance would have. Called unconditionally by
-        `run_backtest_incremental` before every replay -- reusing an
-        instance across calls must never silently carry state over."""
+        instance would have. Called truly unconditionally by
+        `run_backtest_incremental` -- the very first thing it does, even
+        before an empty-`candles` early return -- so reusing an instance
+        across calls must never silently carry state over, regardless of
+        what that call's `candles` turns out to be."""
         ...
 
     def on_candle(self, candle: Candle) -> TradeHypothesis | None: ...
@@ -81,14 +86,23 @@ def run_backtest_incremental(
     by construction, whereas the slow path's safety depends on
     `run_backtest` slicing correctly.
 
-    FX-29H: `candles` is validated in full -- including every candle's
-    finalized status -- before `strategy.reset()` or `on_candle` is ever
-    called, so an invalid series is rejected before any state exists to
-    contaminate. `strategy.reset()` is then called unconditionally,
-    before replay begins, so reusing the same `strategy` instance across
-    multiple calls is safe and produces identical results each time
-    (matching `run_backtest`'s own implicit per-call independence).
+    FX-29H: `strategy.reset()` is called truly unconditionally -- first,
+    before even the empty-`candles` early return, not just before
+    validation/replay. (An earlier version of this fix called it after
+    that early return, so `run_backtest_incremental(strategy, [])`
+    silently left a reused strategy's prior state untouched, despite
+    this very docstring already claiming "unconditionally" -- caught by
+    a second round of external review; fixed by moving the call, not by
+    softening the claim.) `candles` is then validated in full --
+    including every candle's finalized status -- before `on_candle` is
+    ever called, so an invalid series can't leave a strategy
+    partially replayed: after any call, successful or not, a strategy's
+    state is always either freshly reset (empty input, or validation
+    failed before any candle was processed) or fully replayed through
+    every candle given (success) -- never a partial mixture of the two.
     """
+    strategy.reset()
+
     if not candles:
         return []
 
@@ -99,8 +113,6 @@ def run_backtest_incremental(
                 "strategies must only evaluate finalized candles; candle at "
                 f"{candle.start_time.value.isoformat()} is not finalized"
             )
-
-    strategy.reset()
 
     hypotheses: list[TradeHypothesis] = []
     for current_bar in candles:

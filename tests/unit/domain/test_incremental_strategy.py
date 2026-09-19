@@ -89,11 +89,11 @@ def test_a_failed_validation_leaves_no_partially_consumed_strategy_state() -> No
     assert corrected_result == fresh_result
 
 
-def test_validation_failure_happens_before_reset_is_even_needed() -> None:
+def test_validation_failure_leaves_zero_on_candle_mutation() -> None:
     """A stronger structural check than the above: prove the strategy's
-    state genuinely never advances past the first mutation attempt for
-    a rejected series -- not just that a later correct call happens to
-    self-correct via reset()."""
+    state genuinely never advances past `reset()` for a rejected series
+    -- no `on_candle()` call ever ran -- not just that a later correct
+    call happens to self-correct."""
     poisoned = [*_CANDLES[:5], _candle(5, _CLOSES[5], is_finalized=False)]
     strategy = IncrementalEmaCrossoverStrategy(fast_period=5, slow_period=13)
 
@@ -108,3 +108,25 @@ def test_validation_failure_happens_before_reset_is_even_needed() -> None:
     # over whatever did.
     assert strategy._fast_ema._seed_buffer == []
     assert strategy._slow_ema._seed_buffer == []
+
+
+def test_reset_is_called_even_for_an_empty_candle_list() -> None:
+    """FX-29H's own documentation already claimed reset() is called
+    "unconditionally" -- but the empty-`candles` early return happened
+    BEFORE reset(), contradicting that (caught by a second round of
+    external review, verified directly, fixed by moving the call rather
+    than the claim). A strategy warmed by a real prior call, then called
+    again with an empty list, must come out the other side already
+    reset -- not merely "will be reset by some future call." """
+    strategy = IncrementalEmaCrossoverStrategy(fast_period=5, slow_period=13)
+    run_backtest_incremental(strategy, _CANDLES)  # give it real, non-fresh state
+    assert strategy._fast_ema._value is not None, "fixture must actually warm the EMA"
+
+    result = run_backtest_incremental(strategy, [])
+
+    assert result == []
+    # Checked immediately after the empty call -- not via a later call,
+    # which would reset it anyway and mask this specific bug.
+    assert strategy._fast_ema._value is None
+    assert strategy._slow_ema._value is None
+    assert strategy._previous_diff is None
