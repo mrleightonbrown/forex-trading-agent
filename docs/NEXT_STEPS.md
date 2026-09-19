@@ -302,8 +302,23 @@ expectancy:
    re-aggregate already-`AGGREGATED` rows (regression-tested: confirmed
    to fail pre-fix, pass post-fix). Verified against both the in-memory
    `FakeCandleRepository` and real Postgres.
-3. Research dataset build: EUR/USD, GBP/USD, USD/JPY, USD/CAD, multiple
-   years, H1/H4 — using FX-26.
+3. ~~Research dataset build~~ — complete. `scripts/build_research_dataset.py`
+   backfilled 10 years (2016-09-19 to 2026-09-19) of H1 and H4 candles for
+   EUR/USD, GBP/USD, USD/JPY, USD/CAD, and XAU/USD (added to the original
+   four-pair plan on request — needed no domain change: `Instrument`
+   already accepts any 3-letter uppercase code, and "XAU" is gold's real
+   ISO 4217 code, confirmed live against the OANDA practice API). 385,689
+   candles total; 10/10 (instrument, granularity) series backfilled in one
+   run with no interruption. Surfaced and fixed a real production bug in
+   the process — see `FX-27H` below.
+   - `FX-27H` — `CandleRepository.upsert_many` batching fix. The very
+     first real backfill page (5000 candles) failed outright:
+     asyncpg caps bound query parameters at 32767, and the unbatched
+     `ON CONFLICT` insert needed 70,000 (14 params/candle). Fixed by
+     batching the insert into 1000-row chunks per call, still one commit
+     per call (preserves `BackfillCandles`' existing crash-safety unit).
+     Regression-tested with a 3000-candle upsert (confirmed to fail
+     pre-fix with the same `InterfaceError` seen live, pass post-fix).
 4. `FX-28` — true `TrendRegime`-based gating (FX-25 proved the pattern
    using H4 confirmation; this is the `TrendRegime` version specifically,
    run as explicit paired experiments — unconditional vs. entry-regime

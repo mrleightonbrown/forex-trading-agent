@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-27)_
+_Last updated: 2026-09-19 (FX-27H, research dataset build)_
 
 ## What exists
 
@@ -65,7 +65,11 @@ _Last updated: 2026-09-19 (FX-27)_
   storage without colliding in an upsert. Plus `CandleRepository`
   (application port: `upsert_many`, `get_range`) and
   `SqlAlchemyCandleRepository` — idempotent upsert via Postgres
-  `ON CONFLICT DO UPDATE`. `get_range` takes an explicit
+  `ON CONFLICT DO UPDATE`, internally batched into 1000-row statements
+  (FX-27H) since asyncpg caps bound query parameters at 32767 and a full
+  5000-candle page needs 70,000 unbatched — a real bug hit on the very
+  first live backfill page while building the research dataset, fixed
+  and regression-tested. `get_range` takes an explicit
   `source: CandleSource | None = None` (FX-27): `None` means "all
   sources" as a deliberate choice, never an implicit pick of whichever
   provenance happens to exist — pass `CandleSource.NATIVE`/`.AGGREGATED`
@@ -142,6 +146,16 @@ _Last updated: 2026-09-19 (FX-27)_
   real Postgres for the core interruption/resume guarantee (a simulated
   mid-backfill failure, then a resumed call, completes without
   re-fetching or duplicating anything).
+- Research dataset: `scripts/build_research_dataset.py` used
+  `BackfillCandles` to populate real Postgres with 10 years (2016-09-19 to
+  2026-09-19) of H1 and H4 candles for EUR/USD, GBP/USD, USD/JPY, USD/CAD,
+  and XAU/USD — 385,689 candles total, all 10 `(instrument, granularity)`
+  series backfilled in one run. XAU/USD needed no domain change (`XAU` is
+  gold's real ISO 4217 code, and `Instrument` already accepts any
+  3-letter uppercase code); confirmed available on the OANDA practice API
+  before running. Surfaced FX-27H (above) — this was the backfill's first
+  real run at full page size, and the very first page failed until that
+  fix landed.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -388,9 +402,11 @@ _Last updated: 2026-09-19 (FX-27)_
   territory, not decided yet.
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
-- Anything that actually calls `IngestCandles`/`AggregateCandles`/
-  `BackfillCandles` on a schedule or via a CLI/API trigger — they exist
-  and are tested, but nothing invokes them yet.
+- A scheduled or API-triggered version of `IngestCandles`/
+  `AggregateCandles`/`BackfillCandles` — `scripts/build_research_dataset.py`
+  (below) is a one-off operational script, not a recurring job; nothing
+  yet re-runs backfill on a schedule to keep the dataset current going
+  forward.
 - Backtest performance optimization for large candle sets (`O(n²)`
   reslicing in `run_backtest`) — not needed until real strategies exist.
 

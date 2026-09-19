@@ -1841,3 +1841,75 @@ live-OANDA strategy failures as FX-26 (confirmed identical signature —
 0 candles returned for the live window; today is still Saturday,
 markets still closed), not a regression. Lint/format/mypy/pre-commit
 all clean.
+
+## 2026-09-19 — Research dataset build (+ FX-27H: upsert batching fix)
+
+**Decision: 10 years of history, EUR/USD + GBP/USD + USD/JPY + USD/CAD +
+XAU/USD, H1 + H4** — the original roadmap only named the four FX pairs;
+asked the user how much history to backfill (3/5/10 years/maximum
+available, with data confirmed live back to at least 2005 for both
+EUR/USD and XAU/USD before asking) and how to treat the requested
+addition of XAU/USD. User chose 10 years. XAU/USD needed no domain
+change: `Instrument.base_currency`/`quote_currency` validation
+(`require_currency_code`) only requires a 3-letter uppercase code — "XAU"
+already is gold's real ISO 4217 currency code, and OANDA's practice API
+exposes it as `XAU_USD`, confirmed with a live fetch before committing to
+the design. `pip_decimal_places` (currently unused anywhere in the
+codebase) needed no special-casing either.
+
+**Implementation: `scripts/build_research_dataset.py`**, a one-off
+composition script (not a new use case or domain behavior) wiring
+already-tested machinery — `BackfillCandles`, `SqlAlchemyCandleRepository`,
+`SqlAlchemyIngestionWatermarkRepository`, `OandaMarketDataAdapter` — for
+each of the 10 `(instrument, granularity)` combinations in turn. No
+dedicated test suite, matching the existing precedent for composition-root
+wiring (`apps/api/main.py`). Safe to re-run: resumable via FX-26's
+watermark like any other `BackfillCandles` call.
+
+**FX-27H: real bug found on the very first live run at full page size.**
+`SqlAlchemyCandleRepository.upsert_many` built one `ON CONFLICT` insert
+statement per call, with all of a page's candles as one `.values([...])`
+list. Every prior test used small candle counts, so this never hit the
+one thing that matters at real scale: asyncpg caps bound query parameters
+at 32767 (its own wire-protocol limit, not Postgres' own). Each candle
+row contributes 14 params; a full 5000-candle page (FX-26's own default
+page cap) needs 70,000 — the very first `EUR_USD H1` backfill page
+failed outright with `asyncpg.exceptions.InterfaceError: the number of
+query arguments cannot exceed 32767`, confirmed to leave nothing written
+(the statement fails at the protocol level before touching the table —
+checked directly against Postgres, zero rows, zero watermarks, before
+fixing anything).
+
+**Fix**: batch `upsert_many`'s insert into 1000-row chunks (comfortably
+under the cap regardless of how large a page callers request), while
+keeping a single `commit()` at the end of the call — this preserves
+`BackfillCandles`' existing crash-safety unit exactly: a page still only
+counts as durably done once the whole `upsert_many` call returns, so
+FX-26's interruption/resume guarantee needed no changes. Verified via the
+same regression-proof discipline used throughout this project: reverted
+the batching, confirmed a new 3000-candle `upsert_many` test fails with
+the identical `InterfaceError` seen live, restored the fix, confirmed it
+passes.
+
+**Result**: full backfill completed cleanly on the next run — 385,689
+candles across all 10 series, one run, no interruption:
+
+| Instrument | H1 candles | H4 candles |
+|---|---|---|
+| EUR_USD | 62,199 | 15,556 |
+| GBP_USD | 62,202 | 15,560 |
+| USD_JPY | 62,216 | 15,573 |
+| USD_CAD | 62,225 | 15,581 |
+| XAU_USD | 59,112 | 15,465 |
+
+Coverage: `2016-09-19` to `2026-09-19` for every series (the watermark's
+`earliest`/`latest_ingested`, confirmed directly against Postgres).
+XAU_USD has modestly fewer H1 candles than the FX pairs (59,112 vs.
+~62,200) — a different daily trading-hours pattern on OANDA for
+commodities vs. FX pairs, not an error; not investigated further since
+it doesn't affect correctness of what *was* ingested.
+
+**Not done as part of this step** (deliberately, to keep scope to what
+was asked): no `DetectDataGaps` sweep across the new dataset, no
+data-quality report. That's available as a natural next check before
+`FX-28` uses this dataset, but wasn't requested here.
