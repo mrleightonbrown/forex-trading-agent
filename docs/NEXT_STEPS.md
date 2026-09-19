@@ -383,6 +383,11 @@ expectancy:
      Fixed: `IncrementalStrategy.reset()`, called unconditionally before
      every replay; `candles` validated in full (including finalized
      status) before `reset()`/`on_candle` is ever called.
+     - Third-round follow-up: `reset()` wasn't actually called for an
+       empty `candles` list (the early return happened first), despite
+       the docstring already claiming "unconditionally" — caught by a
+       further review pass, confirmed directly, fixed by moving the
+       call to the literal first line of the function.
 6. ~~`FX-30` — ingestion watermark boundary semantics~~ — complete.
    `BackfillCandles` now floors both `earliest_ingested` and
    `latest_ingested` to genuine candle boundaries (never rounds up — a
@@ -403,6 +408,18 @@ expectancy:
    pins one dedicated connection for the lock's whole held duration,
    verified under a deliberately constrained, heavily-churning pool the
    lock itself stays isolated from.
+   - Third-round follow-up: a further, distinct pool-starvation
+     deadlock risk (the lock's own blocking `pg_advisory_lock` holds a
+     connection while waiting; sharing a pool with the worker sessions
+     under real concurrency can starve the lock-holder of the
+     connection it needs to finish and release the lock). Confirmed
+     directly that the actual composition root
+     (`scripts/build_research_dataset.py`) shared one engine for both —
+     not currently triggered (that script runs sequentially), but a
+     latent structural risk for the future scheduler FX-31 was meant to
+     make safe. Fixed with a new, dedicated `get_lock_engine()`, never
+     shared with the engine backing `candles`/`watermarks` sessions;
+     updated everywhere `PostgresBackfillLock` is constructed.
 
 No new technical strategies are planned — six directional strategies
 plus four controls is enough; the project's focus shifts from

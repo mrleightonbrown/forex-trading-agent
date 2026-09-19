@@ -32,7 +32,7 @@ from forex_agent.infrastructure.db.ingestion_watermark_repository import (
 )
 from forex_agent.infrastructure.db.models.candle import CandleRow
 from forex_agent.infrastructure.db.models.ingestion_watermark import IngestionWatermarkRow
-from forex_agent.infrastructure.db.session import get_engine
+from forex_agent.infrastructure.db.session import get_engine, get_lock_engine
 from tests.fakes.market_data_port import FakeMarketDataPort
 
 TEST_INSTRUMENT = Instrument(base_currency="ZZZ", quote_currency="WWW")
@@ -84,7 +84,7 @@ async def test_backfill_pages_and_persists_against_real_postgres(session: AsyncS
         market_data=market_data,
         candles=SqlAlchemyCandleRepository(session),
         watermarks=SqlAlchemyIngestionWatermarkRepository(session),
-        lock=PostgresBackfillLock(get_engine()),
+        lock=PostgresBackfillLock(get_lock_engine()),
         max_candles_per_page=5,
     )
 
@@ -120,7 +120,7 @@ async def test_interrupted_backfill_resumes_without_refetching_or_duplicating_ag
         market_data=market_data,
         candles=candle_repo,
         watermarks=watermark_repo,
-        lock=PostgresBackfillLock(get_engine()),
+        lock=PostgresBackfillLock(get_lock_engine()),
         max_candles_per_page=5,
     )
 
@@ -142,7 +142,7 @@ async def test_interrupted_backfill_resumes_without_refetching_or_duplicating_ag
         market_data=market_data,
         candles=SqlAlchemyCandleRepository(session),
         watermarks=SqlAlchemyIngestionWatermarkRepository(session),
-        lock=PostgresBackfillLock(get_engine()),
+        lock=PostgresBackfillLock(get_lock_engine()),
         max_candles_per_page=5,
     )
     result = await resumed_use_case(TEST_INSTRUMENT, Granularity.M1, _ts(0), _ts(25))
@@ -171,7 +171,7 @@ async def test_concurrent_backfills_for_the_same_series_do_not_race(
     both ranges, fully covered, nothing missing."""
     candles = _dense_candles(100)
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
-    lock = PostgresBackfillLock(get_engine())
+    lock = PostgresBackfillLock(get_lock_engine())
 
     async with session_factory() as session_a, session_factory() as session_b:
         use_case_a = BackfillCandles(
@@ -240,7 +240,7 @@ async def test_concurrent_backfills_do_not_race_even_under_forced_pool_churn(
     constrained_engine = create_async_engine(
         settings.database_url, pool_size=2, max_overflow=0, pool_pre_ping=True
     )
-    lock = PostgresBackfillLock(get_engine())  # deliberately a SEPARATE, unconstrained engine
+    lock = PostgresBackfillLock(get_lock_engine())  # deliberately a SEPARATE, unconstrained engine
 
     try:
         session_factory = async_sessionmaker(bind=constrained_engine, expire_on_commit=False)

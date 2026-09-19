@@ -12,6 +12,17 @@ physical backend connection, not to any SQLAlchemy object, and an ORM
 connection for a potentially long backfill's whole duration (the lock
 itself doesn't need one -- session-level advisory locks aren't
 transaction-scoped either).
+
+REQUIRED: construct this with a DEDICATED engine (see `infrastructure.
+db.session.get_lock_engine`), never the same engine backing the
+`candles`/`watermarks` sessions passed to the same `BackfillCandles`.
+`pg_advisory_lock` BLOCKS while holding a checked-out connection --
+under a small enough shared pool, two concurrent backfills for the same
+series can deadlock: the waiting one's lock-connection occupies a pool
+slot indefinitely, starving the holder's own worker session of the
+connection it needs to finish (and thereby release the lock) — found
+by external review, confirmed to be a genuine structural risk (not
+just theoretical) before writing this warning.
 """
 
 import hashlib

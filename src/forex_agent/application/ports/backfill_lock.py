@@ -24,6 +24,14 @@ through. Separating this out as its own abstraction (rather than
 folding physical-connection lifetime into the watermark repository,
 which already has its own job -- persisting state) keeps that
 distinction explicit at the port level, not just in a comment.
+
+Implementations that block while acquiring (the real one does, on
+`pg_advisory_lock`) MUST use a connection pool entirely separate from
+whatever pool backs the `candles`/`watermarks` sessions passed to the
+same `BackfillCandles` -- see `PostgresBackfillLock`'s own docstring
+for the deadlock a shared pool can cause under real contention (found
+by external review, confirmed as a genuine structural risk before
+documenting it here).
 """
 
 from contextlib import AbstractAsyncContextManager

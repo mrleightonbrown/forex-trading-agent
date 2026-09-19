@@ -46,7 +46,7 @@ from forex_agent.infrastructure.db.candle_repository import SqlAlchemyCandleRepo
 from forex_agent.infrastructure.db.ingestion_watermark_repository import (
     SqlAlchemyIngestionWatermarkRepository,
 )
-from forex_agent.infrastructure.db.session import get_engine
+from forex_agent.infrastructure.db.session import get_engine, get_lock_engine
 
 INSTRUMENTS = [
     Instrument(base_currency="EUR", quote_currency="USD"),
@@ -77,7 +77,14 @@ async def main() -> None:
                 market_data=market_data,
                 candles=SqlAlchemyCandleRepository(session),
                 watermarks=SqlAlchemyIngestionWatermarkRepository(session),
-                lock=PostgresBackfillLock(get_engine()),
+                # Deliberately get_lock_engine(), NOT get_engine() -- see
+                # that function's own docstring (FX-31H): sharing a pool
+                # between the lock and the candles/watermarks session
+                # can deadlock under concurrent backfills for the same
+                # series. This script runs sequentially today, so it's
+                # not at risk in practice, but the composition itself
+                # should still be correct, not correct-by-accident.
+                lock=PostgresBackfillLock(get_lock_engine()),
             )
             for instrument in INSTRUMENTS:
                 for granularity in GRANULARITIES:

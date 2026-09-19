@@ -2522,3 +2522,74 @@ complement (`test_shared_fake_lock_serializes_concurrent_backfills`,
 property without needing Postgres. Full suite: 604 passed, same 7
 pre-existing/unrelated live-OANDA failures. Lint/format/mypy/
 pre-commit clean.
+
+## 2026-09-19 — Third-round review: two small FX-29H/FX-31H follow-ups
+
+**FX-29H — `reset()` wasn't truly unconditional.** Caught by external
+review: `run_backtest_incremental`'s empty-`candles` early return
+happened BEFORE `strategy.reset()`, despite the docstring already
+claiming "called unconditionally." Confirmed directly (not assumed): a
+strategy warmed by a real call, then called again with `[]`, still had
+its prior EMA state intact immediately afterward. Fixed by moving
+`reset()` to the literal first line of the function, before even that
+early return — not by softening the documented claim to match the
+looser behavior. New regression test checks the strategy's internal
+state directly after the empty call (not via a later call, which would
+reset it anyway and mask the bug). Regression-proof discipline applied:
+reverted, confirmed the new test fails, restored, confirmed it passes.
+
+**FX-31H — a pool-starvation deadlock the connection-pinning fix
+didn't address.** External review identified a specific, well-reasoned
+scenario: `pg_advisory_lock` blocks while holding a checked-out
+connection. If the lock and the `candles`/`watermarks` sessions share
+one pool, two concurrent backfills for the same series can deadlock —
+A holds the lock on connection 1; B blocks on connection 2 waiting for
+it; A now needs a connection for its own `get_watermark`/`upsert_many`
+work (to finish and release the lock) but the pool has none left; B
+can't release connection 2 until A releases the lock; neither can
+proceed. Real for a small enough pool, and the review correctly noted
+this project's own strongest test (`test_concurrent_backfills_do_not_
+race_even_under_forced_pool_churn`) already used separate engines for
+the lock and the workers — proving the SAFE pattern works, while the
+actual composition root (`scripts/build_research_dataset.py`) used
+`get_engine()` for both, the UNSAFE pattern. Confirmed directly before
+fixing: read through the exact composition and verified it does share
+one engine.
+
+Not currently triggered — `build_research_dataset.py` runs its
+backfills sequentially, so at most one `BackfillCandles` call is ever
+active, needing at most 2 connections (one for its lock, one for its
+worker session) against the default pool's much larger capacity. The
+review's own point stands: this is a latent structural risk for
+whatever future scheduler FX-31 was meant to make safe, not a bug in
+current behavior.
+
+**Fix**: new `get_lock_engine()` (`infrastructure/db/session.py`) — a
+SEPARATE, dedicated engine (own connection pool) specifically for
+`PostgresBackfillLock`, never shared with `get_engine()`. Its own
+docstring spells out the deadlock scenario explicitly, at the exact
+point future composition code would look, matching this project's
+practice of documenting a requirement where someone would actually
+encounter it, not just in a commit message. `build_research_dataset.py`
+and every test constructing `PostgresBackfillLock` updated to use it —
+`get_engine()` is no longer used for lock construction anywhere in the
+codebase, establishing one unambiguous convention rather than two
+interchangeable-looking options. `BackfillLock`'s port docstring and
+`PostgresBackfillLock`'s own docstring both updated to state the
+separate-pool requirement as a MUST, not a suggestion.
+
+**Considered and not built**: a non-blocking `pg_try_advisory_lock`
+polling loop (releasing the connection between attempts) as
+defense-in-depth even if a future caller ignores the separate-engine
+requirement. Decided against for now — the dedicated-engine fix
+already eliminates the specific deadlock class structurally, and a
+polling loop is real added complexity to the tested, working blocking-
+lock semantics for a risk that's already closed. Flagged, not built,
+matching this project's practice of naming a real future option rather
+than silently deciding for the user.
+
+**Verification**: full suite (unit + integration, live Postgres)
+green — 605 passed, same 7 pre-existing/unrelated live-OANDA failures.
+The concurrency tests (including the forced-pool-churn one) all still
+pass using the new `get_lock_engine()` throughout. Lint/format/mypy/
+pre-commit clean.

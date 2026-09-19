@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-31H)_
+_Last updated: 2026-09-19 (FX-29H/FX-31H third-round follow-ups)_
 
 ## What exists
 
@@ -368,12 +368,15 @@ _Last updated: 2026-09-19 (FX-31H)_
   withdrawn comparison continuously (no chunking); the corrected table
   is in `docs/DECISIONS.md`. `IncrementalStrategy` gained `reset()`
   (FX-29H, external review) — `run_backtest_incremental` calls it
-  unconditionally before every replay, since a stateful strategy
-  instance reused across calls without it silently produced different
-  results the second time (reproduced directly before fixing).
-  `candles` is now validated in full (including finalized status)
-  before `reset()`/`on_candle` is ever called, so a rejected series
-  can't leave a strategy partially mutated either.
+  truly unconditionally, the very first thing it does (a second review
+  round caught that the first version of this fix still skipped
+  `reset()` for an empty `candles` list, despite the docstring already
+  claiming "unconditionally" — fixed by moving the call, not softening
+  the claim), since a stateful strategy instance reused across calls
+  without it silently produced different results the second time
+  (reproduced directly before fixing). `candles` is validated in full
+  (including finalized status) before `on_candle` is ever called, so a
+  rejected series can't leave a strategy partially mutated either.
 - Ingestion watermark hardening (FX-30/FX-31/FX-31H, prompted by the
   same external review, explicitly noted as not affecting already-
   loaded research data): `BackfillCandles` now floors both
@@ -394,7 +397,17 @@ _Last updated: 2026-09-19 (FX-31H)_
   dedicated `AsyncConnection` for the lock's entire held duration,
   structurally immune to the session's own connection churn — verified
   under a deliberately constrained, heavily-churning pool that the lock
-  itself is kept isolated from.
+  itself is kept isolated from. A further, distinct risk from sharing
+  one connection pool between the lock and the worker sessions — a
+  pool-starvation deadlock (`pg_advisory_lock` blocks while holding a
+  connection; under a small shared pool, a waiting caller's held
+  connection can starve the lock-holder's own worker session of the
+  connection it needs to finish and release the lock) — was caught by
+  external review and confirmed directly in the actual composition
+  root, which shared one engine for both. Fixed with a new, dedicated
+  `get_lock_engine()` (`infrastructure/db/session.py`), never shared
+  with the engine backing `candles`/`watermarks` sessions; every
+  `PostgresBackfillLock` construction in the codebase now uses it.
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
   `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
   `strategy_key`s `always_long_v1`/`always_short_v1`/
