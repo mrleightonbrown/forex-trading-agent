@@ -1,8 +1,10 @@
-"""In-memory `CandleRepository` test double (FX-26), for fast unit tests
-of use cases that shouldn't need a live Postgres connection.
+"""In-memory `CandleRepository` test double (FX-26, `source` filtering
+FX-27), for fast unit tests of use cases that shouldn't need a live
+Postgres connection.
 """
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -39,6 +41,7 @@ class FakeCandleRepository:
         granularity: Granularity,
         start: UtcTimestamp,
         end: UtcTimestamp,
+        source: CandleSource | None = None,
     ) -> list[Candle]:
         matching = [
             c
@@ -46,5 +49,6 @@ class FakeCandleRepository:
             if c.instrument == instrument
             and c.granularity == granularity
             and start.value <= c.start_time.value < end.value
+            and (source is None or c.source == source)
         ]
         return sorted(matching, key=lambda c: c.start_time.value)

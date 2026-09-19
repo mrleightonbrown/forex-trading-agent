@@ -1797,3 +1797,47 @@ returned zero finalized candles. All of this story's own new tests
 tests would pass again once the market reopens. Recorded here rather
 than silently ignored, per this project's established honesty norm
 around environmental test flakiness.
+
+## 2026-09-19 — FX-27: candle retrieval provenance filtering
+
+**Decision: `get_range` gains `source: CandleSource | None = None`,
+where `None` is an explicit "all sources", not an implicit "whichever
+happens to exist"** — the design pinned down before implementation
+started (this story was pre-scoped in detail ahead of FX-26). FX-24
+already stops `NATIVE`/`AGGREGATED` rows from colliding in storage;
+this story is the read-side complement, letting a caller that cares
+about provenance say so explicitly rather than relying on `get_range`
+happening to return only one kind of row because the other doesn't
+exist yet. Implemented identically in `SqlAlchemyCandleRepository`
+(an extra `WHERE source = ...` clause, only added when `source is not
+None`) and `FakeCandleRepository` (the in-memory test double), so
+callers see the same behavior against either.
+
+**`AggregateCandles` now passes `source=CandleSource.NATIVE`
+explicitly**, rather than the prior implicit "all sources" default.
+Without this, a range containing both `NATIVE` and pre-existing
+`AGGREGATED` candles for the same source granularity would be passed
+straight to `aggregate_candles`, which already rejects mixed-provenance
+input (FX-24) — so the failure mode wasn't silent corruption, but it
+was an avoidable runtime error for a case `AggregateCandles` can just
+never enter. Filtering to `NATIVE` at the read is the more precise fix:
+`AggregateCandles`'s job is to aggregate *source* data, and
+re-aggregating already-`AGGREGATED` rows would be a different,
+unintended operation.
+
+**Verification:** confirmed via the regression-proof discipline used
+throughout this project — reverted `AggregateCandles`'s explicit
+`source=CandleSource.NATIVE` argument, confirmed the new
+`test_aggregate_candles_ignores_preexisting_aggregated_source_candles`
+test fails (it did: `AggregateCandles` read the `AGGREGATED` rows and
+tried to aggregate them, producing a non-zero write count where zero
+was expected), restored the fix, confirmed the test passes. New
+coverage: `FakeCandleRepository` filter behavior
+(`tests/unit/application/test_fake_candle_repository.py`, all three of
+`source=None`/`NATIVE`/`AGGREGATED`) and the same three cases against
+real Postgres (`tests/integration/test_candle_repository.py`). Full
+suite: 547 tests, 541 passed, the same 6 pre-existing weekend-related
+live-OANDA strategy failures as FX-26 (confirmed identical signature —
+0 candles returned for the live window; today is still Saturday,
+markets still closed), not a regression. Lint/format/mypy/pre-commit
+all clean.

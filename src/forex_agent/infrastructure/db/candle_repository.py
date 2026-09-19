@@ -1,4 +1,5 @@
-"""SQLAlchemy implementation of `CandleRepository` (FX-5, `get_range` FX-7)."""
+"""SQLAlchemy implementation of `CandleRepository` (FX-5, `get_range` FX-7,
+`source` filtering FX-27)."""
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -54,17 +55,18 @@ class SqlAlchemyCandleRepository:
         granularity: Granularity,
         start: UtcTimestamp,
         end: UtcTimestamp,
+        source: CandleSource | None = None,
     ) -> list[Candle]:
-        stmt = (
-            select(CandleRow)
-            .where(
-                CandleRow.instrument == instrument.symbol,
-                CandleRow.granularity == granularity.value,
-                CandleRow.start_time >= start.value,
-                CandleRow.start_time < end.value,
-            )
-            .order_by(CandleRow.start_time)
-        )
+        conditions = [
+            CandleRow.instrument == instrument.symbol,
+            CandleRow.granularity == granularity.value,
+            CandleRow.start_time >= start.value,
+            CandleRow.start_time < end.value,
+        ]
+        if source is not None:
+            conditions.append(CandleRow.source == source.value)
+
+        stmt = select(CandleRow).where(*conditions).order_by(CandleRow.start_time)
         result = await self._session.execute(stmt)
         return [_to_domain(instrument, granularity, row) for row in result.scalars().all()]
 

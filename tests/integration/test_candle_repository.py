@@ -170,6 +170,78 @@ async def test_source_round_trips_through_upsert_and_get_range(session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_get_range_source_none_returns_all_provenances(session: AsyncSession) -> None:
+    """FX-27: `source=None` is the explicit "all sources" choice, not an
+    accidental default -- both NATIVE and AGGREGATED rows for the same
+    slot come back together."""
+    repo = SqlAlchemyCandleRepository(session)
+    await repo.upsert_many(
+        [
+            _candle(bid_close="1.0001", is_finalized=True, source=CandleSource.NATIVE),
+            _candle(bid_close="1.0009", is_finalized=True, source=CandleSource.AGGREGATED),
+        ]
+    )
+
+    result = await repo.get_range(
+        TEST_INSTRUMENT,
+        Granularity.M1,
+        START,
+        UtcTimestamp(START.value.replace(minute=1)),
+        source=None,
+    )
+
+    assert {c.source for c in result} == {CandleSource.NATIVE, CandleSource.AGGREGATED}
+
+
+@pytest.mark.asyncio
+async def test_get_range_source_native_filters_to_native_only(session: AsyncSession) -> None:
+    repo = SqlAlchemyCandleRepository(session)
+    await repo.upsert_many(
+        [
+            _candle(bid_close="1.0001", is_finalized=True, source=CandleSource.NATIVE),
+            _candle(bid_close="1.0009", is_finalized=True, source=CandleSource.AGGREGATED),
+        ]
+    )
+
+    result = await repo.get_range(
+        TEST_INSTRUMENT,
+        Granularity.M1,
+        START,
+        UtcTimestamp(START.value.replace(minute=1)),
+        source=CandleSource.NATIVE,
+    )
+
+    assert len(result) == 1
+    assert result[0].source is CandleSource.NATIVE
+    assert result[0].bid.close == Decimal("1.0001")
+
+
+@pytest.mark.asyncio
+async def test_get_range_source_aggregated_filters_to_aggregated_only(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyCandleRepository(session)
+    await repo.upsert_many(
+        [
+            _candle(bid_close="1.0001", is_finalized=True, source=CandleSource.NATIVE),
+            _candle(bid_close="1.0009", is_finalized=True, source=CandleSource.AGGREGATED),
+        ]
+    )
+
+    result = await repo.get_range(
+        TEST_INSTRUMENT,
+        Granularity.M1,
+        START,
+        UtcTimestamp(START.value.replace(minute=1)),
+        source=CandleSource.AGGREGATED,
+    )
+
+    assert len(result) == 1
+    assert result[0].source is CandleSource.AGGREGATED
+    assert result[0].bid.close == Decimal("1.0009")
+
+
+@pytest.mark.asyncio
 async def test_native_and_aggregated_candles_coexist_without_collision(
     session: AsyncSession,
 ) -> None:

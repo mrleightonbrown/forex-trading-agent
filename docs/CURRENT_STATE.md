@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-26)_
+_Last updated: 2026-09-19 (FX-27)_
 
 ## What exists
 
@@ -65,7 +65,13 @@ _Last updated: 2026-09-19 (FX-26)_
   storage without colliding in an upsert. Plus `CandleRepository`
   (application port: `upsert_many`, `get_range`) and
   `SqlAlchemyCandleRepository` — idempotent upsert via Postgres
-  `ON CONFLICT DO UPDATE`.
+  `ON CONFLICT DO UPDATE`. `get_range` takes an explicit
+  `source: CandleSource | None = None` (FX-27): `None` means "all
+  sources" as a deliberate choice, never an implicit pick of whichever
+  provenance happens to exist — pass `CandleSource.NATIVE`/`.AGGREGATED`
+  to filter to one. `AggregateCandles` (below) uses this to read only
+  `NATIVE` source candles, so re-aggregating already-`AGGREGATED` data
+  can never happen silently.
 - `MarketDataPort` (`get_candles`), separate from `BrokerPort`, implemented
   by `OandaMarketDataAdapter` against OANDA's `/v3/instruments/.../candles`
   endpoint (no account ID needed for this one). Bounded to what a single
@@ -109,8 +115,9 @@ _Last updated: 2026-09-19 (FX-26)_
 - `IngestCandles` and `AggregateCandles` (`application/use_cases/`): the
   former wires `MarketDataPort.get_candles` to
   `CandleRepository.upsert_many`; the latter reads a range via
-  `get_range`, aggregates via the pure `aggregate_candles` domain
-  function, and upserts the result.
+  `get_range(..., source=CandleSource.NATIVE)` (explicit since FX-27),
+  aggregates via the pure `aggregate_candles` domain function, and
+  upserts the result.
 - `candle_pagination.split_into_pages` (`forex_agent.domain.
   candle_pagination`, FX-26): splits an arbitrarily large `[start, end)`
   into pages of at most `max_candles_per_page` candles, contiguous and
@@ -381,12 +388,6 @@ _Last updated: 2026-09-19 (FX-26)_
   territory, not decided yet.
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
-- `CandleRepository.get_range(source=...)` provenance filtering —
-  `get_range` currently returns all matching rows regardless of
-  `CandleSource`; not urgent (FX-24's schema already prevents silent
-  collisions), but flagged as the natural next ergonomics story once
-  both `NATIVE` and `AGGREGATED` rows commonly coexist for the same
-  series.
 - Anything that actually calls `IngestCandles`/`AggregateCandles`/
   `BackfillCandles` on a schedule or via a CLI/API trigger — they exist
   and are tested, but nothing invokes them yet.

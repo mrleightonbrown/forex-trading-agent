@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from forex_agent.application.ports.candle_repository import CandleRepository
 from forex_agent.domain.candle_aggregation import aggregate_candles
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -26,7 +27,17 @@ class AggregateCandles:
         """Read [start, end) of `source_granularity` candles, aggregate into
         `into`, persist the result. Safe to call repeatedly — FX-5's upsert
         means re-aggregating is idempotent, not duplicative. Returns the
-        number of aggregated candles written."""
-        source = await self.candles.get_range(instrument, source_granularity, start, end)
+        number of aggregated candles written.
+
+        Reads only `CandleSource.NATIVE` source candles (FX-27) —
+        `aggregate_candles` itself already rejects a mix of `NATIVE` and
+        `AGGREGATED` source candles (FX-24), and re-aggregating already-
+        `AGGREGATED` data would be a different, unintended operation this
+        pins down explicitly rather than leaves to whichever rows
+        `get_range` happened to return.
+        """
+        source = await self.candles.get_range(
+            instrument, source_granularity, start, end, source=CandleSource.NATIVE
+        )
         aggregated = aggregate_candles(source, into)
         return await self.candles.upsert_many(aggregated)

@@ -293,11 +293,15 @@ expectancy:
    bug FX-24 already fixed elsewhere, verified and regression-tested.
    Verified against in-memory fakes for exhaustive branch coverage and
    against real Postgres for the core interruption/resume guarantee.
-2. `FX-27` — `CandleRepository.get_range(source=...)` provenance
-   filtering. Narrow: `source: CandleSource | None = None`, where `None`
-   explicitly means "all sources", not an implicit choice between them.
-   Not urgent (FX-24's schema already prevents silent collisions), but
-   needed once both `NATIVE` and `AGGREGATED` rows commonly coexist.
+2. ~~`FX-27` — `CandleRepository.get_range(source=...)` provenance
+   filtering~~ — complete. `get_range` gained `source: CandleSource |
+   None = None`, where `None` explicitly means "all sources" — a
+   deliberate choice, not an implicit pick of whichever provenance
+   happens to exist. `AggregateCandles` now passes
+   `source=CandleSource.NATIVE` explicitly, so it can never silently
+   re-aggregate already-`AGGREGATED` rows (regression-tested: confirmed
+   to fail pre-fix, pass post-fix). Verified against both the in-memory
+   `FakeCandleRepository` and real Postgres.
 3. Research dataset build: EUR/USD, GBP/USD, USD/JPY, USD/CAD, multiple
    years, H1/H4 — using FX-26.
 4. `FX-28` — true `TrendRegime`-based gating (FX-25 proved the pattern

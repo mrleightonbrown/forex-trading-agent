@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forex_agent.application.use_cases.aggregate_candles import AggregateCandles
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
@@ -29,7 +30,7 @@ WINDOW_START = UtcTimestamp(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
 WINDOW_END = UtcTimestamp(datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC))
 
 
-def _m1(minute: int, close: str) -> Candle:
+def _m1(minute: int, close: str, *, source: CandleSource = CandleSource.NATIVE) -> Candle:
     flat = Ohlc(
         open=Decimal("1.0000"), high=Decimal("1.0010"), low=Decimal("0.9990"), close=Decimal(close)
     )
@@ -41,6 +42,7 @@ def _m1(minute: int, close: str) -> Candle:
         ask=flat,
         volume=10,
         is_finalized=True,
+        source=source,
     )
 
 
@@ -92,6 +94,25 @@ async def test_aggregate_candles_is_safe_to_repeat(session: AsyncSession) -> Non
 async def test_aggregate_candles_skips_incomplete_trailing_bucket(session: AsyncSession) -> None:
     repo = SqlAlchemyCandleRepository(session)
     await repo.upsert_many([_m1(m, f"1.000{m}") for m in range(3)])  # only 3 of 5 needed
+    use_case = AggregateCandles(candles=repo)
+
+    written = await use_case(
+        TEST_INSTRUMENT, Granularity.M1, Granularity.M5, WINDOW_START, WINDOW_END
+    )
+
+    assert written == 0
+
+
+@pytest.mark.asyncio
+async def test_aggregate_candles_ignores_preexisting_aggregated_source_candles(
+    session: AsyncSession,
+) -> None:
+    """FX-27: AggregateCandles must read only CandleSource.NATIVE rows.
+    If AGGREGATED-source M1 candles happened to exist for this window
+    (e.g. from a self-aggregation upstream), they must not be re-read
+    and re-aggregated -- only genuine NATIVE M1 candles count."""
+    repo = SqlAlchemyCandleRepository(session)
+    await repo.upsert_many([_m1(m, f"1.000{m}", source=CandleSource.AGGREGATED) for m in range(5)])
     use_case = AggregateCandles(candles=repo)
 
     written = await use_case(
