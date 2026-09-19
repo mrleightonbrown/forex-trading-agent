@@ -339,12 +339,19 @@ _Last updated: 2026-09-19 (FX-28)_
   `segment_trades_by_regime`'s own TRENDING bucket, because
   `EmaCrossoverStrategy` never self-emits FLAT (every crossover is a
   direction reversal) and the gate classifies at the exact same decision
-  bars attribution already does — locked in as a regression test.
-  Verified across the full 10-year, 5-instrument research dataset
-  (chunked for practical runtime against `run_backtest`'s documented
-  O(n²) scaling); real per-instrument metrics in `docs/DECISIONS.md` —
-  TRENDING-conditioning helped 3 of 5 instruments and hurt 1, no
-  universal answer. Continuous (every-bar, not just at entry) regime
+  bars attribution already does — locked in as a regression test that
+  runs on one continuous, non-chunked series (so this proof is NOT
+  affected by the issue below). **The per-instrument performance
+  numbers ARE affected and are WITHDRAWN**: the original 10-year,
+  5-instrument run was chunked into ~6,000-candle windows for practical
+  runtime against `run_backtest`'s documented O(n²) scaling, which was
+  wrongly believed to only cost "under 1%" — external review caught,
+  independently confirmed (`docs/DECISIONS.md`'s correction entry): a
+  chunk boundary force-closes any open position and reseeds every
+  strategy's EMA/ADX state from scratch, genuinely changing the trade
+  path, not just trimming a warm-up period. Provisional until `FX-29`
+  (a continuous/incremental backtest engine, in progress) reruns the
+  comparison for real. Continuous (every-bar, not just at entry) regime
   monitoring during a held trade remains unbuilt — explicitly raised and
   deferred, not overlooked.
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
@@ -460,7 +467,11 @@ _Last updated: 2026-09-19 (FX-28)_
   yet re-runs backfill on a schedule to keep the dataset current going
   forward.
 - Backtest performance optimization for large candle sets (`O(n²)`
-  reslicing in `run_backtest`) — not needed until real strategies exist.
+  reslicing in `run_backtest`, plus every strategy's own from-scratch
+  EMA/ADX recompute each call) — no longer "not needed": FX-28's own
+  chunking workaround for this exact limitation produced invalid
+  performance numbers (see above), making this `FX-29`'s explicit scope
+  now, not deferred further.
 
 ## Next
 

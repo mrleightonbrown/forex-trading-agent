@@ -2130,3 +2130,59 @@ live-OANDA failures as FX-26/27, plus this story's own live-smoke test
 failing with the identical "0 candles in the last 4 hours" signature
 (today is still Saturday) — confirmed not a regression, same as every
 prior story's weekend-timing note. Lint/format/mypy/pre-commit clean.
+
+## 2026-09-19 — Correction: FX-28's per-instrument performance table is withdrawn
+
+**Correction, not a silent edit — the empirical table above is
+withdrawn, pending a rerun**, caught by external review and confirmed
+independently before writing this (not taken on trust).
+
+**The bug**: FX-28's own performance note claimed chunking the 10-year
+backtest into ~6,000-candle windows only cost "under 1% [...] not a
+change in what's being measured." That's wrong. Two things happen at
+every artificial chunk boundary that don't happen in a real continuous
+history: (1) `simulate_trades` force-closes any open position at the
+end of its input (documented, correct behavior for a real end-of-data
+— but a chunk boundary isn't real end-of-data), so a trade that would
+have run through the boundary is instead cut short and a fresh,
+independent trade starts flat in the next chunk; (2) every strategy's
+own EMA/ADX state reseeds from scratch at the start of each chunk
+(`evaluate()` only ever sees that chunk's own prefix), not just losing
+~51 candles of opportunity but computing genuinely different indicator
+values near each boundary than a continuous run would.
+
+**Confirmed independently, not just accepted**: ran EUR/USD H1 candles
+[0:12000) two ways — one continuous `run_backtest`, and split into two
+6,000-candle chunks with results pooled (exactly FX-28's own method).
+228 trades continuous vs. 226 chunked; 4 trades appear only in the
+continuous run, 2 only in the chunked run, clustered around the
+boundary. Not a rounding difference — genuinely different trades with
+different entry/exit times and P&L.
+
+**What remains valid**: the proven gated-equals-attribution structural
+equivalence. That result doesn't depend on data continuity — it's a
+property of the strategy pairing at every individual decision bar,
+proven mathematically and locked in by a regression test
+(`test_gated_trades_exactly_equal_the_trending_attribution_bucket`)
+that runs on one single, non-chunked, deterministic synthetic series.
+Nothing about the chunking bug touches that proof or that test.
+
+**What's withdrawn**: every number in FX-28's "Empirical results" table
+— win rate, expectancy, profit factor, Sharpe, and the specific claims
+("TRENDING helped GBP_USD/USD_JPY/XAU_USD, hurt EUR_USD, neutral for
+USD_CAD"). All four legs of that table were computed via the same
+chunked pipeline, so the whole table is provisional, not just the rows
+that looked surprising. Marked provisional in `CURRENT_STATE.md`/
+`NEXT_STEPS.md` pending a rerun once a continuous backtest engine
+exists (`FX-29`, next).
+
+**Root cause, framed honestly**: `run_backtest`'s own documented O(n²)
+scaling (full-history reslice plus full EMA/ADX recompute every step)
+was known and accepted at FX-21's ~1,500-candle scale. Chunking was a
+workaround adopted for FX-28's ~62,000-candle scale without adequately
+reasoning through what it silently changes about the economics being
+simulated — an error in judgment on this story's own performance
+mitigation, not a subtle edge case. `FX-29` (next) replaces the
+workaround with a real fix: an incremental backtest engine that
+processes the full history continuously, with parity-tested guarantees
+against the existing slow engine on small data.
