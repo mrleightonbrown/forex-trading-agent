@@ -41,6 +41,7 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.broker_oanda.market_data_adapter import OandaMarketDataAdapter
+from forex_agent.infrastructure.db.backfill_lock import PostgresBackfillLock
 from forex_agent.infrastructure.db.candle_repository import SqlAlchemyCandleRepository
 from forex_agent.infrastructure.db.ingestion_watermark_repository import (
     SqlAlchemyIngestionWatermarkRepository,
@@ -76,6 +77,7 @@ async def main() -> None:
                 market_data=market_data,
                 candles=SqlAlchemyCandleRepository(session),
                 watermarks=SqlAlchemyIngestionWatermarkRepository(session),
+                lock=PostgresBackfillLock(get_engine()),
             )
             for instrument in INSTRUMENTS:
                 for granularity in GRANULARITIES:

@@ -7,6 +7,7 @@ still a fake MarketDataPort — a real provider failure can't be
 deterministically triggered).
 """
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,7 @@ from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.ohlc import Ohlc
 from forex_agent.domain.timestamps import UtcTimestamp
+from tests.fakes.backfill_lock import FakeBackfillLock
 from tests.fakes.candle_repository import FakeCandleRepository
 from tests.fakes.ingestion_watermark_repository import FakeIngestionWatermarkRepository
 from tests.fakes.market_data_port import FakeMarketDataPort
@@ -62,6 +64,7 @@ def _use_case(
         market_data=market_data,
         candles=repo,
         watermarks=watermarks,
+        lock=FakeBackfillLock(),
         max_candles_per_page=max_candles_per_page,
     )
     return use_case, market_data, repo, watermarks
@@ -270,7 +273,11 @@ async def test_interrupted_backfill_resumes_without_refetching_or_duplicating() 
     repo = FakeCandleRepository()
     watermarks = FakeIngestionWatermarkRepository()
     use_case = BackfillCandles(
-        market_data=market_data, candles=repo, watermarks=watermarks, max_candles_per_page=5
+        market_data=market_data,
+        candles=repo,
+        watermarks=watermarks,
+        lock=FakeBackfillLock(),
+        max_candles_per_page=5,
     )
 
     with pytest.raises(BrokerUnavailableError):
@@ -295,3 +302,45 @@ async def test_interrupted_backfill_resumes_without_refetching_or_duplicating() 
     resumed_requests = market_data.requests[len(requests_before_resume) :]
     for req_start, _req_end in resumed_requests:
         assert req_start.value >= _ts(10).value
+
+
+# --- concurrency (in-memory; see tests/integration for the real-Postgres,
+# real-advisory-lock, forced-pool-churn version) -----------------------
+
+
+@pytest.mark.asyncio
+async def test_shared_fake_lock_serializes_concurrent_backfills() -> None:
+    """Fast, deterministic complement to the live-Postgres concurrency
+    tests: `FakeBackfillLock` uses a real `asyncio.Lock`, so two
+    concurrent `BackfillCandles` calls sharing one lock AND one
+    watermark/candle repository (simulating two callers racing for the
+    same series) must still produce a result equivalent to running them
+    sequentially -- the union of both ranges, fully covered."""
+    market_data = FakeMarketDataPort(_dense_candles(100))
+    repo = FakeCandleRepository()
+    watermarks = FakeIngestionWatermarkRepository()
+    lock = FakeBackfillLock()
+
+    use_case_a = BackfillCandles(
+        market_data=market_data,
+        candles=repo,
+        watermarks=watermarks,
+        lock=lock,
+        max_candles_per_page=3,
+    )
+    use_case_b = BackfillCandles(
+        market_data=market_data,
+        candles=repo,
+        watermarks=watermarks,
+        lock=lock,
+        max_candles_per_page=3,
+    )
+
+    await asyncio.gather(
+        use_case_a(EUR_USD, Granularity.M1, _ts(0), _ts(60)),
+        use_case_b(EUR_USD, Granularity.M1, _ts(40), _ts(100)),
+    )
+
+    assert await watermarks.get_watermark(EUR_USD, Granularity.M1) == (_ts(0), _ts(100))
+    stored = await repo.get_range(EUR_USD, Granularity.M1, _ts(0), _ts(100))
+    assert len(stored) == 100

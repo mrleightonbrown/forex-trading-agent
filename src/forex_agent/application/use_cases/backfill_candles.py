@@ -40,10 +40,23 @@ fully behind the requested `end`. This changes NOTHING about what's
 actually fetched from the provider (`split_into_pages` already computes
 its own page boundaries the same way it always did) — only what gets
 recorded as covered.
+
+FX-31 (connection-pinning correction FX-31H): concurrent backfills for
+the same series are serialized via a `BackfillLock`, held for the whole
+call. FX-31's first attempt put this lock on `IngestionWatermarkRepository`
+itself, backed by a Postgres advisory lock issued through the SAME
+session this class's `candles`/`watermarks` ports use — broken, because
+that session's underlying connection changes across the per-page commits
+`upsert_many`/`set_watermark` make, and a Postgres advisory lock belongs
+to the physical connection, not the session object. `BackfillLock` is a
+separate port specifically so its real implementation can pin one
+dedicated connection for the lock's entire duration, independent of
+whatever connection churn the watermark/candle repositories go through.
 """
 
 from dataclasses import dataclass
 
+from forex_agent.application.ports.backfill_lock import BackfillLock
 from forex_agent.application.ports.candle_repository import CandleRepository
 from forex_agent.application.ports.ingestion_watermark_repository import (
     IngestionWatermarkRepository,
@@ -74,6 +87,7 @@ class BackfillCandles:
     market_data: MarketDataPort
     candles: CandleRepository
     watermarks: IngestionWatermarkRepository
+    lock: BackfillLock
     max_candles_per_page: int = DEFAULT_MAX_CANDLES_PER_PAGE
 
     async def __call__(
@@ -86,15 +100,14 @@ class BackfillCandles:
         if end.value <= start.value:
             raise ValueError("end must be after start")
 
-        # FX-31: held for this whole call, not just one set_watermark
-        # -- serializes concurrent backfills for the same series (the
-        # second blocks until the first fully completes) instead of
-        # letting them race: read the same starting watermark, compute
-        # conflicting page plans, and clobber each other's progress.
-        # Irrelevant to a sequential one-off dataset load, but matters
-        # once anything schedules backfills automatically.
-        await self.watermarks.acquire_lock(instrument, granularity)
-        try:
+        # Held for this whole call, not just one set_watermark -- serializes
+        # concurrent backfills for the same series (the second blocks until
+        # the first fully completes) instead of letting them race: read the
+        # same starting watermark, compute conflicting page plans, and
+        # clobber each other's progress. Irrelevant to a sequential one-off
+        # dataset load, but matters once anything schedules backfills
+        # automatically.
+        async with self.lock.acquire(instrument, granularity):
             existing = await self.watermarks.get_watermark(instrument, granularity)
             pages_fetched = 0
             candles_written = 0
@@ -145,8 +158,6 @@ class BackfillCandles:
             final = await self.watermarks.get_watermark(instrument, granularity)
             assert final is not None
             return BackfillResult(pages_fetched, candles_written, final[0], final[1])
-        finally:
-            await self.watermarks.release_lock(instrument, granularity)
 
     async def _extend_forward(
         self,

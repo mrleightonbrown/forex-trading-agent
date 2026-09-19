@@ -2399,3 +2399,126 @@ weekend-related live-OANDA failures as FX-26/27/28 plus FX-29's own
 unrelated live-smoke test (same "0 candles in the last 4 hours"
 signature, today is still Saturday) — confirmed not a regression.
 Lint/format/mypy/pre-commit clean.
+
+## 2026-09-19 — FX-29H: incremental strategy lifecycle hardening
+
+Second-round external review of FX-29, both claims independently
+reproduced before fixing, not taken on trust.
+
+**Bug 1: `IncrementalStrategy` is stateful, and nothing reset it.**
+Reproduced directly: `run_backtest_incremental(strategy, candles)`
+called twice on the SAME instance gave a different result the second
+time (EMA state carried over from the first run) — 4 hypotheses first
+call, 6 the second, on identical input. `run_backtest`/the slow
+`Strategy` path has no equivalent hazard (each call gets the full
+candle list fresh and computes everything from scratch), so this was a
+genuinely new failure mode this story's own statefulness introduced.
+
+**Bug 2: a failed validation left the strategy partially mutated.**
+Also reproduced directly: 30 finalized candles followed by one
+non-finalized "poison" candle raised as expected, but `on_candle` had
+already been called (and had already mutated internal EMA state) for
+all 30 preceding candles before the raise. A later, fully-valid call on
+that SAME instance then diverged from a fresh instance's output —
+finalized-status validation happened bar-by-bar, interleaved with
+mutation, rather than up front.
+
+**Fix**: `IncrementalStrategy` gained `reset()`, called unconditionally
+by `run_backtest_incremental` before any replay begins. `candles` is
+now validated IN FULL — including every candle's finalized status —
+before `reset()` or `on_candle` is called at all, so a rejected series
+never gets the chance to mutate anything.
+
+**Decision: `reset()` on the strategy, not a factory that always
+constructs a fresh instance internally** — the alternative the review
+also offered. `reset()` keeps the door open for the same
+`IncrementalStrategy` object to be used directly in a future live/paper
+streaming mode (no "replay" to reset before there); only the historical
+replay driver needs to reset one before use. `IncrementalEmaCrossoverStrategy`/
+`IncrementalEmaCrossoverTrendRegimeGatedStrategy` both refactored so
+`__init__` simply calls `self.reset()` — one code path, not two ways to
+end up in the same initial state.
+
+**Verification**: four new regression tests (`tests/unit/domain/
+test_incremental_strategy.py`) reproducing both scenarios exactly,
+plus a structural check reaching into the strategy's own seed-buffer
+state to prove zero mutation happened before a rejected series raises
+(not just that a later `reset()` papers over whatever did). Regression-
+proof discipline applied: reverted both fixes, confirmed all four fail,
+restored, confirmed all four pass. All existing golden parity tests
+(hypothesis-level and trade-level) re-run and still pass unmodified —
+`reset()` in `__init__` doesn't change first-construction behavior at
+all, only re-use behavior. Full suite: 604 passed (cumulative with
+FX-31H below), same 7 pre-existing/unrelated live-OANDA failures.
+Lint/format/mypy/pre-commit clean.
+
+## 2026-09-19 — FX-31 reopened, FX-31H: connection-pinned advisory lock
+
+External review reopened FX-31 with a specific, well-reasoned
+correctness concern about the advisory-lock implementation, verified
+directly before accepting or rejecting it — not taken on trust either
+way, and not dismissed because the original concurrency test had
+already passed 5/5.
+
+**The claim**: FX-31's advisory lock was acquired/released through the
+same `AsyncSession` `BackfillCandles` uses for its `candles`/
+`watermarks` work. SQLAlchemy's `Session.commit()` checks its
+underlying DBAPI connection back in to the connection pool; the next
+operation checks a connection back OUT, which is not guaranteed to be
+the SAME physical connection. A Postgres session-level advisory lock is
+tied to the physical backend connection, not to any SQLAlchemy object —
+if a later page's `upsert_many`/`set_watermark` commit happens to hand
+the lock-holding connection to someone else, the lock silently stops
+protecting anything.
+
+**Confirmed directly, in three steps, before touching any code:**
+1. Attached SQLAlchemy pool `checkout`/`checkin` event listeners and
+   watched a single session run five `execute()` + `commit()` cycles:
+   confirmed `commit()` genuinely does check the connection back in,
+   and the next `execute()` does a fresh checkout (empirically it kept
+   getting the same connection back with no contention — expected, not
+   yet proof of safety on its own).
+2. Forced real contention: two concurrent sessions sharing a
+   `pool_size=2` engine, alternating commits with a `pg_sleep` between
+   each — over 6 iterations, each worker consistently got its own
+   connection back (no crossover observed), showing the danger is real
+   but not automatic.
+3. Directly caused the actual failure: reverted to the exact original
+   (session-sharing) lock design and ran the live concurrency scenario
+   repeatedly under `pool_size=2` with maximally aggressive per-page
+   commit frequency (`max_candles_per_page=1`) — it failed (`RESULT
+   OK: False`, watermark/stored-candle mismatch) at least once across
+   scattered runs, and also passed clean in many others. This confirmed
+   the race is real, not merely theoretical, but is genuinely
+   timing-dependent — not reliably reproducible on every single
+   attempt, which is itself worth stating plainly rather than
+   overclaiming a clean revert-and-confirm-fails cycle.
+
+**Fix: a dedicated `BackfillLock` port** (`application/ports/
+backfill_lock.py`), deliberately separate from `IngestionWatermarkRepository`
+rather than folding physical-connection lifetime back into a repository
+whose job is persisting state, not owning a connection's lifetime.
+`PostgresBackfillLock` (`infrastructure/db/backfill_lock.py`) acquires
+its OWN dedicated `AsyncConnection` directly from the engine
+(`engine.connect()`, not an ORM `Session`) with `AUTOCOMMIT` isolation
+(avoids holding an idle transaction open for a potentially long
+backfill's whole duration — the lock itself needs no transaction),
+pinned for the lock's entire held duration via one `async with` block —
+structurally immune to the connection churn that broke the original
+design, not just empirically lucky. `pg_advisory_unlock`'s return value
+is now checked and raises if it ever reports `false` (a stranded lock),
+rather than being silently discarded as before.
+
+**Verification**: the original `test_concurrent_backfills_for_the_same_
+series_do_not_race` kept (now using the fixed lock); a new
+`test_concurrent_backfills_do_not_race_even_under_forced_pool_churn`
+adds a severely constrained, heavily-churning pool (`pool_size=2`,
+one-candle pages) for the two workers' OWN sessions specifically, while
+the lock uses a separate, unconstrained engine — proving the fix holds
+by construction regardless of how much the other sessions' pool
+churns, run across 5 trials per test invocation. A fast, in-memory
+complement (`test_shared_fake_lock_serializes_concurrent_backfills`,
+`FakeBackfillLock` backed by a real `asyncio.Lock`) covers the same
+property without needing Postgres. Full suite: 604 passed, same 7
+pre-existing/unrelated live-OANDA failures. Lint/format/mypy/
+pre-commit clean.

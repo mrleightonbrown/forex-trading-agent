@@ -374,6 +374,15 @@ expectancy:
    is roughly neutral for USD_CAD. Trade counts shifted modestly from
    the withdrawn table (confirming the chunking bug was real, if modest
    in this case), qualitative conclusions unchanged.
+   - ~~`FX-29H` — incremental strategy lifecycle hardening~~ — complete.
+     Second-round external review found (and this session independently
+     reproduced before fixing) two real bugs: reusing a stateful
+     `IncrementalStrategy` instance across `run_backtest_incremental`
+     calls silently gave different results each time (no reset), and a
+     failed validation mid-series left the strategy partially mutated.
+     Fixed: `IncrementalStrategy.reset()`, called unconditionally before
+     every replay; `candles` validated in full (including finalized
+     status) before `reset()`/`on_candle` is ever called.
 6. ~~`FX-30` — ingestion watermark boundary semantics~~ — complete.
    `BackfillCandles` now floors both `earliest_ingested` and
    `latest_ingested` to genuine candle boundaries (never rounds up — a
@@ -381,14 +390,19 @@ expectancy:
    FX-27H.1's `DetectDataGaps` symptom rather than leaving every future
    consumer to defend against it. No change to what's actually fetched
    from the provider, only to what the watermark records.
-7. ~~`FX-31` — ingestion watermark concurrency protection~~ — complete.
-   `IngestionWatermarkRepository` gained `acquire_lock`/`release_lock`
-   (a Postgres session-level advisory lock in the real implementation),
-   serializing concurrent `BackfillCandles` calls for the same series.
-   Confirmed via a live-Postgres concurrency test: 8/8 failures without
-   the lock, 5/5 passes with it. Forward-looking — irrelevant to the
-   sequential one-off dataset load already done, matters once anything
-   schedules backfills automatically.
+7. ~~`FX-31` — ingestion watermark concurrency protection~~ — complete,
+   **reopened and corrected as FX-31H**. FX-31's first attempt put an
+   advisory lock on `IngestionWatermarkRepository`, issued through the
+   same session `candles`/`watermarks` use — external review correctly
+   identified this as unsafe (a Postgres advisory lock belongs to the
+   physical connection, not the SQLAlchemy session, and `Session.
+   commit()` checks connections back into the pool). Confirmed directly
+   before fixing: traced pool checkin/checkout events, then reproduced
+   a real failure under forced contention with the original design.
+   Fixed with a dedicated `BackfillLock` port; `PostgresBackfillLock`
+   pins one dedicated connection for the lock's whole held duration,
+   verified under a deliberately constrained, heavily-churning pool the
+   lock itself stays isolated from.
 
 No new technical strategies are planned — six directional strategies
 plus four controls is enough; the project's focus shifts from

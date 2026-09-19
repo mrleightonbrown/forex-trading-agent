@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-31)_
+_Last updated: 2026-09-19 (FX-31H)_
 
 ## What exists
 
@@ -366,21 +366,35 @@ _Last updated: 2026-09-19 (FX-31)_
   series in 0.19s (EMA) / 0.47s (gated) — down from an extrapolated
   35-40 minutes each with the old O(n²) engine. Used to rerun FX-28's
   withdrawn comparison continuously (no chunking); the corrected table
-  is in `docs/DECISIONS.md`.
-- Ingestion watermark hardening (FX-30/FX-31, prompted by the same
-  external review, explicitly noted as not affecting already-loaded
-  research data): `BackfillCandles` now floors both `earliest_ingested`
-  and `latest_ingested` to genuine candle boundaries via
-  `candle_boundary.candle_start_boundary` (never rounds up — a
-  mid-candle `end` may still be forming, so rounding up could falsely
-  claim an unformed candle as covered) — closes the root cause behind
-  FX-27H.1's `DetectDataGaps` symptom. `IngestionWatermarkRepository`
-  gained `acquire_lock`/`release_lock` (a Postgres session-level
-  advisory lock in the real implementation, held for a whole
-  `BackfillCandles` call), serializing concurrent backfills for the
-  same series instead of letting them race and clobber each other's
-  progress — confirmed via a live-Postgres concurrency test (8/8
-  failures pre-fix, 5/5 passes post-fix).
+  is in `docs/DECISIONS.md`. `IncrementalStrategy` gained `reset()`
+  (FX-29H, external review) — `run_backtest_incremental` calls it
+  unconditionally before every replay, since a stateful strategy
+  instance reused across calls without it silently produced different
+  results the second time (reproduced directly before fixing).
+  `candles` is now validated in full (including finalized status)
+  before `reset()`/`on_candle` is ever called, so a rejected series
+  can't leave a strategy partially mutated either.
+- Ingestion watermark hardening (FX-30/FX-31/FX-31H, prompted by the
+  same external review, explicitly noted as not affecting already-
+  loaded research data): `BackfillCandles` now floors both
+  `earliest_ingested` and `latest_ingested` to genuine candle
+  boundaries via `candle_boundary.candle_start_boundary` (never rounds
+  up — a mid-candle `end` may still be forming, so rounding up could
+  falsely claim an unformed candle as covered) — closes the root cause
+  behind FX-27H.1's `DetectDataGaps` symptom. Concurrent-backfill
+  protection is a dedicated `BackfillLock` port (`application/ports/
+  backfill_lock.py`), not a method on `IngestionWatermarkRepository` —
+  FX-31's first attempt put an advisory lock there, issued through the
+  same `AsyncSession` used for `candles`/`watermarks` work, which
+  turned out unsafe: `Session.commit()` checks its connection back into
+  the pool, and a Postgres advisory lock belongs to the physical
+  connection, not the session — confirmed directly (pool checkin/
+  checkout event tracing, then a real reproduced failure under forced
+  contention) before fixing. `PostgresBackfillLock` now pins one
+  dedicated `AsyncConnection` for the lock's entire held duration,
+  structurally immune to the session's own connection churn — verified
+  under a deliberately constrained, heavily-churning pool that the lock
+  itself is kept isolated from.
 - `AlwaysLongStrategy`, `AlwaysShortStrategy`, `PreviousBarDirectionStrategy`,
   `NoTradeStrategy` (`forex_agent.domain.strategies.control`,
   `strategy_key`s `always_long_v1`/`always_short_v1`/
