@@ -1,5 +1,5 @@
-"""FX-29: the incremental counterpart to `strategy.py`'s `Strategy`/
-`run_backtest`.
+"""FX-29 (lifecycle hardening FX-29H): the incremental counterpart to
+`strategy.py`'s `Strategy`/`run_backtest`.
 
 `Strategy.evaluate(candles: list[Candle])` is handed the FULL history-so-
 far on every bar by `run_backtest` -- correct, but O(n) per call, so
@@ -17,6 +17,31 @@ slow `Strategy`/`run_backtest`/`simulate_trades` path remains the
 permanent ground-truth reference incremental strategies are parity-
 tested against (see `tests/unit/domain/strategies/test_ema_crossover_
 incremental.py` and the sibling gated test).
+
+FX-29H: found live (external review, independently reproduced before
+fixing) -- an `IncrementalStrategy` is stateful, so calling
+`run_backtest_incremental` twice with the SAME instance silently
+produced different results the second time (state left over from the
+first run). Worse: if the second run raised partway through (e.g. a
+non-finalized candle), the strategy was left with partially-mutated
+state from whatever candles it *did* process before the raise, so even
+a subsequent *correct* call on that same instance no longer matched a
+fresh instance's output. Fixed two ways: (1) `IncrementalStrategy`
+gained `reset()`, called unconditionally at the start of every
+`run_backtest_incremental` call -- reusing an instance across replay
+calls is no longer silently wrong, matching `run_backtest`'s own
+implicit "each call is independent" semantics. (2) `candles` is now
+validated IN FULL (including every candle's finalized status) before
+`reset()` or any `on_candle()` call -- an invalid input series is
+rejected before any state exists to contaminate, not partway through
+processing it.
+
+`reset()` is kept on the strategy itself (not, say, always constructing
+a fresh instance internally from a factory) deliberately: the same
+`IncrementalStrategy` object is meant to be reusable directly in a
+future live/paper streaming mode, where there's no "replay" to reset
+before -- only `run_backtest_incremental`, the historical replay driver,
+needs to reset one before use.
 """
 
 from typing import Protocol
@@ -27,10 +52,17 @@ from forex_agent.domain.trade_hypothesis import TradeHypothesis
 
 
 class IncrementalStrategy(Protocol):
-    """Same contract as `Strategy`, one bar at a time. Implementations
-    must assume every candle is already finalized -- `run_backtest_
-    incremental` enforces that before calling `on_candle`, same as
-    `run_strategy` does for the slow path."""
+    """Same contract as `Strategy`, one bar at a time, but stateful --
+    implementations must assume every candle is already finalized
+    (`run_backtest_incremental` validates that up front, before calling
+    `reset()` or `on_candle` at all)."""
+
+    def reset(self) -> None:
+        """Clear all internal state back to what a freshly-constructed
+        instance would have. Called unconditionally by
+        `run_backtest_incremental` before every replay -- reusing an
+        instance across calls must never silently carry state over."""
+        ...
 
     def on_candle(self, candle: Candle) -> TradeHypothesis | None: ...
 
@@ -48,20 +80,30 @@ def run_backtest_incremental(
     fact -- `IncrementalStrategy` cannot even be handed a future candle
     by construction, whereas the slow path's safety depends on
     `run_backtest` slicing correctly.
+
+    FX-29H: `candles` is validated in full -- including every candle's
+    finalized status -- before `strategy.reset()` or `on_candle` is ever
+    called, so an invalid series is rejected before any state exists to
+    contaminate. `strategy.reset()` is then called unconditionally,
+    before replay begins, so reusing the same `strategy` instance across
+    multiple calls is safe and produces identical results each time
+    (matching `run_backtest`'s own implicit per-call independence).
     """
     if not candles:
         return []
 
     instrument, _granularity = require_consistent_series(candles)
+    for candle in candles:
+        if not candle.is_finalized:
+            raise ValueError(
+                "strategies must only evaluate finalized candles; candle at "
+                f"{candle.start_time.value.isoformat()} is not finalized"
+            )
+
+    strategy.reset()
 
     hypotheses: list[TradeHypothesis] = []
     for current_bar in candles:
-        if not current_bar.is_finalized:
-            raise ValueError(
-                "strategies must only evaluate finalized candles; candle at "
-                f"{current_bar.start_time.value.isoformat()} is not finalized"
-            )
-
         hypothesis = strategy.on_candle(current_bar)
         if hypothesis is None:
             continue

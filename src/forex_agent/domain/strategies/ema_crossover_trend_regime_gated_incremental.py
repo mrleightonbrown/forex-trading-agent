@@ -1,5 +1,6 @@
-"""FX-29: an `IncrementalStrategy` counterpart to
-`EmaCrossoverTrendRegimeGatedStrategy` (FX-28) -- same `strategy_key`/
+"""FX-29 (lifecycle hardening FX-29H): an `IncrementalStrategy`
+counterpart to `EmaCrossoverTrendRegimeGatedStrategy` (FX-28) -- same
+`strategy_key`/
 parameters/rationale/logic, same strategy, just computed with
 O(1)-per-bar state (`IncrementalSmaSeededEma` + `IncrementalAdx`)
 instead of a full from-scratch EMA/ADX recompute every call.
@@ -59,11 +60,13 @@ class IncrementalEmaCrossoverTrendRegimeGatedStrategy:
         self.regime_period = regime_period
         self.regime_threshold = regime_threshold
         self.strategy_version = strategy_version
+        self.reset()
 
-        self._fast_ema = IncrementalSmaSeededEma(fast_period)
-        self._slow_ema = IncrementalSmaSeededEma(slow_period)
+    def reset(self) -> None:
+        self._fast_ema = IncrementalSmaSeededEma(self.fast_period)
+        self._slow_ema = IncrementalSmaSeededEma(self.slow_period)
         self._previous_diff: Decimal | None = None
-        self._adx = IncrementalAdx(regime_period)
+        self._adx = IncrementalAdx(self.regime_period)
 
     def on_candle(self, candle: Candle) -> TradeHypothesis | None:
         high = (candle.bid.high + candle.ask.high) / 2

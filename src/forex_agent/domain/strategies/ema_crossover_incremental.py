@@ -1,7 +1,8 @@
-"""FX-29: an `IncrementalStrategy` counterpart to `EmaCrossoverStrategy`
-(FX-14) -- same `strategy_key`/parameters/rationale/logic, same strategy,
-just computed with O(1)-per-bar state (`IncrementalSmaSeededEma`) instead
-of a full from-scratch EMA recompute every call.
+"""FX-29 (lifecycle hardening FX-29H): an `IncrementalStrategy`
+counterpart to `EmaCrossoverStrategy` (FX-14) -- same `strategy_key`/
+parameters/rationale/logic, same strategy, just computed with
+O(1)-per-bar state (`IncrementalSmaSeededEma`) instead of a full
+from-scratch EMA recompute every call.
 
 `EmaCrossoverStrategy` itself is UNCHANGED and remains the permanent
 ground-truth reference this is parity-tested against (see
@@ -38,9 +39,11 @@ class IncrementalEmaCrossoverStrategy:
         self.fast_period = fast_period
         self.slow_period = slow_period
         self.strategy_version = strategy_version
+        self.reset()
 
-        self._fast_ema = IncrementalSmaSeededEma(fast_period)
-        self._slow_ema = IncrementalSmaSeededEma(slow_period)
+    def reset(self) -> None:
+        self._fast_ema = IncrementalSmaSeededEma(self.fast_period)
+        self._slow_ema = IncrementalSmaSeededEma(self.slow_period)
         self._previous_diff: Decimal | None = None
 
     def on_candle(self, candle: Candle) -> TradeHypothesis | None:
