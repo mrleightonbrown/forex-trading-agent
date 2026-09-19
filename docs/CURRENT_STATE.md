@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-15 (FX-25H.1)_
+_Last updated: 2026-09-19 (FX-26)_
 
 ## What exists
 
@@ -71,10 +71,10 @@ _Last updated: 2026-09-15 (FX-25H.1)_
   endpoint (no account ID needed for this one). Bounded to what a single
   request can return (OANDA's own 5000-candle cap) — raises
   `CandleRangeTooLargeError` rather than silently truncating; pagination
-  for larger backfills isn't built yet. Sends `dailyAlignment=17`/
-  `alignmentTimezone=America/New_York` explicitly (FX-24, confirmed
-  live to already match the practice API's own default) and tags every
-  candle `source=NATIVE`.
+  above this port is `BackfillCandles` (FX-26, below). Sends
+  `dailyAlignment=17`/`alignmentTimezone=America/New_York` explicitly
+  (FX-24, confirmed live to already match the practice API's own
+  default) and tags every candle `source=NATIVE`.
 - `candle_boundary.candle_start_boundary`/`candle_end_time`
   (`forex_agent.domain.candle_boundary`, FX-25H): the one canonical,
   DST-aware definition of "when does a candle of a given granularity
@@ -111,11 +111,38 @@ _Last updated: 2026-09-15 (FX-25H.1)_
   `CandleRepository.upsert_many`; the latter reads a range via
   `get_range`, aggregates via the pure `aggregate_candles` domain
   function, and upserts the result.
-- `find_gaps` (`forex_agent.domain.candle_gaps`) + `DetectDataGaps` use
-  case: reports missing expected candle timestamps in a stored range.
-  Rejects candles spanning more than one instrument (FX-11H — a candle
-  from a different instrument could previously mask a real gap). No
-  market-calendar awareness (weekends/holidays) — callers pass ranges
+- `candle_pagination.split_into_pages` (`forex_agent.domain.
+  candle_pagination`, FX-26): splits an arbitrarily large `[start, end)`
+  into pages of at most `max_candles_per_page` candles, contiguous and
+  non-overlapping by construction. DST-aware via `candle_boundary` for
+  day-aligned granularities (a page's candle count can't be a fixed
+  multiplication there, same reasoning as FX-25H/FX-25H.1); a
+  closed-form fast path is used otherwise.
+- `BackfillCandles` + `ingestion_watermarks` table/
+  `IngestionWatermarkRepository` (`application/use_cases/
+  backfill_candles.py`, FX-26): paginated, resumable historical backfill
+  — the answer to `MarketDataPort`'s single-request bound. One watermark
+  per `(instrument, granularity)` tracks a contiguous
+  `[earliest_ingested, latest_ingested)` interval; the watermark *is*
+  the resume state (no separate job/checkpoint object) — a later call
+  naturally extends the frontier forward or backward without needing to
+  remember an earlier request's own parameters. A disjoint request (no
+  overlap or touch with existing coverage) raises rather than silently
+  claiming an unfetched gap is covered. Backward-extension pages are
+  fetched in descending order specifically so a crash never leaves a
+  gap between newly-fetched data and pre-existing coverage. Verified
+  against in-memory fakes for exhaustive branch coverage and against
+  real Postgres for the core interruption/resume guarantee (a simulated
+  mid-backfill failure, then a resumed call, completes without
+  re-fetching or duplicating anything).
+- `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
+  FX-26) + `DetectDataGaps` use case: reports missing expected candle
+  timestamps in a stored range, now using `candle_boundary` (the same
+  latent day-alignment bug FX-24 already fixed elsewhere — verified and
+  regression-tested). Rejects candles spanning more than one instrument
+  (FX-11H — a candle from a different instrument could previously mask a
+  real gap). No market-calendar awareness (weekends/holidays) — callers
+  pass ranges
   already known to be within a trading session.
 - `TradeHypothesis`, `Strategy` Protocol, `run_strategy`
   (`forex_agent.domain.strategy`) — the strategy framework. No I/O; lives
@@ -354,11 +381,15 @@ _Last updated: 2026-09-15 (FX-25H.1)_
   territory, not decided yet.
 - Order placement of any kind — `BrokerPort` is read-only by design; see
   `docs/DECISIONS.md` (FX-3).
-- Pagination for candle backfills larger than 5000 candles at a given
-  granularity — `IngestCandles`/`get_candles` cover one bounded request.
-- Anything that actually calls `IngestCandles`/`AggregateCandles` on a
-  schedule or via a CLI/API trigger — they exist and are tested, but
-  nothing invokes them yet.
+- `CandleRepository.get_range(source=...)` provenance filtering —
+  `get_range` currently returns all matching rows regardless of
+  `CandleSource`; not urgent (FX-24's schema already prevents silent
+  collisions), but flagged as the natural next ergonomics story once
+  both `NATIVE` and `AGGREGATED` rows commonly coexist for the same
+  series.
+- Anything that actually calls `IngestCandles`/`AggregateCandles`/
+  `BackfillCandles` on a schedule or via a CLI/API trigger — they exist
+  and are tested, but nothing invokes them yet.
 - Backtest performance optimization for large candle sets (`O(n²)`
   reslicing in `run_backtest`) — not needed until real strategies exist.
 

@@ -10,6 +10,9 @@ from forex_agent.infrastructure.db.base import Base
 # Import all model modules here so they register on Base.metadata before
 # autogenerate compares against it.
 from forex_agent.infrastructure.db.models.candle import CandleRow  # noqa: F401
+from forex_agent.infrastructure.db.models.ingestion_watermark import (  # noqa: F401
+    IngestionWatermarkRow,
+)
 
 config = context.config
 

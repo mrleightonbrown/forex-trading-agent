@@ -1703,3 +1703,97 @@ tests), live integration tests, and pre-commit all passed.
 With this, the external review's full FX-24/FX-25 assessment is
 resolved. Per the agreed sequence in `docs/NEXT_STEPS.md`, work moves
 next to `FX-26` (paginated historical backfill) after a break.
+
+## 2026-09-19 — FX-26: paginated, resumable historical backfill
+
+`IngestCandles` (FX-6) has always been bounded to whatever fits in one
+`MarketDataPort.get_candles` request (OANDA's 5000-candle cap) —
+flagged as a likely bottleneck once real empirical strategy evaluation
+needed years of history across several pairs, not the ~90-day/26-trade
+samples used so far. This story adds `BackfillCandles`, a use case that
+splits arbitrarily large ranges into safe pages and tracks progress
+durably enough to survive an interruption.
+
+**Decision: a per-series watermark, not a per-job checkpoint** —
+confirmed before implementing (AskUserQuestion). New
+`ingestion_watermarks` table/`IngestionWatermarkRepository`: one row per
+`(instrument, granularity)` tracking `[earliest_ingested,
+latest_ingested)`, one contiguous covered interval, independent of any
+particular call's own `start`/`end`. Directly matches the stated goal
+("don't want to repeatedly refetch everything" as the dataset grows
+over years) — a later call naturally extends the frontier forward (new
+data) or backward (more history) without needing to remember the
+original request's parameters. The watermark *is* the resume state;
+there is no separate job/checkpoint object.
+
+**Decision: a disjoint request raises, rather than silently creating a
+false coverage claim** — worked through carefully during design, not
+discovered as a bug afterward. A single contiguous interval can't
+represent two genuinely separate covered ranges; naively extending the
+stored interval's outer bounds to the union of an old and a new,
+non-touching range would falsely claim the gap between them is covered
+when it was never fetched. `BackfillCandles` checks `start <=
+existing_latest and existing_earliest <= end` (overlap-or-touch) before
+proceeding, and raises `ValueError` with a clear message otherwise.
+
+**Decision: backward-extension pages are fetched in *descending* order
+(closest to existing coverage first)** — the specific detail that makes
+backward extension safe under interruption. Forward extension pages
+naturally process ascending, advancing `latest_ingested` page by page
+while `earliest_ingested` stays fixed. If backward pages were also
+processed ascending (i.e. starting from the new, more-historical `start`
+first), a crash partway through would leave a genuine gap between the
+newly-fetched earliest pages and the pre-existing watermark — descending
+order guarantees `earliest_ingested` only ever retreats into
+contiguous, already-verified territory, one page at a time.
+
+**Domain layer**: new `domain/candle_pagination.py::split_into_pages`
+reuses `candle_boundary.candle_end_time` (FX-25H/FX-25H.1) to compute
+exactly how much real time N candles span — a day-aligned granularity's
+candle can be 3, 4, or 5 real hours depending on DST, so page sizing
+can't be a fixed multiplication for those; a closed-form fast path is
+used for non-day-aligned granularities where the ambiguity doesn't
+exist. Pages are contiguous and non-overlapping by construction.
+
+**Also fixed: `find_gaps` (FX-8) had the same day-alignment bug FX-24
+already fixed elsewhere** — its "expected candle" generation predated
+FX-24 entirely and used naive epoch-stepping. Verified directly: for a
+range crossing a DST transition, that stepping diverges from the real
+canonical boundary by an hour from the transition onward — `find_gaps`
+would report false gaps (or miss real ones) for exactly the
+granularities FX-24 made day-aligned. Now uses `candle_boundary`, the
+same definition every other consumer shares. "Detect gaps after
+backfill" (a stated FX-26 requirement) reuses the existing
+`DetectDataGaps` use case as a separate, explicit follow-up step —
+deliberately not baked into `BackfillCandles` itself, matching this
+codebase's established composability preference (e.g. FX-17's metrics).
+
+**Verification:** `split_into_pages` tested at the exact 5000-candle
+cap boundary and 5001 (forcing a second page), across both DST
+transitions (reusing FX-25H's own verified boundary values), and for
+determinism regardless of chosen page size (no page boundary ever
+lands mid-candle, whatever `max_candles_per_page` is). `find_gaps`'
+fix is regression-tested using the same live-OANDA-confirmed boundaries
+FX-24 established, and confirmed to fail against the pre-fix naive
+stepping. `BackfillCandles` is tested against in-memory fakes for fast,
+exhaustive branch coverage (fresh/forward/backward/both-direction
+extension, disjoint rejection, already-fully-covered no-op) and
+separately against real Postgres for the core interruption/resume
+guarantee: a simulated mid-backfill failure (via a fake `MarketDataPort`
+that raises on a specific page — a real provider failure can't be
+deterministically triggered) leaves exactly the completed pages durably
+stored, and a fresh use case instance resumes and completes without
+re-fetching or duplicating anything. New Alembic migration verified
+up/down/up. Full suite (539 tests) and pre-commit passed.
+
+**Noted, not a regression**: 6 pre-existing live-OANDA strategy tests
+(unrelated to this story — `EmaCrossoverStrategy`, control strategies,
+etc.) failed when the full suite ran, each on the same assertion
+("expected enough live candles for a meaningful run"). Diagnosed
+directly, not assumed: today is a Saturday, forex markets are closed,
+and a live fetch of the same "last 4 hours" window those tests use
+returned zero finalized candles. All of this story's own new tests
+(including the ones hitting live Postgres) passed; the six affected
+tests would pass again once the market reopens. Recorded here rather
+than silently ignored, per this project's established honesty norm
+around environmental test flakiness.

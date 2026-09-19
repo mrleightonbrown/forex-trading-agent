@@ -278,11 +278,21 @@ the ~90-day/26-trade samples used so far are enough to prove the
 machinery works, not enough to judge whether any strategy has durable
 expectancy:
 
-1. `FX-26` — Paginated, resumable historical backfill. Currently bounded
-   to one 5000-candle request; needs to become years × several pairs ×
-   multiple timeframes, with idempotent writes, an explicit ingestion
-   checkpoint, gap detection after backfill, and a deterministic final
-   dataset regardless of page size.
+1. ~~`FX-26` — Paginated, resumable historical backfill~~ — complete.
+   `BackfillCandles` (`application/use_cases/backfill_candles.py`) pages
+   arbitrarily large ranges via `domain/candle_pagination.py`
+   (DST-aware, deterministic regardless of chosen page size — reuses
+   `candle_boundary`, FX-25H/FX-25H.1), and tracks progress via a new
+   per-`(instrument, granularity)` watermark (`ingestion_watermarks`
+   table/`IngestionWatermarkRepository`) rather than a per-job
+   checkpoint — the watermark *is* the resume state, extending forward
+   or backward as later calls request more range. A disjoint request
+   (no overlap/touch with existing coverage) raises explicitly rather
+   than silently claiming an unfetched gap is covered. Also fixed a
+   latent day-alignment bug in `find_gaps` (FX-8) — the same class of
+   bug FX-24 already fixed elsewhere, verified and regression-tested.
+   Verified against in-memory fakes for exhaustive branch coverage and
+   against real Postgres for the core interruption/resume guarantee.
 2. `FX-27` — `CandleRepository.get_range(source=...)` provenance
    filtering. Narrow: `source: CandleSource | None = None`, where `None`
    explicitly means "all sources", not an implicit choice between them.

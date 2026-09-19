@@ -1,14 +1,23 @@
-"""FX-8: gap detection — pure, no I/O.
+"""FX-8 (day-alignment fixed FX-26): gap detection — pure, no I/O.
 
 Deliberately no market-calendar awareness (weekends/holidays aren't
 excluded): forex session boundaries shift with daylight saving and vary by
 broker, which is real complexity this cuts rather than approximates badly.
 Callers should pass ranges already known to be within a trading session.
+
+FX-26: "expected candle start times" used to be naive epoch-stepping
+(`cursor += duration`), predating FX-24's day-aligned `H2`/`H3`/`H4`/`H6`/
+`H8`/`H12`/`D` boundaries entirely. Verified directly: for a range crossing
+a DST transition, that stepping diverges from the real candle boundaries
+by an hour from the transition onward — `find_gaps` would report false
+gaps (and miss real ones) for exactly the granularities FX-24 made
+day-aligned. Now uses `candle_boundary`, the same canonical definition
+`aggregate_candles` and `MultiTimeframeTrendStrategy` already share.
 """
 
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_boundary import candle_end_time, candle_start_boundary
 from forex_agent.domain.granularity import Granularity
-from forex_agent.domain.granularity_duration import fixed_duration
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
@@ -40,12 +49,11 @@ def find_gaps(
             )
 
     present = {candle.start_time for candle in candles}
-    duration = fixed_duration(granularity)
 
     expected = []
-    cursor = start.value
+    cursor = candle_start_boundary(start.value, granularity)
     while cursor < end.value:
         expected.append(UtcTimestamp(cursor))
-        cursor += duration
+        cursor = candle_end_time(cursor, granularity)
 
     return [ts for ts in expected if ts not in present]

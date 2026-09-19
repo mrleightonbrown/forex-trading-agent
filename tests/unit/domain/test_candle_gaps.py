@@ -96,3 +96,73 @@ def test_rejects_mixed_instrument_candles() -> None:
 
     with pytest.raises(ValueError, match="instrument"):
         find_gaps(candles, Granularity.M1, _ts(0), _ts(3))
+
+
+# --- FX-26: day-aligned granularities use canonical boundaries -------------
+
+
+def _h4(instant: datetime, instrument: Instrument = EUR_USD) -> Candle:
+    flat = Ohlc(open=Decimal("1.1"), high=Decimal("1.1"), low=Decimal("1.1"), close=Decimal("1.1"))
+    return Candle(
+        instrument=instrument,
+        granularity=Granularity.H4,
+        start_time=UtcTimestamp(instant),
+        bid=flat,
+        ask=flat,
+        volume=1,
+        is_finalized=True,
+    )
+
+
+def test_no_false_gaps_across_a_spring_forward_h4_transition() -> None:
+    """FX-26 regression: the naive epoch-stepping this replaced would
+    have generated expected boundaries 4 real hours apart throughout,
+    diverging from the real (FX-24-confirmed) canonical H4 boundaries by
+    an hour from the DST transition onward -- reporting a false gap (or
+    hiding a real one) for every candle after it. All six real boundaries
+    for this day, independently confirmed against candle_boundary and
+    matching FX-25H's own verified values, are supplied here and must
+    show zero gaps.
+    """
+    real_h4_boundaries = [
+        datetime(2026, 3, 7, 22, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 2, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 6, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 9, 0, tzinfo=UTC),  # would be 10:00Z under naive +4h stepping
+        datetime(2026, 3, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 17, 0, tzinfo=UTC),
+    ]
+    candles = [_h4(t) for t in real_h4_boundaries]
+
+    gaps = find_gaps(
+        candles,
+        Granularity.H4,
+        UtcTimestamp(datetime(2026, 3, 7, 22, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 3, 8, 21, 0, tzinfo=UTC)),
+    )
+
+    assert gaps == []
+
+
+def test_correctly_identifies_a_missing_candle_around_a_dst_transition() -> None:
+    # Same six real boundaries as above, but the DST-shortened 09:00Z
+    # candle is missing -- must be reported as the gap, not some other
+    # (naively-computed, wrong) timestamp.
+    real_h4_boundaries = [
+        datetime(2026, 3, 7, 22, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 2, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 6, 0, tzinfo=UTC),
+        # 09:00Z intentionally missing
+        datetime(2026, 3, 8, 13, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 17, 0, tzinfo=UTC),
+    ]
+    candles = [_h4(t) for t in real_h4_boundaries]
+
+    gaps = find_gaps(
+        candles,
+        Granularity.H4,
+        UtcTimestamp(datetime(2026, 3, 7, 22, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 3, 8, 21, 0, tzinfo=UTC)),
+    )
+
+    assert gaps == [UtcTimestamp(datetime(2026, 3, 8, 9, 0, tzinfo=UTC))]
