@@ -463,10 +463,15 @@ discipline as FX-29's).
    clear transaction costs on FX pairs in this dataset; gold comes
    closest to (here, just past) breakeven. Full table in
    `docs/DECISIONS.md`.
-3. `FX-34` — `CloseChannelBreakoutStrategy` (FX-15). O(n)/call (builds
-   a full closes list every call even though only the tail is used) —
-   ~7.6 min/instrument extrapolated, ~38 min total; tolerable for a
-   one-off run without needing an incremental engine. Not yet started.
+3. ~~`FX-34` — `CloseChannelBreakoutStrategy` (FX-15)~~ — complete.
+   O(n)/call, ~10.7 min/instrument actual (~53 min total), no
+   incremental engine needed. Default `lookback=20`: genuinely mixed —
+   unprofitable on `EUR_USD`/`GBP_USD`/`USD_CAD` (profit factor
+   0.84-0.88), profitable on `USD_JPY`/`XAU_USD` (profit factor
+   1.08/1.20), at n=1,900-2,100 trades each. No obvious pattern
+   separates the winners from the losers — the first strategy in this
+   batch where the answer genuinely depends on the instrument. Full
+   table in `docs/DECISIONS.md`.
 4. `FX-35` — `MeanReversionStrategy` (FX-19). Same O(n)/call profile —
    ~8 min/instrument extrapolated, ~42 min total; also tolerable
    as-is. Not yet started.

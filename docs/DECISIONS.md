@@ -2691,3 +2691,37 @@ patterns come closer to (or, here, just past) breaking even.
 
 **Verification**: existing pipeline unmodified, pure empirical
 analysis. ~30s/instrument, ~3 minutes total.
+
+## 2026-09-19 — Research dataset run 3/6: FX-34, CloseChannelBreakoutStrategy
+
+`CloseChannelBreakoutStrategy` (FX-15), default `lookback=20`: O(n) per
+call (builds a full closes list every call even though only the last
+`lookback` values are used) — actual timing came in at ~640s/instrument
+(~10.7 min), somewhat higher than the ~7.6 min extrapolated from the
+4,000-candle sample, but still a tolerable one-off run (~53 minutes
+total for all 5 instruments) without needing an incremental engine.
+
+**Results, full 10-year H1, all 5 instruments:**
+
+| Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| EUR_USD | 2065 | 0.343 | -0.00024 USD | 0.883 | -0.045 |
+| GBP_USD | 2127 | 0.349 | -0.00035 USD | 0.877 | -0.045 |
+| USD_JPY | 1948 | 0.367 | +0.01965 JPY | 1.077 | +0.024 |
+| USD_CAD | 2102 | 0.328 | -0.00038 CAD | 0.836 | -0.064 |
+| XAU_USD | 1894 | 0.356 | +1.55841 USD | 1.200 | +0.049 |
+
+**Findings**: genuinely mixed, not uniform like FX-32/33's results —
+unprofitable on 3 of 5 (`EUR_USD`/`GBP_USD`/`USD_CAD`, profit factor
+0.84-0.88) and profitable on 2 of 5 (`USD_JPY`/`XAU_USD`, profit
+factor 1.08/1.20), at n=1,900-2,100 trades per instrument — a smaller
+sample than FX-32/33's but still ~35-80x FX-21/23's own flagged-
+as-too-small samples. No obvious pattern separates the winning pair
+from the losing three (not "majors vs. minors," not "USD-base vs.
+USD-quote") — worth naming as an open question rather than reaching
+for a story. This is the first strategy in this batch where "does it
+work" genuinely depends on which instrument you ask, rather than a
+clean project-wide answer.
+
+**Verification**: existing pipeline unmodified, pure empirical
+analysis. ~10.7 min/instrument, ~53 minutes total.

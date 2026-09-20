@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-33)_
+_Last updated: 2026-09-19 (FX-34)_
 
 ## What exists
 
@@ -230,7 +230,11 @@ _Last updated: 2026-09-19 (FX-33)_
   was needed. Verified the same way as EMA: through `run_backtest` +
   `simulate_trades` on an engineered series with hand-traced prices
   (including an edge case where entry and end-of-data force-close land on
-  the same final candle), and against live OANDA practice candles.
+  the same final candle), and against live OANDA practice candles. Run
+  across the full 10-year, 5-instrument research dataset (FX-34),
+  default `lookback=20`: genuinely mixed — unprofitable on `EUR_USD`/
+  `GBP_USD`/`USD_CAD`, profitable on `USD_JPY`/`XAU_USD`, no obvious
+  pattern separating them — see `docs/DECISIONS.md`.
 - `TimeSeriesMomentumStrategy` (`forex_agent.domain.strategies.
   time_series_momentum`, `strategy_key="time_series_momentum_v1"`) — the
   third concrete `Strategy` (FX-16). `return = current_close /
