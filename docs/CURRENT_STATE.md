@@ -187,15 +187,18 @@ _Last updated: 2026-09-20 (FX-38)_
   the same unmodified `BackfillCandles`. Actual earliest H1 candle: the
   four FX pairs 2002-05-06/07 (not materially different from each
   other), XAU/USD 2006-03-19 (genuinely, not artificially, ~4 years
-  later). +376,748 candles total. Each series' opening stretch is real
-  but sparse (~5% of normal density for the FX pairs through 2004,
-  ~15% for XAU/USD through 2006) before settling to the same gap
-  signature the already-trusted 2016-2026 range already has, from
-  ~2005 (FX)/~2007 (XAU) onward — disclosed, not excluded. Coverage now
-  spans each instrument's own true earliest-available candle through
-  the present. Full discovery/extension/gap-check tables and the
-  resulting locked pre-development-holdout research protocol are in
-  `docs/DECISIONS.md`'s FX-38 entries.
+  later). +376,748 candles total. The four FX pairs' opening stretch is
+  real but sparse (~5% of normal density through 2004, dense from
+  ~2005) — disclosed, not excluded. **XAU_USD's originally-reported
+  "~15% through 2006" figure was a measurement artifact, corrected by
+  FX-38H**: it was an average over a fixed calendar window that mostly
+  predated XAU_USD's data even existing, not real sparsity — XAU_USD's
+  data is already near-full density from its very first available
+  candle. Coverage now spans each instrument's own true earliest-
+  available candle through the present. Full discovery/extension/gap-
+  check tables are in `docs/DECISIONS.md`'s FX-38 entries; the density
+  correction and the objective usable-history-start algorithm that
+  found it are in FX-38H's own entry.
 - **Pre-development historical holdout evaluation (FX-38 Parts D-G,
   complete)**: `EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGated
   Strategy`, `MultiTimeframeTrendStrategy`, and `CloseChannelBreakout

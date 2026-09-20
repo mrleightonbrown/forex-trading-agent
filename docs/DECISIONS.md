@@ -2982,9 +2982,24 @@ where each series' density actually stabilizes:
 - XAU_USD: 2006 15.4% → **2007 98.8%** → stable ~97-101% through 2009. A
   shorter ~10-month thin era.
 
+  **Correction (FX-38H)**: the XAU_USD row above is WRONG — a
+  measurement artifact of this probe's own fixed Jan 1 - Mar 31
+  calendar window, not XAU/USD's real behavior. XAU/USD's data doesn't
+  begin until 2006-03-19; roughly 77 of that "2006" window's 90 days
+  had zero candles because the data didn't exist yet, not because of a
+  provider gap, dragging the reported average density down to ~15%
+  even though the data that DOES exist from 2006-03-19 onward is
+  already near-full density. FX-38H's own properly-anchored, objective
+  algorithm (`scripts/determine_usable_history_start.py`) confirms
+  this directly: XAU/USD needs NO ramp-up exclusion at all — its
+  usable start equals its earliest available candle. See FX-38H's own
+  entry below for the full correction; this row is left as originally
+  written, not silently edited, with the correction linked from here.
+
 This is a genuine OANDA provider characteristic (electronic FX/gold
-feed maturity in the early-to-mid 2000s), not a backfill defect —
-consistent with, and not contradicted by, the gap-check findings below.
+feed maturity in the early-to-mid 2000s) for the four FX pairs — not a
+backfill defect, and not (per the correction above) something that
+applies to XAU_USD the way originally described here.
 
 ### Part B — dataset extended backward; existing 2016-2026 data untouched
 
@@ -3772,3 +3787,108 @@ one clear exception to "no single episode dominates": its apparent
 edge is disproportionately one 2020-2021 episode, not a distributed
 pattern — and that is also the one candidate-adjacent combination that
 outright sign-flips in Part E.
+
+## 2026-09-20 — FX-38H (part 1): objective usable-history threshold + sealed evaluation windows
+
+External review of FX-38 (methodologically sound overall — accepted
+Parts A/B, the Part G correction, and the strategy-parameter
+discipline outright) raised two real gaps: FX-38's holdout period
+started at the raw technical `earliest_available_candle` (including a
+real but sparse ramp-up era, disclosed but not excluded by any
+objective rule), and its dev/holdout split was a single continuous run
+sliced by `entry_time` alone, which can let a trade whose entry and
+exit straddle the boundary leak an out-of-period price into the
+"wrong" period's metrics. FX-38H addresses both, with FX-38's own raw
+history and findings preserved, not discarded — the external review's
+own framing: "the outcome remains interesting... this is exactly where
+methodological cleanliness matters most."
+
+### Distinguishing `earliest_available_candle` from `earliest_usable_research_candle`
+
+`scripts/determine_usable_history_start.py` (new, committed): an
+OBJECTIVE, data-quality-driven rule, locked before running rather than
+tuned to produce a particular answer — a 90-day window is "clean" if,
+after excluding the standard forex weekly closure and (for XAU/USD's
+H1 series specifically) its own documented daily settlement gap
+(FX-27H.1), (a) coverage >= 95% and (b) no single run of consecutive
+missing expected slots exceeds 72 hours. `earliest_usable_research_
+candle` is the start of the first such window that stays clean for the
+following 7 windows too (8 * 90 days ~= 2 years — "sustained", not one
+lucky window). Runs entirely against the already-backfilled Postgres
+dataset (FX-38 Part B) — no OANDA calls, and FX-38's raw 2002-2006
+history is read, never deleted or modified.
+
+| Instrument | Granularity | earliest_available_candle | earliest_usable_research_candle |
+|---|---|---|---|
+| EUR_USD | H1 | 2002-05-06 | 2005-01-20 |
+| EUR_USD | H4 | 2002-05-07 | 2005-01-21 |
+| GBP_USD | H1 | 2002-05-06 | 2005-01-20 |
+| GBP_USD | H4 | 2002-05-07 | 2005-01-21 |
+| USD_JPY | H1 | 2002-05-06 | 2005-01-20 |
+| USD_JPY | H4 | 2002-05-07 | 2005-01-21 |
+| USD_CAD | H1 | 2002-05-07 | 2005-01-21 |
+| USD_CAD | H4 | 2002-05-08 | 2005-01-22 |
+| XAU_USD | H1 | 2006-03-19 | 2006-03-19 |
+| XAU_USD | H4 | 2006-03-19 | 2006-03-19 |
+
+`MultiTimeframeTrendStrategy` usable start = the LATER of its own H1/H4
+boundaries (per instrument, both already equal or one day apart, so
+this changes nothing beyond the H1 figure above except USD_CAD, which
+uses its own H4 date 2005-01-22).
+
+**A genuine correction to FX-38's own Part A/B, caught by building this
+properly rather than reusing the earlier informal probe**: XAU/USD's
+usable start comes back as its OWN earliest available candle —
+2006-03-19, no ramp-up exclusion at all. This directly contradicts
+FX-38's own reported "XAU/USD opening-era density ~15.4% in 2006,
+~98.8% from 2007" — and that earlier number was wrong, not XAU/USD's
+real behavior: FX-38's informal probe sampled a fixed Jan 1 - Mar 31
+calendar window for "2006," but XAU/USD's data didn't exist before
+2006-03-19 — roughly 77 of that window's 90 days had zero candles
+BECAUSE THE DATA DIDN'T EXIST YET, not because of any provider gap.
+(85.6% zero-density days at ~0% density blended with ~13.5 days of
+already-dense trading averages out to almost exactly the reported
+15.4% — confirmed by direct arithmetic, not just plausible.) This
+script's own first window is anchored to `earliest_ingested` itself,
+not a calendar boundary, so it doesn't inherit that flaw. The four FX
+pairs' ramp-up era (2002 through early 2005) IS real and reproduced
+here consistently with FX-38's own finding — only XAU/USD's reported
+ramp-up was a measurement artifact. `docs/CURRENT_STATE.md`/FX-38's
+own entries are corrected accordingly; FX-38's raw data and every OTHER
+finding stand unchanged.
+
+### Sealed evaluation windows
+
+`domain/sealed_window_backtest.py` (new): `run_sealed_window_backtest`
+runs a strategy continuously across `warmup_candles + window_candles`
+(so indicators are genuinely warmed up, not cold-started at the window
+boundary — legitimate, since a real continuously-running strategy
+would also enter any given day already warmed up), then returns only
+the hypotheses generated at or after the window's own first candle —
+discarding whatever position warm-up-only hypotheses would have
+implied, so the portfolio provably starts flat at the window boundary.
+Callers then pass those hypotheses to the existing, UNMODIFIED
+`simulate_trades` alongside ONLY `window_candles` (never
+`warmup_candles`) — `simulate_trades` already force-closes any open
+position at the end of whatever `candles` it receives and already
+refuses to execute a hypothesis generated on the final candle (no
+next-bar price to use), so window-edge sealing falls out of composition
+with existing, already-tested behavior rather than needing new
+execution logic. A generic callable (`run_backtest`/`run_backtest_
+incremental`) keeps this working for both engine types.
+
+8 new tests (`tests/unit/domain/test_sealed_window_backtest.py`),
+including two built on values confirmed by direct computation before
+writing the assertion, matching this project's established practice
+for boundary-sensitive tests: `test_warmup_actually_matters_not_a_
+no_op` (cold-start vs. warmed-up hypothesis lists provably differ, not
+just "should" differ) and `test_force_closes_at_the_windows_own_last_
+candle_not_beyond` (a real trade confirmed to straddle a chosen window
+boundary in a continuous run — entry inside, exit outside — then shown
+to force-close at a different time AND price once sealed). Regression-
+proof discipline applied: temporarily removed the hypothesis filter
+(sealing became a no-op), confirmed 5 of 8 tests fail, restored,
+confirmed all 8 pass again.
+
+**Verification**: `pytest` (604 passed, unit/contract/replay), `ruff`,
+`mypy --strict`, `pre-commit run --all-files`.
