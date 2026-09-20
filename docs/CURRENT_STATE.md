@@ -338,9 +338,15 @@ _Last updated: 2026-09-19 (FX-37)_
   early without an explicit extra counter (confirmed via regression-
   proof discipline — removing the counter makes the new test fail,
   restoring it passes again). Run across the full 10-year, 5-instrument
-  research dataset — see `docs/DECISIONS.md`. This closes out the
-  user-authorized batch of running every remaining concrete strategy
-  across the research dataset (FX-32 through FX-37).
+  research dataset: n=425-462 trades per instrument, genuinely mixed —
+  unprofitable on `EUR_USD`/`GBP_USD`/`USD_CAD` (profit factor
+  0.90-0.92), profitable on `USD_JPY`/`XAU_USD` (profit factor
+  1.25-1.31) — with a consistently LOW win rate (0.28-0.34) throughout,
+  the classic trend/breakout-confirmation signature (few larger wins,
+  many small losses), the opposite of FX-35's mean-reversion one. Full
+  table in `docs/DECISIONS.md`. This closes out the user-authorized
+  batch of running every remaining concrete strategy across the
+  research dataset (FX-32 through FX-37).
 - `RegimeSegmentedTrades` + `segment_trades_by_regime`
   (`forex_agent.domain.regime_segmentation`, FX-21, look-ahead fixed
   FX-21H): performs **entry-regime attribution** — buckets a strategy's

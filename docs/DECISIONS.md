@@ -2856,3 +2856,55 @@ check in `test_incremental_backtest_golden_parity.py`.
 **Verification**: `pytest` (unit — including the deliberate
 revert-and-confirm-failure step above), `ruff`, `mypy --strict`,
 `pre-commit run --all-files`, full suite against live Postgres.
+
+## 2026-09-19 — Research dataset run 6/6: FX-37, MultiTimeframeTrendStrategy (results)
+
+`MultiTimeframeTrendStrategy` (FX-25), default parameters
+(`h1_fast_period=20`, `h1_slow_period=50`, `h4_fast_period=20`,
+`h4_slow_period=50`), run via `IncrementalMultiTimeframeTrendStrategy`
+(this story's own first part) — ~3s/instrument for the full 10-year
+H1+H4 pair, down from ~41 minutes extrapolated.
+
+**Results, full 10-year H1 (confirmed by H4), all 5 instruments:**
+
+| Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| EUR_USD | 426 | 0.317 | -0.00022 USD | 0.906 | -0.034 |
+| GBP_USD | 457 | 0.304 | -0.00033 USD | 0.896 | -0.037 |
+| USD_JPY | 425 | 0.339 | +0.08939 JPY | 1.306 | +0.084 |
+| USD_CAD | 462 | 0.279 | -0.00022 CAD | 0.917 | -0.027 |
+| XAU_USD | 431 | 0.316 | +2.27467 USD | 1.253 | +0.054 |
+
+**Findings**: n=425-462 trades per instrument over 10 years — a solid
+sample, same order of magnitude as FX-34's (not FX-36's too-small one).
+Genuinely mixed, like FX-34: unprofitable on `EUR_USD`/`GBP_USD`/
+`USD_CAD` (profit factor 0.90-0.92), profitable on `USD_JPY`/`XAU_USD`
+(profit factor 1.25-1.31). No obvious shared property separates the
+two winners from the three losers (same open question FX-34 left).
+Notable, consistent across all 5 regardless of profitability: a LOW
+win rate (0.28-0.34) — the classic trend/breakout-confirmation
+signature (few larger wins carrying many small losses), the mirror
+image of FX-35's mean-reversion strategy (high win rate, net loss
+anyway). H4 confirmation clearly does filter something: this is a
+meaningfully higher trade count than a bare H1 EMA crossover would
+produce unfiltered scattered noise, though a direct head-to-head
+against unfiltered `EmaCrossoverStrategy` on the same instruments
+was not run in this story — flagged as a natural follow-up, not
+pursued here.
+
+**This closes the user-authorized batch** (external review's closing
+recommendation, agreed 2026-09-19): every remaining concrete strategy
+now has a real empirical run across the full 10-year, 5-instrument
+research dataset. Summary across all six: two decisive/consistent
+findings (FX-32's `PreviousBarDirectionStrategy`, unprofitable
+everywhere; FX-35's `MeanReversionStrategy`, unprofitable everywhere);
+two genuinely instrument-dependent findings with no identified
+separating property (FX-34's `CloseChannelBreakoutStrategy`, FX-37's
+`MultiTimeframeTrendStrategy`); one too-small-to-trust sample
+(FX-36's `VolatilityExpansionBreakoutStrategy`, n=11-27); one thin/
+marginal result (FX-33's `TimeSeriesMomentumStrategy`, breakeven-ish
+on `XAU_USD` only). No strategy in this batch shows a strong, broad,
+trustworthy edge across all 5 instruments.
+
+**Verification**: golden-parity-tested incremental engine (previous
+commit). This run: ~3s/instrument, ~15 seconds total for all 5.

@@ -495,18 +495,28 @@ discipline as FX-29's).
    other runs; 4 of 5 instruments show poor profit factors (0.06-0.45),
    `USD_JPY` near breakeven (1.003) but not a confident finding at that
    n. Full table in `docs/DECISIONS.md`.
-6. `FX-37` — `MultiTimeframeTrendStrategy` (FX-25). O(n)/call on its H1
-   side (same from-scratch EMA recompute pattern FX-29 already solved
-   once) — timed at ~41 min/instrument extrapolated, ~3.4 hours for all
-   5: also needed an incremental engine, the most complex of the six
-   since it combines H1 and H4 series. Engine complete: `Incremental
-   MultiTimeframeTrendStrategy` keeps the H4 series as a constructor
-   argument (same shape as the slow strategy) with an internal cursor
-   advancing into it as H1 time progresses — golden-parity-tested,
-   including a real gap closed (the slow strategy's H4-bias gate needs
-   `slow_period + 1` visible candles, one more than raw EMA readiness).
-   Full details in `docs/DECISIONS.md`. Empirical run across the
-   research dataset: not yet started.
+6. ~~`FX-37` — `MultiTimeframeTrendStrategy` (FX-25)~~ — complete.
+   Needed a new incremental engine first (~41 min/instrument
+   extrapolated, the most complex of the six since it combines H1 and
+   H4 series) — `IncrementalMultiTimeframeTrendStrategy` keeps the H4
+   series as a constructor argument (same shape as the slow strategy)
+   with an internal cursor advancing into it as H1 time progresses,
+   golden-parity-tested including a real gap closed (the slow
+   strategy's H4-bias gate needs `slow_period + 1` visible candles, one
+   more than raw EMA readiness). Measured: ~3s/instrument, down from
+   ~41 minutes. Empirical result, default params: n=425-462 trades per
+   instrument — a solid sample. Genuinely mixed, like FX-34:
+   unprofitable on `EUR_USD`/`GBP_USD`/`USD_CAD` (profit factor
+   0.90-0.92), profitable on `USD_JPY`/`XAU_USD` (profit factor
+   1.25-1.31); consistently low win rate (0.28-0.34) everywhere, the
+   classic trend/breakout-confirmation signature. Full table in
+   `docs/DECISIONS.md`.
+
+**This batch is now complete (FX-32 through FX-37)** — every remaining
+concrete strategy has a real empirical run across the full 10-year,
+5-instrument research dataset. See `docs/DECISIONS.md`'s FX-37 (results)
+entry for a cross-strategy summary. No further work in this area has
+been requested; check in before starting anything new here.
 
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
