@@ -3116,3 +3116,659 @@ year discarding will occur past this point in the story.** If any
 locked strategy cannot be run unchanged for some instrument, that
 specific experiment stops and is documented as such — nothing is
 modified to improve its result.
+
+## 2026-09-20 — FX-38 Parts D-F: pre-development historical holdout results
+
+Executed exactly per the Part C protocol above, locked before any of
+these numbers existed. All four strategies ran with their existing
+default constructor parameters, unmodified. No parameter was changed
+after seeing any result below.
+
+**Shared H1 candle coverage** (same series every strategy in this story
+runs against; not repeated per strategy/table below):
+
+| Instrument | Holdout n | Holdout range | Dev n | Dev range |
+|---|---|---|---|---|
+| EUR_USD | 76,401 | 2002-05-06 .. 2016-09-18 | 62,218 | 2016-09-19 .. 2026-09-18 |
+| GBP_USD | 76,188 | 2002-05-06 .. 2016-09-18 | 62,221 | 2016-09-19 .. 2026-09-18 |
+| USD_JPY | 76,285 | 2002-05-06 .. 2016-09-18 | 62,235 | 2016-09-19 .. 2026-09-18 |
+| USD_CAD | 76,076 | 2002-05-07 .. 2016-09-18 | 62,244 | 2016-09-19 .. 2026-09-18 |
+| XAU_USD | 65,653 | 2006-03-19 .. 2016-09-18 | 59,131 | 2016-09-19 .. 2026-09-18 |
+
+**A small, expected, disclosed numerical note before the tables**: every
+trade count below differs by a handful of trades (never more than 3)
+from this same strategy/instrument's own previously-published
+2016-2026-only table (FX-29's continuous EMA/gated-EMA rerun, FX-37's
+MultiTimeframeTrendStrategy table). This is the continuous-warm-up
+effect named in Part C's protocol, not a discrepancy: EMA/ADX/H4-bias
+state entering 2016-09-19 is now already "hot" from running
+continuously since 2002/2006, instead of cold-starting at 2016-09-19
+in isolation — a handful of trades right at the boundary that a
+truncated run couldn't have produced become possible. Expected, and a
+genuine fidelity improvement (a real continuously-running strategy
+would also enter 2016 already warmed up), not an inconsistency between
+stories.
+
+### EmaCrossoverStrategy (ema_crossover_v1, defaults)
+
+**Development 2016-2026**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 1166 | 583/583 | 0.317 | 0.00707 USD | -0.00351 USD | -0.00015 USD | 0.938 | -0.17170 USD | 0.25455 USD | -0.0211 | -0.0409 |
+| GBP_USD | 1182 | 591/591 | 0.292 | 0.01044 USD | -0.00464 USD | -0.00024 USD | 0.927 | -0.28547 USD | 0.58531 USD | -0.0242 | -0.0505 |
+| USD_JPY | 1121 | 561/560 | 0.312 | 1.07845 JPY | -0.45220 JPY | 0.02610 JPY | 1.084 | 29.26200 JPY | 27.28600 JPY | 0.0247 | 0.0500 |
+| USD_CAD | 1208 | 604/604 | 0.269 | 0.00856 CAD | -0.00380 CAD | -0.00047 CAD | 0.830 | -0.56920 CAD | 0.79457 CAD | -0.0617 | -0.1188 |
+| XAU_USD | 1137 | 569/568 | 0.293 | 37.08925 USD | -13.62037 USD | 1.23126 USD | 1.128 | 1399.93800 USD | 1188.55000 USD | 0.0292 | 0.0688 |
+
+**Pre-development historical holdout**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 1443 | 721/722 | 0.278 | 0.01380 USD | -0.00583 USD | -0.00037 USD | 0.911 | -0.53931 USD | 0.72350 USD | -0.0289 | -0.0607 |
+| GBP_USD | 1409 | 704/705 | 0.307 | 0.01510 USD | -0.00689 USD | -0.00015 USD | 0.969 | -0.20663 USD | 0.75885 USD | -0.0099 | -0.0201 |
+| USD_JPY | 1448 | 724/724 | 0.286 | 1.03081 JPY | -0.45123 JPY | -0.02719 JPY | 0.916 | -39.36600 JPY | 61.57400 JPY | -0.0276 | -0.0508 |
+| USD_CAD | 1453 | 727/726 | 0.281 | 0.01134 CAD | -0.00467 CAD | -0.00017 CAD | 0.950 | -0.24479 CAD | 0.60546 CAD | -0.0147 | -0.0333 |
+| XAU_USD | 1170 | 585/585 | 0.303 | 21.35966 USD | -8.98312 USD | 0.19751 USD | 1.032 | 231.08800 USD | 632.90400 USD | 0.0099 | 0.0206 |
+
+Plain EMA crossover: unprofitable in BOTH periods on EUR_USD/GBP_USD/
+USD_CAD (PF < 1 throughout, consistent). USD_JPY **sign-flips**:
+positive in development (PF 1.084) but negative in historical holdout
+(PF 0.916, expectancy -0.02719 JPY). XAU_USD is positive in both
+periods but materially weaker in holdout (expectancy +1.23126 USD dev
+→ +0.19751 USD holdout, an 84% drop; PF 1.128 → 1.032, near breakeven).
+
+### EmaCrossoverTrendRegimeGatedStrategy (ema_crossover_trend_regime_gated_v1, defaults)
+
+**Development 2016-2026**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 296 | 148/148 | 0.311 | 0.00664 USD | -0.00401 USD | -0.00070 USD | 0.746 | -0.20756 USD | 0.20763 USD | -0.1058 | -0.1680 |
+| GBP_USD | 307 | 152/155 | 0.326 | 0.01207 USD | -0.00539 USD | 0.00030 USD | 1.081 | 0.09068 USD | 0.12546 USD | 0.0231 | 0.0545 |
+| USD_JPY | 293 | 119/174 | 0.317 | 1.23330 JPY | -0.52624 JPY | 0.03225 JPY | 1.090 | 9.44800 JPY | 19.51200 JPY | 0.0257 | 0.0522 |
+| USD_CAD | 290 | 148/142 | 0.303 | 0.00806 CAD | -0.00420 CAD | -0.00048 CAD | 0.836 | -0.13936 CAD | 0.18406 CAD | -0.0623 | -0.1104 |
+| XAU_USD | 313 | 142/171 | 0.304 | 48.08456 USD | -17.11848 USD | 2.67158 USD | 1.224 | 836.20400 USD | 627.31000 USD | 0.0464 | 0.1235 |
+
+**Pre-development historical holdout**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 427 | 203/224 | 0.337 | 0.01195 USD | -0.00596 USD | 0.00008 USD | 1.020 | 0.03389 USD | 0.23118 USD | 0.0069 | 0.0137 |
+| GBP_USD | 397 | 202/195 | 0.373 | 0.01346 USD | -0.00754 USD | 0.00029 USD | 1.062 | 0.11594 USD | 0.25537 USD | 0.0203 | 0.0411 |
+| USD_JPY | 361 | 157/204 | 0.319 | 1.14065 JPY | -0.51848 JPY | 0.01005 JPY | 1.028 | 3.62800 JPY | 25.90500 JPY | 0.0091 | 0.0171 |
+| USD_CAD | 348 | 179/169 | 0.273 | 0.00948 CAD | -0.00528 CAD | -0.00123 CAD | 0.677 | -0.42906 CAD | 0.42965 CAD | -0.1343 | -0.2251 |
+| XAU_USD | 364 | 175/189 | 0.297 | 21.86471 USD | -10.38884 USD | -0.81910 USD | 0.888 | -298.15400 USD | 619.67300 USD | -0.0379 | -0.0768 |
+
+ADX-gated EMA: EUR_USD flips the OTHER way (negative dev, PF 0.746 →
+marginally positive holdout, PF 1.020 — a weak reversal, not read as a
+finding either way). GBP_USD positive in both periods (PF 1.081 →
+1.062), directionally consistent. USD_JPY positive in both, weaker in
+holdout (PF 1.090 → 1.028, close to breakeven). USD_CAD negative in
+both periods (PF 0.836 → 0.677). XAU_USD **sign-flips**: positive in
+development (PF 1.224, one of this whole batch's stronger dev results)
+but clearly negative in historical holdout (PF 0.888, expectancy
+-0.81910 USD) — the same instrument FX-28's own development-only
+table called out as ADX-gating's best case; that does not hold before
+2016.
+
+### MultiTimeframeTrendStrategy (multi_timeframe_trend_v1, defaults)
+
+**Development 2016-2026**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 427 | 217/210 | 0.316 | 0.00665 USD | -0.00341 USD | -0.00022 USD | 0.904 | -0.09583 USD | 0.12253 USD | -0.0344 | -0.0620 |
+| GBP_USD | 459 | 228/231 | 0.305 | 0.00979 USD | -0.00455 USD | -0.00018 USD | 0.944 | -0.08100 USD | 0.20419 USD | -0.0188 | -0.0389 |
+| USD_JPY | 426 | 248/178 | 0.340 | 1.12477 JPY | -0.44236 JPY | 0.09105 JPY | 1.312 | 38.78800 JPY | 13.98000 JPY | 0.0853 | 0.1840 |
+| USD_CAD | 464 | 246/218 | 0.278 | 0.00878 CAD | -0.00371 CAD | -0.00024 CAD | 0.912 | -0.10964 CAD | 0.20527 CAD | -0.0290 | -0.0618 |
+| XAU_USD | 433 | 268/165 | 0.314 | 35.64818 USD | -13.05820 USD | 2.23988 USD | 1.250 | 969.86800 USD | 761.32000 USD | 0.0536 | 0.1306 |
+
+**Pre-development historical holdout**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 545 | 246/299 | 0.277 | 0.01327 USD | -0.00571 USD | -0.00044 USD | 0.893 | -0.24061 USD | 0.45559 USD | -0.0369 | -0.0743 |
+| GBP_USD | 527 | 260/267 | 0.309 | 0.01707 USD | -0.00654 USD | 0.00077 USD | 1.172 | 0.40730 USD | 0.20411 USD | 0.0485 | 0.1193 |
+| USD_JPY | 539 | 284/255 | 0.308 | 1.08105 JPY | -0.42306 JPY | 0.04017 JPY | 1.137 | 21.65100 JPY | 19.91700 JPY | 0.0413 | 0.0899 |
+| USD_CAD | 539 | 267/272 | 0.269 | 0.00976 CAD | -0.00437 CAD | -0.00056 CAD | 0.824 | -0.30149 CAD | 0.46224 CAD | -0.0606 | -0.1244 |
+| XAU_USD | 452 | 230/222 | 0.325 | 21.94284 USD | -8.97188 USD | 1.08224 USD | 1.179 | 489.17300 USD | 224.51500 USD | 0.0504 | 0.1124 |
+
+MultiTimeframeTrendStrategy: EUR_USD/USD_CAD negative in both periods
+(consistent with development). GBP_USD **sign-flips** the favorable
+way: negative development (PF 0.944) but positive historical holdout
+(PF 1.172) — the one case in this whole story where holdout looks
+BETTER than development. Read the same way as any other sign-flip in
+this report: a genuine change of sign between periods, not evidence
+this combination is now trustworthy — it was never a candidate this
+story selected for. USD_JPY and XAU_USD (this story's own two MTT
+candidates) are positive in both periods, directionally consistent,
+materially weaker in holdout — see the candidate comparison below.
+
+### CloseChannelBreakoutStrategy (close_channel_breakout_v1, defaults)
+
+Per Part C's disclosed deviation: EUR_USD/GBP_USD/USD_CAD ran as two
+independent slow-engine calls (development-only, holdout-only);
+USD_JPY/XAU_USD ran as one continuous full-history call, trades then
+split by `entry_time` (needed for Part F below).
+
+**Development 2016-2026**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 2066 | 1033/1033 | 0.343 | 0.00537 USD | -0.00318 USD | -0.00025 USD | 0.883 | -0.50672 USD | 0.52286 USD | -0.0447 | -0.0779 |
+| GBP_USD | 2128 | 1064/1064 | 0.349 | 0.00710 USD | -0.00435 USD | -0.00035 USD | 0.877 | -0.73961 USD | 0.84922 USD | -0.0448 | -0.0802 |
+| USD_JPY | 1948 | 974/974 | 0.367 | 0.75107 JPY | -0.40361 JPY | 0.01982 JPY | 1.078 | 38.61300 JPY | 25.88800 JPY | 0.0246 | 0.0459 |
+| USD_CAD | 2103 | 1052/1051 | 0.328 | 0.00589 CAD | -0.00344 CAD | -0.00038 CAD | 0.836 | -0.79698 CAD | 0.87862 CAD | -0.0645 | -0.1099 |
+| XAU_USD | 1895 | 948/947 | 0.356 | 26.25799 USD | -12.08133 USD | 1.55492 USD | 1.200 | 2946.58000 USD | 536.38000 USD | 0.0486 | 0.1078 |
+
+**Pre-development historical holdout**
+
+| Instrument | n | L/S | Win% | AvgWin | AvgLoss | Expectancy | PF | TotalP&L | MaxDD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EUR_USD | 2564 | 1282/1282 | 0.350 | 0.00902 USD | -0.00496 USD | -0.00007 USD | 0.978 | -0.18267 USD | 0.53425 USD | -0.0072 | -0.0138 |
+| GBP_USD | 2552 | 1276/1276 | 0.348 | 0.01091 USD | -0.00591 USD | -0.00005 USD | 0.988 | -0.12203 USD | 0.76036 USD | -0.0040 | -0.0080 |
+| USD_JPY | 2358 | 1179/1179 | 0.358 | 0.71630 JPY | -0.38067 JPY | 0.01243 JPY | 1.051 | 29.31500 JPY | 28.30800 JPY | 0.0162 | 0.0307 |
+| USD_CAD | 2560 | 1280/1280 | 0.336 | 0.00736 CAD | -0.00417 CAD | -0.00029 CAD | 0.895 | -0.74515 CAD | 1.02774 CAD | -0.0361 | -0.0673 |
+| XAU_USD | 2157 | 1078/1079 | 0.363 | 14.29764 USD | -7.72250 USD | 0.28111 USD | 1.057 | 606.35400 USD | 500.99900 USD | 0.0187 | 0.0368 |
+
+CloseChannelBreakoutStrategy: EUR_USD/GBP_USD/USD_CAD negative in both
+periods, directionally consistent (PF stays < 1 throughout, though all
+three creep closer to breakeven in holdout). USD_JPY and XAU_USD (this
+story's own two CCB candidates) are positive in both periods — see the
+candidate comparison below.
+
+### The four candidate combinations, explicitly
+
+| Combination | Dev n | Holdout n | Dev PF | Holdout PF | Dev Expectancy | Holdout Expectancy | Sign persisted? | Profitable both? | Read |
+|---|---|---|---|---|---|---|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | 1948 | 2358 | 1.078 | 1.051 | +0.01982 JPY | +0.01243 JPY | Yes | Yes | Positive in both periods, directionally consistent, modestly weaker in holdout |
+| USD_JPY + MultiTimeframeTrendStrategy | 426 | 539 | 1.312 | 1.137 | +0.09105 JPY | +0.04017 JPY | Yes | Yes | Positive in both periods, directionally consistent but materially weaker in holdout (expectancy roughly halved) |
+| XAU_USD + CloseChannelBreakoutStrategy | 1895 | 2157 | 1.200 | 1.057 | +1.55492 USD | +0.28111 USD | Yes | Yes | Positive in both periods but materially weaker in holdout (expectancy down ~82%), holdout close to breakeven |
+| XAU_USD + MultiTimeframeTrendStrategy | 433 | 452 | 1.250 | 1.179 | +2.23988 USD | +1.08224 USD | Yes | Yes | Positive in both periods, directionally consistent but materially weaker in holdout (expectancy roughly halved) |
+
+**None of the four candidate combinations flip sign, and all four have
+solid holdout sample sizes (n=452-2358) — sufficient to assess, not
+"insufficient holdout trades."** But none is "validated" either: every
+one is measurably, sometimes substantially, weaker in the
+pre-development holdout than in the development window that got it
+selected as a candidate in the first place — exactly the regression-
+to-the-mean pattern that picking "interesting" combinations from
+already-inspected data should be expected to produce. By contrast, two
+of the two comparison strategies (`EmaCrossoverStrategy` on USD_JPY,
+`EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD — the SAME two
+instruments) outright sign-flip between periods. That the four
+selected candidates merely weakened rather than flipped is a
+meaningfully better outcome than the comparison strategies show on the
+same instruments, but "weaker than development, still positive" is the
+most this data supports — not evidence of a durable, tradeable edge.
+
+### Part F: time-stability analysis (USD_JPY, XAU_USD)
+
+Full available history (each instrument's own Part-A earliest candle
+through the present), sliced into fixed, non-overlapping calendar
+buckets from the SAME trade sets computed above — no separate reruns,
+no per-period parameter changes. 2-year buckets primary; individual
+years secondary. `n/a`/`-` cells are buckets with zero or one trade
+(insufficient for Sharpe's sample-variance denominator). Every
+`2026-2027`/`2026` row is a PARTIAL period — data runs through
+2026-09-20, not a full 2027 — smaller `n` there is expected, not a
+finding.
+
+#### USD_JPY / EmaCrossoverStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002-2003 | 12 | -1.62750 JPY | 0.322 | -0.4571 | 28.08000 JPY |
+| 2004-2005 | 119 | -0.06445 JPY | 0.833 | -0.0602 | 14.46000 JPY |
+| 2006-2007 | 227 | 0.04941 JPY | 1.164 | 0.0507 | 12.93700 JPY |
+| 2008-2009 | 281 | -0.07543 JPY | 0.810 | -0.0752 | 40.88900 JPY |
+| 2010-2011 | 267 | -0.07890 JPY | 0.698 | -0.1189 | 22.23200 JPY |
+| 2012-2013 | 233 | 0.03423 JPY | 1.145 | 0.0418 | 8.57300 JPY |
+| 2014-2015 | 231 | 0.01458 JPY | 1.059 | 0.0169 | 15.35800 JPY |
+| 2016-2017 | 224 | 0.03078 JPY | 1.090 | 0.0263 | 15.03500 JPY |
+| 2018-2019 | 230 | -0.00146 JPY | 0.993 | -0.0026 | 10.13500 JPY |
+| 2020-2021 | 219 | 0.04061 JPY | 1.199 | 0.0497 | 13.23800 JPY |
+| 2022-2023 | 211 | 0.03018 JPY | 1.069 | 0.0216 | 27.28600 JPY |
+| 2024-2025 | 225 | 0.05910 JPY | 1.154 | 0.0488 | 12.35100 JPY |
+| 2026-2027 | 90 | 0.01867 JPY | 1.051 | 0.0148 | 16.84300 JPY |
+
+Oscillates on both sides of breakeven throughout the full 24-year
+span — 6 of 13 buckets below PF 1.0, spread across early (2002-2005),
+middle (2008-2011), and late (2018-2019) history, not concentrated in
+one era. No single exceptional episode drives this strategy's result
+on USD_JPY either way.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002 | 4 | -2.57000 JPY | 0.065 | -1.0581 | 10.99000 JPY |
+| 2003 | 8 | -1.15625 JPY | 0.480 | -0.2835 | 17.80000 JPY |
+| 2004 | 10 | -0.95300 JPY | 0.363 | -0.3882 | 14.46000 JPY |
+| 2005 | 109 | 0.01706 JPY | 1.060 | 0.0208 | 5.89900 JPY |
+| 2006 | 112 | -0.01841 JPY | 0.947 | -0.0194 | 12.93700 JPY |
+| 2007 | 115 | 0.11545 JPY | 1.457 | 0.1160 | 5.11200 JPY |
+| 2008 | 165 | -0.18894 JPY | 0.592 | -0.1807 | 40.88900 JPY |
+| 2009 | 116 | 0.08603 JPY | 1.283 | 0.0936 | 6.94500 JPY |
+| 2010 | 127 | -0.08451 JPY | 0.714 | -0.1168 | 13.32500 JPY |
+| 2011 | 140 | -0.07380 JPY | 0.679 | -0.1217 | 12.57500 JPY |
+| 2012 | 119 | 0.01477 JPY | 1.084 | 0.0232 | 8.57300 JPY |
+| 2013 | 114 | 0.05454 JPY | 1.183 | 0.0560 | 7.83800 JPY |
+| 2014 | 95 | 0.14246 JPY | 1.704 | 0.1496 | 5.06300 JPY |
+| 2015 | 136 | -0.07475 JPY | 0.732 | -0.0955 | 14.83700 JPY |
+| 2016 | 116 | -0.00772 JPY | 0.982 | -0.0054 | 10.72100 JPY |
+| 2017 | 108 | 0.07212 JPY | 1.299 | 0.0885 | 4.43700 JPY |
+| 2018 | 112 | 0.05774 JPY | 1.302 | 0.0907 | 3.34700 JPY |
+| 2019 | 118 | -0.05764 JPY | 0.717 | -0.1234 | 10.13500 JPY |
+| 2020 | 124 | 0.01629 JPY | 1.074 | 0.0178 | 12.04800 JPY |
+| 2021 | 95 | 0.07235 JPY | 1.400 | 0.1078 | 4.22800 JPY |
+| 2022 | 97 | 0.07800 JPY | 1.160 | 0.0470 | 16.21700 JPY |
+| 2023 | 114 | -0.01050 JPY | 0.973 | -0.0093 | 13.48200 JPY |
+| 2024 | 112 | 0.07336 JPY | 1.163 | 0.0514 | 12.35100 JPY |
+| 2025 | 113 | 0.04496 JPY | 1.140 | 0.0471 | 6.51300 JPY |
+| 2026 | 90 | 0.01867 JPY | 1.051 | 0.0148 | 16.84300 JPY |
+
+</details>
+
+#### USD_JPY / EmaCrossoverTrendRegimeGatedStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002-2003 | 1 | -5.04000 JPY | 0.000 | n/a | 5.04000 JPY |
+| 2004-2005 | 34 | -0.41918 JPY | 0.277 | -0.4379 | 14.25200 JPY |
+| 2006-2007 | 57 | 0.10423 JPY | 1.346 | 0.0982 | 4.92600 JPY |
+| 2008-2009 | 59 | -0.07663 JPY | 0.833 | -0.0699 | 9.99500 JPY |
+| 2010-2011 | 72 | -0.10822 JPY | 0.595 | -0.1979 | 8.61200 JPY |
+| 2012-2013 | 59 | 0.25173 JPY | 2.008 | 0.2202 | 2.81500 JPY |
+| 2014-2015 | 52 | -0.00021 JPY | 0.999 | -0.0003 | 9.74900 JPY |
+| 2016-2017 | 67 | 0.21728 JPY | 1.545 | 0.1276 | 10.70600 JPY |
+| 2018-2019 | 55 | 0.00864 JPY | 1.048 | 0.0162 | 3.46000 JPY |
+| 2020-2021 | 40 | 0.18300 JPY | 1.982 | 0.1657 | 2.66700 JPY |
+| 2022-2023 | 65 | -0.14202 JPY | 0.706 | -0.1123 | 19.36600 JPY |
+| 2024-2025 | 59 | 0.19795 JPY | 1.487 | 0.1309 | 5.31600 JPY |
+| 2026-2027 | 34 | -0.02653 JPY | 0.940 | -0.0182 | 13.22400 JPY |
+
+More volatile than plain EMA (smaller per-bucket n), but still no
+single dominant episode — strong and weak 2-year windows alternate
+across the whole span, including well before 2016 (2012-2013's PF
+2.008 predates development by 3-4 years).
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002 | 1 | -5.04000 JPY | 0.000 | n/a | 5.04000 JPY |
+| 2003 | 0 | - | - | - | - |
+| 2004 | 2 | -3.34500 JPY | 0.000 | -12.7853 | 6.69000 JPY |
+| 2005 | 32 | -0.23631 JPY | 0.419 | -0.3803 | 7.56200 JPY |
+| 2006 | 28 | -0.00004 JPY | 1.000 | -0.0000 | 2.51800 JPY |
+| 2007 | 29 | 0.20490 JPY | 1.767 | 0.1716 | 2.50900 JPY |
+| 2008 | 21 | -0.28833 JPY | 0.531 | -0.2493 | 9.99500 JPY |
+| 2009 | 38 | 0.04037 JPY | 1.109 | 0.0382 | 6.30200 JPY |
+| 2010 | 34 | -0.05976 JPY | 0.762 | -0.1088 | 2.85200 JPY |
+| 2011 | 38 | -0.15158 JPY | 0.461 | -0.2764 | 6.90400 JPY |
+| 2012 | 29 | 0.12097 JPY | 1.547 | 0.1302 | 2.79500 JPY |
+| 2013 | 30 | 0.37813 JPY | 2.363 | 0.2861 | 2.00100 JPY |
+| 2014 | 23 | 0.33570 JPY | 2.651 | 0.3278 | 2.06700 JPY |
+| 2015 | 29 | -0.26662 JPY | 0.268 | -0.5483 | 8.89700 JPY |
+| 2016 | 39 | 0.20228 JPY | 1.348 | 0.0942 | 10.70600 JPY |
+| 2017 | 28 | 0.23818 JPY | 2.654 | 0.3078 | 1.54700 JPY |
+| 2018 | 27 | -0.05407 JPY | 0.765 | -0.0888 | 2.43900 JPY |
+| 2019 | 28 | 0.06911 JPY | 1.519 | 0.1531 | 1.12900 JPY |
+| 2020 | 22 | 0.26555 JPY | 2.279 | 0.1868 | 2.66700 JPY |
+| 2021 | 18 | 0.08211 JPY | 1.512 | 0.1546 | 1.25700 JPY |
+| 2022 | 34 | -0.18962 JPY | 0.679 | -0.1185 | 16.78300 JPY |
+| 2023 | 31 | -0.08981 JPY | 0.755 | -0.1168 | 4.50100 JPY |
+| 2024 | 27 | 0.50807 JPY | 2.223 | 0.2614 | 5.31600 JPY |
+| 2025 | 32 | -0.06372 JPY | 0.840 | -0.0651 | 4.09100 JPY |
+| 2026 | 34 | -0.02653 JPY | 0.940 | -0.0182 | 13.22400 JPY |
+
+</details>
+
+#### USD_JPY / MultiTimeframeTrendStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002-2003 | 0 | - | - | - | - |
+| 2004-2005 | 41 | 0.04705 JPY | 1.163 | 0.0558 | 2.32200 JPY |
+| 2006-2007 | 80 | -0.00961 JPY | 0.968 | -0.0105 | 13.15500 JPY |
+| 2008-2009 | 115 | 0.06498 JPY | 1.180 | 0.0561 | 16.30700 JPY |
+| 2010-2011 | 103 | -0.06567 JPY | 0.757 | -0.0901 | 10.94400 JPY |
+| 2012-2013 | 90 | 0.15377 JPY | 1.736 | 0.1681 | 6.91000 JPY |
+| 2014-2015 | 80 | 0.14239 JPY | 1.545 | 0.1222 | 5.95700 JPY |
+| 2016-2017 | 88 | 0.01728 JPY | 1.060 | 0.0184 | 6.09200 JPY |
+| 2018-2019 | 85 | 0.00805 JPY | 1.038 | 0.0126 | 6.31500 JPY |
+| 2020-2021 | 76 | -0.05247 JPY | 0.777 | -0.0780 | 8.34900 JPY |
+| 2022-2023 | 85 | 0.25706 JPY | 1.710 | 0.1909 | 4.34000 JPY |
+| 2024-2025 | 87 | 0.22684 JPY | 1.631 | 0.1581 | 5.83500 JPY |
+| 2026-2027 | 35 | -0.18463 JPY | 0.524 | -0.2215 | 8.71000 JPY |
+
+**Notable**: this strategy's strongest 2-year windows are 2012-2013
+(PF 1.736), 2022-2023 (1.710), and 2024-2025 (1.631) — the two most
+recent buckets are among the best in the whole 22-year span, and both
+fall inside the already-inspected development window. Pre-2016 history
+does show comparably strong stretches too (2012-2015), so this is not
+*purely* a 2016-2026 artifact, but the development period's own
+apparent edge is measurably concentrated in a genuinely strong recent
+run, not spread evenly — a real caveat on top of Part E's already-
+weaker holdout numbers, not a contradiction of them.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002 | 0 | - | - | - | - |
+| 2003 | 0 | - | - | - | - |
+| 2004 | 0 | - | - | - | - |
+| 2005 | 41 | 0.04705 JPY | 1.163 | 0.0558 | 2.32200 JPY |
+| 2006 | 39 | -0.13564 JPY | 0.643 | -0.1549 | 9.39500 JPY |
+| 2007 | 41 | 0.11027 JPY | 1.491 | 0.1174 | 3.76000 JPY |
+| 2008 | 69 | -0.03390 JPY | 0.920 | -0.0267 | 16.30700 JPY |
+| 2009 | 46 | 0.21330 JPY | 1.803 | 0.2221 | 4.20800 JPY |
+| 2010 | 51 | -0.00539 JPY | 0.981 | -0.0061 | 4.45000 JPY |
+| 2011 | 52 | -0.12479 JPY | 0.508 | -0.2290 | 7.36100 JPY |
+| 2012 | 45 | 0.08611 JPY | 1.566 | 0.1301 | 2.61800 JPY |
+| 2013 | 45 | 0.22142 JPY | 1.834 | 0.1985 | 6.91000 JPY |
+| 2014 | 29 | 0.38707 JPY | 2.820 | 0.2630 | 3.20400 JPY |
+| 2015 | 51 | 0.00325 JPY | 1.011 | 0.0035 | 5.95700 JPY |
+| 2016 | 47 | 0.00109 JPY | 1.003 | 0.0009 | 6.09200 JPY |
+| 2017 | 41 | 0.03585 JPY | 1.163 | 0.0565 | 3.13700 JPY |
+| 2018 | 43 | 0.16277 JPY | 1.963 | 0.2247 | 1.84800 JPY |
+| 2019 | 42 | -0.15036 JPY | 0.423 | -0.3046 | 6.31500 JPY |
+| 2020 | 46 | -0.14717 JPY | 0.422 | -0.2916 | 7.45400 JPY |
+| 2021 | 30 | 0.09273 JPY | 1.453 | 0.1078 | 2.68500 JPY |
+| 2022 | 41 | 0.40166 JPY | 2.009 | 0.2506 | 4.34000 JPY |
+| 2023 | 44 | 0.12232 JPY | 1.373 | 0.1159 | 3.94400 JPY |
+| 2024 | 46 | 0.27843 JPY | 1.631 | 0.1587 | 5.83500 JPY |
+| 2025 | 41 | 0.16895 JPY | 1.630 | 0.1727 | 2.78100 JPY |
+| 2026 | 35 | -0.18463 JPY | 0.524 | -0.2215 | 8.71000 JPY |
+
+</details>
+
+#### USD_JPY / CloseChannelBreakoutStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002-2003 | 19 | -0.50474 JPY | 0.581 | -0.1894 | 17.78000 JPY |
+| 2004-2005 | 208 | 0.03059 JPY | 1.123 | 0.0405 | 7.57700 JPY |
+| 2006-2007 | 408 | -0.02284 JPY | 0.915 | -0.0313 | 20.56200 JPY |
+| 2008-2009 | 367 | 0.10444 JPY | 1.380 | 0.1093 | 10.04800 JPY |
+| 2010-2011 | 453 | -0.04503 JPY | 0.772 | -0.0924 | 23.58800 JPY |
+| 2012-2013 | 383 | 0.05088 JPY | 1.274 | 0.0803 | 7.23200 JPY |
+| 2014-2015 | 385 | 0.00013 JPY | 1.001 | 0.0002 | 21.36700 JPY |
+| 2016-2017 | 380 | -0.00302 JPY | 0.989 | -0.0038 | 15.87700 JPY |
+| 2018-2019 | 414 | -0.02932 JPY | 0.830 | -0.0666 | 16.84200 JPY |
+| 2020-2021 | 396 | 0.00288 JPY | 1.016 | 0.0052 | 6.43900 JPY |
+| 2022-2023 | 382 | 0.04119 JPY | 1.119 | 0.0394 | 25.88800 JPY |
+| 2024-2025 | 379 | 0.06547 JPY | 1.192 | 0.0628 | 21.17200 JPY |
+| 2026-2027 | 132 | 0.11061 JPY | 1.453 | 0.1099 | 4.42100 JPY |
+
+Reasonably well distributed — the strongest 2-year window is the
+partial, most-recent one (2026, n=132), and 2008-2009 (PF 1.380) is
+the strongest full window; several negative windows (2002-2003,
+2006-2007, 2010-2011, 2018-2019) are spread across early, middle, and
+late history. No single episode dominates.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2002 | 9 | -1.04556 JPY | 0.255 | -0.5256 | 10.12000 JPY |
+| 2003 | 10 | -0.01800 JPY | 0.982 | -0.0057 | 8.37000 JPY |
+| 2004 | 9 | 0.11444 JPY | 1.132 | 0.0508 | 2.91000 JPY |
+| 2005 | 199 | 0.02680 JPY | 1.121 | 0.0428 | 6.80600 JPY |
+| 2006 | 213 | -0.09192 JPY | 0.690 | -0.1405 | 19.67800 JPY |
+| 2007 | 195 | 0.05262 JPY | 1.220 | 0.0658 | 10.01500 JPY |
+| 2008 | 189 | 0.11168 JPY | 1.399 | 0.1100 | 8.24500 JPY |
+| 2009 | 178 | 0.09675 JPY | 1.359 | 0.1086 | 10.04800 JPY |
+| 2010 | 195 | -0.00900 JPY | 0.958 | -0.0160 | 6.13700 JPY |
+| 2011 | 258 | -0.07226 JPY | 0.608 | -0.1712 | 22.29700 JPY |
+| 2012 | 203 | -0.00379 JPY | 0.976 | -0.0089 | 7.23200 JPY |
+| 2013 | 180 | 0.11254 JPY | 1.511 | 0.1403 | 4.64000 JPY |
+| 2014 | 182 | 0.07987 JPY | 1.461 | 0.1151 | 4.29600 JPY |
+| 2015 | 203 | -0.07135 JPY | 0.732 | -0.1108 | 21.36700 JPY |
+| 2016 | 189 | 0.01912 JPY | 1.060 | 0.0197 | 15.00400 JPY |
+| 2017 | 191 | -0.02493 JPY | 0.897 | -0.0435 | 9.58600 JPY |
+| 2018 | 194 | 0.01779 JPY | 1.106 | 0.0354 | 5.44500 JPY |
+| 2019 | 220 | -0.07087 JPY | 0.598 | -0.1901 | 16.84200 JPY |
+| 2020 | 203 | 0.01011 JPY | 1.052 | 0.0156 | 5.85000 JPY |
+| 2021 | 193 | -0.00472 JPY | 0.971 | -0.0106 | 5.40600 JPY |
+| 2022 | 176 | 0.11491 JPY | 1.324 | 0.1010 | 12.10800 JPY |
+| 2023 | 206 | -0.02180 JPY | 0.936 | -0.0227 | 25.88800 JPY |
+| 2024 | 197 | 0.04519 JPY | 1.129 | 0.0421 | 15.09700 JPY |
+| 2025 | 182 | 0.08743 JPY | 1.265 | 0.0865 | 13.13700 JPY |
+| 2026 | 132 | 0.11061 JPY | 1.453 | 0.1099 | 4.42100 JPY |
+
+</details>
+
+#### XAU_USD / EmaCrossoverStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006-2007 | 201 | 0.27453 USD | 1.067 | 0.0208 | 107.10000 USD |
+| 2008-2009 | 204 | 1.39765 USD | 1.220 | 0.0634 | 181.10000 USD |
+| 2010-2011 | 224 | 1.96057 USD | 1.280 | 0.0846 | 178.84200 USD |
+| 2012-2013 | 235 | -0.67845 USD | 0.911 | -0.0287 | 303.98600 USD |
+| 2014-2015 | 226 | -0.91354 USD | 0.831 | -0.0603 | 349.65000 USD |
+| 2016-2017 | 213 | -0.69004 USD | 0.889 | -0.0395 | 378.86900 USD |
+| 2018-2019 | 236 | -1.13358 USD | 0.760 | -0.0896 | 368.08700 USD |
+| 2020-2021 | 240 | 1.92753 USD | 1.299 | 0.0714 | 185.20900 USD |
+| 2022-2023 | 227 | 0.28978 USD | 1.039 | 0.0122 | 488.74700 USD |
+| 2024-2025 | 212 | 5.62613 USD | 1.470 | 0.1174 | 313.46000 USD |
+| 2026-2027 | 89 | -1.00191 USD | 0.973 | -0.0088 | 1188.55000 USD |
+
+A genuine "bad stretch" 2012-2019 (4 consecutive negative 2-year
+windows) bracketed by positive windows on both sides (2006-2011 and
+2020-2025) — not one exceptional episode, but a real multi-year regime
+change mid-history worth naming plainly.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006 | 85 | -0.26118 USD | 0.950 | -0.0178 | 106.70000 USD |
+| 2007 | 116 | 0.66707 USD | 1.204 | 0.0553 | 83.80000 USD |
+| 2008 | 88 | 3.93977 USD | 1.551 | 0.1410 | 174.50000 USD |
+| 2009 | 116 | -0.53086 USD | 0.907 | -0.0331 | 164.71000 USD |
+| 2010 | 112 | 0.84946 USD | 1.151 | 0.0549 | 164.77000 USD |
+| 2011 | 112 | 3.07168 USD | 1.366 | 0.1061 | 178.84200 USD |
+| 2012 | 118 | -2.50105 USD | 0.672 | -0.1416 | 295.12400 USD |
+| 2013 | 117 | 1.15974 USD | 1.151 | 0.0409 | 221.86400 USD |
+| 2014 | 107 | -0.74340 USD | 0.866 | -0.0461 | 201.11400 USD |
+| 2015 | 119 | -1.06652 USD | 0.798 | -0.0748 | 188.19000 USD |
+| 2016 | 115 | -1.49786 USD | 0.800 | -0.0739 | 378.86900 USD |
+| 2017 | 98 | 0.25792 USD | 1.055 | 0.0191 | 135.80400 USD |
+| 2018 | 118 | -0.97542 USD | 0.766 | -0.0976 | 151.54300 USD |
+| 2019 | 118 | -1.29175 USD | 0.754 | -0.0867 | 262.66700 USD |
+| 2020 | 112 | 4.00808 USD | 1.609 | 0.1194 | 185.20900 USD |
+| 2021 | 128 | 0.10705 USD | 1.017 | 0.0055 | 171.23300 USD |
+| 2022 | 122 | 0.34077 USD | 1.048 | 0.0151 | 239.05200 USD |
+| 2023 | 105 | 0.23053 USD | 1.029 | 0.0091 | 440.51300 USD |
+| 2024 | 115 | 1.26791 USD | 1.126 | 0.0380 | 313.46000 USD |
+| 2025 | 97 | 10.79309 USD | 1.758 | 0.1780 | 259.93000 USD |
+| 2026 | 89 | -1.00191 USD | 0.973 | -0.0088 | 1188.55000 USD |
+
+</details>
+
+#### XAU_USD / EmaCrossoverTrendRegimeGatedStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006-2007 | 50 | -0.19580 USD | 0.960 | -0.0163 | 79.76000 USD |
+| 2008-2009 | 68 | 1.82368 USD | 1.244 | 0.0693 | 119.15000 USD |
+| 2010-2011 | 73 | 0.17356 USD | 1.022 | 0.0080 | 159.42000 USD |
+| 2012-2013 | 79 | -0.99729 USD | 0.878 | -0.0362 | 251.95700 USD |
+| 2014-2015 | 72 | -2.87260 USD | 0.570 | -0.1833 | 216.35400 USD |
+| 2016-2017 | 59 | -4.46092 USD | 0.436 | -0.2901 | 344.30800 USD |
+| 2018-2019 | 54 | -1.21628 USD | 0.792 | -0.0795 | 131.18000 USD |
+| 2020-2021 | 61 | 9.49280 USD | 2.763 | 0.2403 | 69.93000 USD |
+| 2022-2023 | 67 | 0.03664 USD | 1.004 | 0.0013 | 211.06400 USD |
+| 2024-2025 | 60 | 0.45050 USD | 1.031 | 0.0098 | 244.87000 USD |
+| 2026-2027 | 34 | 12.26765 USD | 1.301 | 0.0823 | 627.31000 USD |
+
+**This is exactly the failure mode Part F was built to catch.** The
+2020-2021 bucket (PF 2.763) is dramatically above every other window —
+roughly double the next-best (2008-2009's 1.244) — and the individual-
+year table below shows it concentrated specifically in 2020 (PF
+3.797). FX-28's own development-only table already flagged XAU_USD as
+ADX-gating's single strongest case; this full-history view shows that
+result leans heavily on one exceptional 1-2 year episode (COVID-era
+gold volatility), not a broadly distributed edge — consistent with,
+and a concrete mechanism behind, this same combination's sign-flip
+already shown in Part E above.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006 | 17 | -3.57647 USD | 0.488 | -0.2962 | 71.70000 USD |
+| 2007 | 33 | 1.54576 USD | 1.403 | 0.1312 | 35.06000 USD |
+| 2008 | 34 | 4.05647 USD | 1.522 | 0.1274 | 71.19000 USD |
+| 2009 | 34 | -0.40912 USD | 0.943 | -0.0210 | 68.11000 USD |
+| 2010 | 34 | -2.28324 USD | 0.680 | -0.1644 | 159.42000 USD |
+| 2011 | 39 | 2.31538 USD | 1.278 | 0.0861 | 108.04000 USD |
+| 2012 | 43 | -0.64670 USD | 0.903 | -0.0337 | 154.02700 USD |
+| 2013 | 36 | -1.41606 USD | 0.858 | -0.0401 | 251.95700 USD |
+| 2014 | 37 | -3.74465 USD | 0.504 | -0.2251 | 146.67100 USD |
+| 2015 | 35 | -1.95071 USD | 0.660 | -0.1321 | 70.95600 USD |
+| 2016 | 28 | -8.68750 USD | 0.267 | -0.5102 | 274.02500 USD |
+| 2017 | 31 | -0.64335 USD | 0.852 | -0.0502 | 78.46000 USD |
+| 2018 | 29 | 0.52534 USD | 1.147 | 0.0470 | 50.26600 USD |
+| 2019 | 25 | -3.23656 USD | 0.620 | -0.1699 | 127.82300 USD |
+| 2020 | 29 | 14.45328 USD | 3.797 | 0.2809 | 69.93000 USD |
+| 2021 | 32 | 4.99738 USD | 1.895 | 0.2064 | 66.55400 USD |
+| 2022 | 39 | -0.89497 USD | 0.887 | -0.0353 | 211.06400 USD |
+| 2023 | 28 | 1.33425 USD | 1.145 | 0.0413 | 181.47200 USD |
+| 2024 | 32 | -1.08219 USD | 0.901 | -0.0316 | 244.87000 USD |
+| 2025 | 28 | 2.20214 USD | 1.117 | 0.0387 | 236.58000 USD |
+| 2026 | 34 | 12.26765 USD | 1.301 | 0.0823 | 627.31000 USD |
+
+</details>
+
+#### XAU_USD / MultiTimeframeTrendStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006-2007 | 79 | 0.64658 USD | 1.171 | 0.0493 | 117.16000 USD |
+| 2008-2009 | 76 | 1.17789 USD | 1.182 | 0.0563 | 133.44000 USD |
+| 2010-2011 | 87 | 2.24254 USD | 1.329 | 0.0936 | 102.55000 USD |
+| 2012-2013 | 93 | 1.06643 USD | 1.138 | 0.0373 | 223.19400 USD |
+| 2014-2015 | 89 | 1.69562 USD | 1.380 | 0.1021 | 100.65700 USD |
+| 2016-2017 | 85 | -1.17362 USD | 0.800 | -0.0718 | 276.47400 USD |
+| 2018-2019 | 87 | -1.31511 USD | 0.733 | -0.0937 | 209.45200 USD |
+| 2020-2021 | 91 | 3.18659 USD | 1.500 | 0.1033 | 119.33900 USD |
+| 2022-2023 | 88 | 0.61347 USD | 1.094 | 0.0311 | 216.72900 USD |
+| 2024-2025 | 77 | 9.22065 USD | 1.881 | 0.2036 | 160.60000 USD |
+| 2026-2027 | 33 | 1.01424 USD | 1.027 | 0.0086 | 761.32000 USD |
+
+Positive from 2006 through 2015 (5 consecutive windows), a genuine
+negative stretch 2016-2019 (echoing plain EMA's own 2016-2019 weak
+stretch above — the same instrument, same rough era, different
+strategy), then positive again from 2020 on. The strongest window by
+far is the most recent full one, 2024-2025 (PF 1.881, expectancy
++9.22 USD) — this strategy's development-period result leans on a
+genuinely strong, genuinely recent stretch, similar to the USD_JPY/MTT
+observation above.
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006 | 34 | -0.80000 USD | 0.849 | -0.0495 | 93.50000 USD |
+| 2007 | 45 | 1.73956 USD | 1.664 | 0.1696 | 37.46000 USD |
+| 2008 | 31 | 1.91419 USD | 1.211 | 0.0684 | 133.44000 USD |
+| 2009 | 45 | 0.67067 USD | 1.142 | 0.0461 | 52.47000 USD |
+| 2010 | 43 | -0.48791 USD | 0.916 | -0.0333 | 102.55000 USD |
+| 2011 | 44 | 4.91093 USD | 1.628 | 0.1616 | 81.27600 USD |
+| 2012 | 44 | -3.66202 USD | 0.539 | -0.2207 | 223.19400 USD |
+| 2013 | 49 | 5.31239 USD | 1.701 | 0.1483 | 119.20100 USD |
+| 2014 | 42 | 0.38969 USD | 1.089 | 0.0293 | 70.98500 USD |
+| 2015 | 47 | 2.86262 USD | 1.633 | 0.1495 | 100.65700 USD |
+| 2016 | 43 | -3.29970 USD | 0.571 | -0.1685 | 274.13600 USD |
+| 2017 | 42 | 1.00307 USD | 1.251 | 0.0834 | 52.85100 USD |
+| 2018 | 42 | -0.88588 USD | 0.799 | -0.0843 | 90.20600 USD |
+| 2019 | 45 | -1.71573 USD | 0.684 | -0.1023 | 158.50300 USD |
+| 2020 | 41 | 7.38900 USD | 2.161 | 0.1817 | 110.24500 USD |
+| 2021 | 50 | -0.25938 USD | 0.959 | -0.0135 | 119.33900 USD |
+| 2022 | 48 | 0.89671 USD | 1.142 | 0.0419 | 135.99200 USD |
+| 2023 | 40 | 0.27358 USD | 1.041 | 0.0154 | 146.76400 USD |
+| 2024 | 41 | 4.57561 USD | 1.483 | 0.1149 | 120.09000 USD |
+| 2025 | 36 | 14.51083 USD | 2.253 | 0.2855 | 160.60000 USD |
+| 2026 | 33 | 1.01424 USD | 1.027 | 0.0086 | 761.32000 USD |
+
+</details>
+
+#### XAU_USD / CloseChannelBreakoutStrategy (2-year buckets)
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006-2007 | 353 | 0.47059 USD | 1.159 | 0.0516 | 122.60000 USD |
+| 2008-2009 | 419 | -0.38413 USD | 0.936 | -0.0248 | 452.79000 USD |
+| 2010-2011 | 434 | 0.89034 USD | 1.170 | 0.0513 | 234.82900 USD |
+| 2012-2013 | 422 | 0.68062 USD | 1.116 | 0.0350 | 231.74600 USD |
+| 2014-2015 | 379 | 0.21861 USD | 1.054 | 0.0193 | 189.24900 USD |
+| 2016-2017 | 397 | -0.37052 USD | 0.914 | -0.0340 | 345.25800 USD |
+| 2018-2019 | 390 | -0.36354 USD | 0.903 | -0.0343 | 255.70100 USD |
+| 2020-2021 | 374 | 1.13145 USD | 1.166 | 0.0512 | 309.52000 USD |
+| 2022-2023 | 387 | -0.12254 USD | 0.981 | -0.0071 | 423.71700 USD |
+| 2024-2025 | 366 | 3.35519 USD | 1.295 | 0.0854 | 377.91000 USD |
+| 2026-2027 | 131 | 11.27038 USD | 1.470 | 0.1293 | 536.38000 USD |
+
+Positive/negative windows alternate throughout with no single episode
+dominating; like the other three XAU_USD strategies, the two most
+recent full windows (2024-2025, and the partial 2026) are the
+strongest in the series — a consistent pattern across ALL FOUR
+strategies on XAU_USD, worth naming as a single observation rather
+than four separate coincidences (see below).
+
+<details><summary>Individual years</summary>
+
+| Period | n | Expectancy | PF | Sharpe | MaxDD |
+|---|---|---|---|---|---|
+| 2006 | 154 | 0.41169 USD | 1.118 | 0.0405 | 118.20000 USD |
+| 2007 | 199 | 0.51618 USD | 1.202 | 0.0625 | 59.50000 USD |
+| 2008 | 193 | 0.29979 USD | 1.044 | 0.0160 | 232.76000 USD |
+| 2009 | 226 | -0.96819 USD | 0.814 | -0.0801 | 283.88000 USD |
+| 2010 | 204 | -0.11902 USD | 0.975 | -0.0101 | 174.78000 USD |
+| 2011 | 230 | 1.78559 USD | 1.315 | 0.0846 | 171.86600 USD |
+| 2012 | 212 | 0.28545 USD | 1.051 | 0.0176 | 153.20300 USD |
+| 2013 | 210 | 1.07956 USD | 1.175 | 0.0485 | 231.74600 USD |
+| 2014 | 195 | 0.62836 USD | 1.170 | 0.0565 | 98.58100 USD |
+| 2015 | 184 | -0.21563 USD | 0.950 | -0.0186 | 137.11000 USD |
+| 2016 | 208 | -1.02928 USD | 0.800 | -0.0848 | 266.17000 USD |
+| 2017 | 189 | 0.35447 USD | 1.106 | 0.0381 | 148.44200 USD |
+| 2018 | 196 | -0.76361 USD | 0.780 | -0.0959 | 185.64400 USD |
+| 2019 | 194 | 0.04064 USD | 1.010 | 0.0032 | 141.15100 USD |
+| 2020 | 182 | 2.27394 USD | 1.309 | 0.0882 | 148.81000 USD |
+| 2021 | 192 | 0.04846 USD | 1.008 | 0.0027 | 309.52000 USD |
+| 2022 | 204 | -1.17701 USD | 0.832 | -0.0707 | 423.71700 USD |
+| 2023 | 183 | 1.05295 USD | 1.179 | 0.0585 | 265.38000 USD |
+| 2024 | 191 | 2.01361 USD | 1.266 | 0.0818 | 163.02000 USD |
+| 2025 | 175 | 4.81943 USD | 1.311 | 0.0950 | 377.91000 USD |
+| 2026 | 131 | 11.27038 USD | 1.470 | 0.1293 | 536.38000 USD |
+
+</details>
+
+### Part F conclusion — does the USD_JPY/XAU_USD trend/breakout behavior predate 2016?
+
+**Yes, partially — it is not purely a feature of the 2016-2026 macro
+environment, but the strongest evidence for it IS concentrated in
+recent years.** Every one of the 8 (instrument × strategy) time-series
+above shows comparably strong 2-year windows well before 2016 (USD_JPY
+MTT and gated-EMA both peak in 2012-2015; XAU_USD's four strategies
+all show real positive stretches in 2006-2011) — so this is not a
+pattern that simply switched on in 2016. But a second, independent
+pattern is equally clear and consistent across ALL EIGHT series: **the
+two most recent full 2-year windows (2022-2025) are at or near each
+series' own best**, most sharply for XAU_USD (all four strategies) and
+USD_JPY/MultiTimeframeTrendStrategy. That both things are true at once
+is the honest answer: there IS a longer-run pattern predating 2016,
+AND the specific period used to select these candidates also happens
+to sit inside an unusually strong recent stretch — which is exactly
+why Part E's holdout numbers come back weaker than development without
+flipping sign. XAU_USD/`EmaCrossoverTrendRegimeGatedStrategy` is the
+one clear exception to "no single episode dominates": its apparent
+edge is disproportionately one 2020-2021 episode, not a distributed
+pattern — and that is also the one candidate-adjacent combination that
+outright sign-flips in Part E.

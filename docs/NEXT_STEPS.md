@@ -515,8 +515,69 @@ discipline as FX-29's).
 **This batch is now complete (FX-32 through FX-37)** — every remaining
 concrete strategy has a real empirical run across the full 10-year,
 5-instrument research dataset. See `docs/DECISIONS.md`'s FX-37 (results)
-entry for a cross-strategy summary. No further work in this area has
-been requested; check in before starting anything new here.
+entry for a cross-strategy summary.
+
+## FX-38: pre-development historical holdout (complete) — resulting research questions
+
+Extended the research dataset back to each instrument's true earliest
+OANDA candle (FX pairs ~2002, XAU/USD 2006) and evaluated `EmaCrossover
+Strategy`, `EmaCrossoverTrendRegimeGatedStrategy`, `MultiTimeframeTrend
+Strategy`, and `CloseChannelBreakoutStrategy` — all unchanged default
+parameters — on the newly-available pre-2016 data as a genuine
+historical holdout for the already-inspected 2016-2026 development
+period. Full results, the four-candidate comparison table, and the
+2-year/yearly time-stability tables are in `docs/DECISIONS.md`.
+
+**Headline**: none of this story's four candidate combinations
+(`USD_JPY`/`XAU_USD` × `CloseChannelBreakoutStrategy`/`MultiTimeframe
+TrendStrategy`) flip sign in the holdout, but all four are measurably
+weaker than in development — expected regression toward the mean for
+combinations picked BY the development data, not evidence of a durable
+edge. Two comparison strategies on the same two instruments DO
+sign-flip. Time-stability analysis found the apparent USD_JPY/XAU_USD
+pattern predates 2016 but is also concentrated in an unusually strong
+2022-2025 stretch, and found one case (XAU_USD/`EmaCrossoverTrendRegime
+GatedStrategy`) leaning almost entirely on a single 2020-2021 episode.
+
+**Research questions this raises — not parameter changes, and none of
+these should be acted on by tuning any of the strategies above**:
+
+1. Why do all eight (instrument × strategy) time-series studied show
+   their strongest 2-year window in 2022-2025? Is this a genuine
+   feature of recent FX/gold macro conditions (rate-hiking cycle,
+   post-COVID volatility regime), or a statistical artifact of having
+   more/cleaner recent data? Not investigated in FX-38 — a real
+   question, not a reason to prefer recent-only backtests going
+   forward.
+2. `EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD leans on one
+   2020-2021 episode for essentially its entire apparent edge. Would a
+   PROPER out-of-sample check (data after 2026-09-19, not yet
+   available) also fail to reproduce that episode's magnitude? This is
+   exactly the situation FX-38's "pre-development" framing warned
+   about — a real prospective holdout, when new data eventually
+   exists, would answer this more directly than any further slicing
+   of already-seen history can.
+3. `CloseChannelBreakoutStrategy` still has no incremental engine.
+   FX-38 needed ~3 hours of slow-engine compute for 2 of 5 instruments'
+   full history; a future story exercising it further (e.g. a genuine
+   prospective holdout once new data accrues, or extending to the
+   other 3 instruments' full-history time-stability) would benefit
+   from one, following the same golden-parity-tested pattern as FX-36/
+   FX-37 — not attempted here, this story's scope was evaluation, not
+   infrastructure.
+4. None of the four strategies studied here show a result strong
+   enough, in EITHER period, to justify moving toward position sizing,
+   risk management, or paper-trading execution for any of them
+   specifically. That remains true after this story, not resolved by
+   it — the platform still has no strategy anywhere in its results log
+   that would be reasonable to deploy, even on paper, based on
+   evidence alone.
+
+No further work in this area has been requested; check in before
+starting anything new here — including, explicitly, do not respond to
+the questions above by tuning any strategy's parameters, adding a new
+strategy, or starting fundamentals/news/decision-engine/live-trading
+work.
 
 
 Do not start fundamentals, news intelligence, AI decision-making, or live

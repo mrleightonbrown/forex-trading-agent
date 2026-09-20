@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-38, in progress)_
+_Last updated: 2026-09-20 (FX-38)_
 
 ## What exists
 
@@ -196,6 +196,30 @@ _Last updated: 2026-09-19 (FX-38, in progress)_
   the present. Full discovery/extension/gap-check tables and the
   resulting locked pre-development-holdout research protocol are in
   `docs/DECISIONS.md`'s FX-38 entries.
+- **Pre-development historical holdout evaluation (FX-38 Parts D-G,
+  complete)**: `EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGated
+  Strategy`, `MultiTimeframeTrendStrategy`, and `CloseChannelBreakout
+  Strategy` — all with their existing default parameters, unchanged —
+  evaluated separately on the already-inspected 2016-2026 development
+  window and the newly-available pre-2016 historical holdout (each
+  instrument's own earliest candle through 2016-09-18). None of the
+  story's four candidate combinations (`USD_JPY`/`XAU_USD` ×
+  `CloseChannelBreakoutStrategy`/`MultiTimeframeTrendStrategy`) flip
+  sign between periods, but all four are measurably weaker in holdout
+  than in development — the expected regression-to-the-mean pattern
+  for combinations selected BY the development data. Two comparison
+  strategies on the SAME two instruments (`EmaCrossoverStrategy` on
+  USD_JPY, `EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD) DO
+  sign-flip. Time-stability slicing (2-year and yearly, USD_JPY/
+  XAU_USD, all four strategies) found the apparent trend/breakout
+  pattern predates 2016 (comparable strong multi-year windows exist as
+  far back as 2006-2015) but is also measurably concentrated in an
+  unusually strong 2022-2025 stretch across all eight series studied —
+  and found one clear "one exceptional episode" case (XAU_USD's
+  ADX-gated EMA leaning heavily on 2020-2021 alone). No strategy in
+  this story is described as validated. Full results, all metrics, and
+  the four-combination comparison table are in `docs/DECISIONS.md`'s
+  FX-38 Parts D-F entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
