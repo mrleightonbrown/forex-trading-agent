@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-32)_
+_Last updated: 2026-09-19 (FX-33)_
 
 ## What exists
 
@@ -242,7 +242,10 @@ _Last updated: 2026-09-19 (FX-32)_
   *naturally* (not specifically contrived for it) exercised FX-11H's
   final-bar-not-actionable rule — the series' last hypothesis lands on
   the final candle and is correctly dropped — and against live OANDA
-  practice candles.
+  practice candles. Run across the full 10-year, 5-instrument research
+  dataset (FX-33), default params: unprofitable on 4 of 5 instruments
+  (profit factor 0.73-0.97) at n=6,000+ trades each; `XAU_USD` the one
+  exception, marginally profitable — see `docs/DECISIONS.md`.
 - `MeanReversionStrategy` (`forex_agent.domain.strategies.
   mean_reversion`, `strategy_key="mean_reversion_v1"`) — the fourth
   concrete `Strategy` (FX-19), and the first to actually emit

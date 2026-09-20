@@ -2657,3 +2657,37 @@ strategies exist to catch.
 empirical analysis, no new production code. Timed: ~30s/instrument,
 ~10 minutes total for all three non-trivial control strategies across
 all 5 instruments.
+
+## 2026-09-19 — Research dataset run 2/6: FX-33, TimeSeriesMomentumStrategy
+
+`TimeSeriesMomentumStrategy` (FX-16), default parameters
+(`lookback=20`, `threshold=0`): O(1) per call (direct indexing —
+`candles[-1]`/`candles[-(lookback+1)]`, no full-list rescans), timed
+directly at ~30s/instrument, same profile as the controls — no
+incremental engine needed.
+
+**Results, full 10-year H1, all 5 instruments:**
+
+| Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| EUR_USD | 6056 | 0.295 | -0.00015 USD | 0.854 | -0.047 |
+| GBP_USD | 6166 | 0.285 | -0.00026 USD | 0.817 | -0.057 |
+| USD_JPY | 6148 | 0.292 | -0.00328 JPY | 0.974 | -0.007 |
+| USD_CAD | 6482 | 0.267 | -0.00031 CAD | 0.734 | -0.090 |
+| XAU_USD | 5895 | 0.303 | +0.22268 USD | 1.057 | +0.012 |
+
+**Findings**: unprofitable on 4 of 5 instruments (profit factor
+0.73-0.97, negative Sharpe, negative expectancy) at a large sample
+size (n=6,000-6,500 per instrument — comparable in scale to FX-32's
+own decisive result). `XAU_USD` is the one exception: marginally
+profitable (profit factor 1.057, Sharpe +0.012), though the margin is
+thin enough that "marginally positive" is a fair characterization, not
+"a real edge" — worth noting rather than either dismissing or
+overselling. Directionally consistent with FX-32's `PreviousBarDirection`
+finding: simple H1 momentum, in either its 1-bar (control) or 20-bar
+(this story) form, does not clear transaction costs on FX pairs in
+this dataset; gold is the one instrument where trend-following
+patterns come closer to (or, here, just past) breaking even.
+
+**Verification**: existing pipeline unmodified, pure empirical
+analysis. ~30s/instrument, ~3 minutes total.

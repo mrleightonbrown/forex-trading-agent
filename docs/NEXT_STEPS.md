@@ -453,9 +453,16 @@ discipline as FX-29's).
    own flagged-as-too-small samples. Naive previous-bar momentum-
    chasing is not a free edge at H1; the effect is large and consistent
    enough to trust. Full table in `docs/DECISIONS.md`.
-2. `FX-33` — `TimeSeriesMomentumStrategy` (FX-16). O(1)/call (direct
-   indexing, no full-list rescans) — same cheap-as-controls profile,
-   timed directly (~30s/instrument extrapolated). Not yet started.
+2. ~~`FX-33` — `TimeSeriesMomentumStrategy` (FX-16)~~ — complete. O(1)/
+   call (direct indexing, no full-list rescans), ~30s/instrument, no
+   incremental engine needed. Default params (lookback=20, threshold=0):
+   unprofitable on 4 of 5 instruments (profit factor 0.73-0.97) at
+   n=6,000-6,500 trades each; `XAU_USD` the one exception, marginally
+   profitable (profit factor 1.057) — a thin margin, not a strong edge.
+   Directionally consistent with FX-32: simple H1 momentum doesn't
+   clear transaction costs on FX pairs in this dataset; gold comes
+   closest to (here, just past) breakeven. Full table in
+   `docs/DECISIONS.md`.
 3. `FX-34` — `CloseChannelBreakoutStrategy` (FX-15). O(n)/call (builds
    a full closes list every call even though only the tail is used) —
    ~7.6 min/instrument extrapolated, ~38 min total; tolerable for a
