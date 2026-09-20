@@ -33,6 +33,12 @@ from forex_agent.domain.strategies.ema_crossover_trend_regime_gated import (
 from forex_agent.domain.strategies.ema_crossover_trend_regime_gated_incremental import (
     IncrementalEmaCrossoverTrendRegimeGatedStrategy,
 )
+from forex_agent.domain.strategies.volatility_expansion import (
+    VolatilityExpansionBreakoutStrategy,
+)
+from forex_agent.domain.strategies.volatility_expansion_incremental import (
+    IncrementalVolatilityExpansionBreakoutStrategy,
+)
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.domain.trade_side import TradeSide
 from forex_agent.domain.trade_simulation import simulate_trades
@@ -81,6 +87,20 @@ def test_ema_crossover_golden_parity() -> None:
     )
 
     assert len(slow_trades) > 5, "fixture must actually exercise several trades"
+    assert _fingerprints(slow_trades) == _fingerprints(fast_trades)
+
+
+def test_volatility_expansion_breakout_golden_parity() -> None:
+    slow = VolatilityExpansionBreakoutStrategy(
+        short_period=3, long_period=7, breakout_lookback=5, expansion_threshold=Decimal("1.2")
+    )
+    fast = IncrementalVolatilityExpansionBreakoutStrategy(
+        short_period=3, long_period=7, breakout_lookback=5, expansion_threshold=Decimal("1.2")
+    )
+    slow_trades = simulate_trades(run_backtest(slow, _CANDLES), _CANDLES)
+    fast_trades = simulate_trades(run_backtest_incremental(fast, _CANDLES), _CANDLES)
+
+    assert len(slow_trades) > 2, "fixture must actually exercise several trades"
     assert _fingerprints(slow_trades) == _fingerprints(fast_trades)
 
 
