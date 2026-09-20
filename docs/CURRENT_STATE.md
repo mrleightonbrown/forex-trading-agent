@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-37)_
+_Last updated: 2026-09-19 (FX-38, in progress)_
 
 ## What exists
 
@@ -180,6 +180,22 @@ _Last updated: 2026-09-19 (FX-37)_
   Surfaced FX-27H.1 (above) — the gap check's own first run had one
   false-positive "gap" per series, from `DetectDataGaps` itself, not the
   data; fixed before trusting the rest of the results.
+- **Research dataset extended backward (FX-38 Part A/B)**:
+  `scripts/discover_historical_coverage.py` (new) binary-searches each
+  series' true earliest OANDA candle rather than assuming one;
+  `scripts/extend_research_dataset_pre2016.py` (new) backfills to it via
+  the same unmodified `BackfillCandles`. Actual earliest H1 candle: the
+  four FX pairs 2002-05-06/07 (not materially different from each
+  other), XAU/USD 2006-03-19 (genuinely, not artificially, ~4 years
+  later). +376,748 candles total. Each series' opening stretch is real
+  but sparse (~5% of normal density for the FX pairs through 2004,
+  ~15% for XAU/USD through 2006) before settling to the same gap
+  signature the already-trusted 2016-2026 range already has, from
+  ~2005 (FX)/~2007 (XAU) onward — disclosed, not excluded. Coverage now
+  spans each instrument's own true earliest-available candle through
+  the present. Full discovery/extension/gap-check tables and the
+  resulting locked pre-development-holdout research protocol are in
+  `docs/DECISIONS.md`'s FX-38 entries.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

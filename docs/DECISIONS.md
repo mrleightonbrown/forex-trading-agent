@@ -2908,3 +2908,196 @@ trustworthy edge across all 5 instruments.
 
 **Verification**: golden-parity-tested incremental engine (previous
 commit). This run: ~3s/instrument, ~15 seconds total for all 5.
+
+## 2026-09-19 — FX-38 Parts A-C: historical coverage discovery, dataset extension, locked pre-development holdout protocol
+
+**Context**: FX-32 through FX-37's results have already been inspected
+and used to pick interesting strategy/instrument combinations (USD_JPY
+and XAU_USD with `CloseChannelBreakoutStrategy`/`MultiTimeframeTrend
+Strategy`). That makes 2016-2026 development/exploratory data, not an
+untouched validation set — this story extends the dataset further back
+and evaluates the SAME unchanged strategies on the newly-available
+pre-2016 history as a genuine previously-unseen historical holdout.
+
+### Part A — actual earliest OANDA availability, discovered not assumed
+
+`scripts/discover_historical_coverage.py` (new): bounded, deterministic
+binary search per `(instrument, granularity)` between a hardcoded,
+deliberately absurd 1990-01-01 lower bound (confirmed empty for
+EUR/USD H1 before writing the search) and each series' own currently
+recorded earliest ingestion watermark (reused as the known-good upper
+bound, not "2016-09-19" hardcoded). Each probe is an ordinary
+`OandaMarketDataAdapter.get_candles(start, end)` call over a 60-day
+window — no adapter changes, no new query mode. After convergence, a
+wider extraction query pins down the exact earliest candle and, from
+the same response, a density read on the opening ~90 days. A
+monotonicity spot-check (a full year before the discovered boundary
+must still be empty) ran for every series and held for all 10.
+
+| Instrument | Granularity | Earliest candle (UTC) | Opening-era density (~90d) |
+|---|---|---|---|
+| EUR_USD | H1 | 2002-05-06T20:00:00 | 5.3% |
+| EUR_USD | H4 | 2002-05-07T17:00:00 | 21.0% |
+| GBP_USD | H1 | 2002-05-06T20:00:00 | 5.1% |
+| GBP_USD | H4 | 2002-05-07T17:00:00 | 20.2% |
+| USD_JPY | H1 | 2002-05-06T20:00:00 | 5.3% |
+| USD_JPY | H4 | 2002-05-07T17:00:00 | 21.0% |
+| USD_CAD | H1 | 2002-05-07T20:00:00 | 5.1% |
+| USD_CAD | H4 | 2002-05-08T17:00:00 | 18.8% |
+| XAU_USD | H1 | 2006-03-19T20:00:00 | 99.6% |
+| XAU_USD | H4 | 2006-03-19T22:00:00 | 104.2% |
+
+H1 vs. H4 start dates are NOT materially different for any instrument
+(0-1 day apart) — H4 simply needs its own first bar to have closed.
+The four FX pairs all technically begin within a two-day window of each
+other (2002-05-06/07); XAU/USD begins nearly 4 years later
+(2006-03-19), a real, not manufactured, difference — accepted as fact,
+not forced onto a common start date.
+
+**The opening-era density numbers above are the "obvious provider gap
+near the beginning" Part A asks for.** A supplementary year-by-year
+density probe (90-day Jan-Mar windows, same live adapter, not
+committed as reusable infrastructure — a one-off characterization) found
+where each series' density actually stabilizes:
+
+- EUR_USD H1 (representative of all 4 FX pairs, confirmed structurally
+  identical start dates and same order-of-magnitude opening density):
+  2002 0.0% → 2003 5.5% → 2004 5.1% → **2005 103.4%** → stable ~100-105%
+  every year through 2010. A real ~2.5-year thin/ramp-up era, then dense.
+- XAU_USD: 2006 15.4% → **2007 98.8%** → stable ~97-101% through 2009. A
+  shorter ~10-month thin era.
+
+This is a genuine OANDA provider characteristic (electronic FX/gold
+feed maturity in the early-to-mid 2000s), not a backfill defect —
+consistent with, and not contradicted by, the gap-check findings below.
+
+### Part B — dataset extended backward; existing 2016-2026 data untouched
+
+`scripts/extend_research_dataset_pre2016.py` (new): calls the existing,
+unmodified `BackfillCandles` (FX-26) with each series' Part-A-discovered
+earliest boundary as `start` — `BackfillCandles` already has backward
+extension as a first-class case (`_extend_backward`, FX-26), so this is
+pure reuse, not new backfill logic. Same OANDA Practice, bid+ask,
+`CandleSource.NATIVE`, canonical H4 NY/DST alignment, pagination,
+idempotent upsert, watermark, and separate backfill-lock (FX-31H)
+machinery as every prior backfill in this project — nothing new needed.
+Ran cleanly in one pass, no interruption:
+
+| Instrument | New H1 candles | New H4 candles | Now covers (H1) |
+|---|---|---|---|
+| EUR_USD | 76,421 | 20,325 | 2002-05-06 → 2026-09-20 |
+| GBP_USD | 76,208 | 20,217 | 2002-05-06 → 2026-09-20 |
+| USD_JPY | 76,305 | 20,251 | 2002-05-06 → 2026-09-20 |
+| USD_CAD | 76,096 | 20,163 | 2002-05-07 → 2026-09-20 |
+| XAU_USD | 65,673 | 17,063 | 2006-03-19 → 2026-09-20 |
+
+(Counts include a small forward top-up to "now" too, same as any
+`BackfillCandles` call with `end=now` — the pre-existing 2016-2026
+portion itself was never re-fetched or altered, per FX-26's own
+watermark-driven idempotency.)
+
+**Gap-check** (`scripts/check_research_dataset_gaps.py`, unmodified,
+run over each series' full new range): 438,494 raw missing candle
+slots, 86,911 unexplained after weekly-closure filtering. Every prior
+research-dataset gap-check (FX-27H.1) already established this script's
+own known, named limitation — no holiday calendar, so a holiday closure
+always shows up as "unexplained" — and that limitation, not a defect,
+explains the bulk of this too. A year-by-year breakdown (EUR_USD and
+XAU_USD shown, representative) confirms the SAME pattern found in
+Part A independently, from a completely different angle (gap counts,
+not density sampling):
+
+- EUR_USD: 2002 (3,938) / 2003 (6,003) / 2004 (6,025) unexplained gaps —
+  the thin ramp-up era, then **2005: 0** — a perfectly clean year — then
+  a steady ~20-60/year baseline (holiday closures, FX-27H.1's own
+  already-understood signature) all the way through 2026, INCLUDING the
+  already-trusted 2016-2026 range unchanged from before this story.
+- XAU_USD: elevated but declining 2006-2011 (122→42), the same
+  thin-ramp-up signature; 2012 onward stabilizes near ~350/year — this
+  is FX-27H.1's own already-documented daily-settlement-gap signature
+  (gold doesn't continue trading through OANDA's NY 17:00 rollover the
+  way FX pairs do), confirmed there as a real provider characteristic,
+  not new here.
+
+**Conclusion, consistent with Part A**: the newly-added history is
+genuinely usable from ~2005 (FX pairs) / ~2007 (XAU/USD) onward, with a
+real, disclosed thin/unreliable stretch before that — not silently
+smoothed over. No gaps were discovered outside the two already-
+recognized categories (thin-era sparsity, holiday/settlement closures);
+the already-existing 2016-2026 data shows an unchanged gap signature,
+confirming this extension didn't disturb it.
+
+### Part C — protocol, locked BEFORE any holdout strategy result is computed
+
+**Development period**: `2016-09-19T00:00:00Z` through
+`2026-09-19T00:00:00Z` (the already-backfilled, already-inspected
+range FX-32 through FX-37 ran against). This data directly influenced
+which strategy/instrument combinations this story treats as
+candidates — it is NOT untouched validation and must never be
+presented as such.
+
+**Pre-development historical holdout**: for each instrument, its own
+Part-A-discovered earliest available H1 candle through
+`2016-09-18T23:00:00Z` (the last H1 candle strictly before the
+development cutoff — a non-overlapping, candle-boundary-consistent
+split; every candle is used in exactly one of the two periods).
+Explicitly named **pre-development historical holdout**, not
+"prospective" or "future" out-of-sample data — it is chronologically
+EARLIER than the development period, but genuinely unseen by the
+process that picked the current candidates. Its opening stretch
+(pre-2005 for the four FX pairs, pre-2007 for XAU/USD) is real but
+sparse data, disclosed above, not excluded — excluding it would be
+indistinguishable from choosing a start date to make results look
+better, which this story's own safeguards rule out. Where it matters,
+results are read with that caveat, not hidden from it.
+
+**Locked strategy parameters**: every strategy below runs with its
+existing, already-shipped default constructor parameters, exactly as
+they exist in `src/forex_agent/domain/strategies/` today. No
+optimization, threshold search, lookback search, per-instrument
+parameter change, or post-result adjustment occurs anywhere in this
+story — locked before Part D's first holdout number is computed, not
+after.
+
+**Execution methodology, locked**: one continuous backtest per
+`(strategy, instrument)`, from that instrument's Part-A earliest
+candle through the present, using `run_backtest`/`run_backtest_
+incremental` (whichever already has golden-parity-tested exactness for
+that strategy) + unmodified `simulate_trades` — same N+1 execution,
+executable bid/ask pricing with spread, current fill semantics, no-
+look-ahead rules, and final-bar handling as every prior story. Trades
+are then split into development/holdout buckets by `entry_time`, and
+further into calendar-year and 2-year buckets for Part F. This is
+DELIBERATELY continuous-then-sliced, not two independent truncated
+runs, for `EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGatedStrategy`,
+and `MultiTimeframeTrendStrategy` (all three already have golden-
+parity-tested `IncrementalStrategy` engines, so this costs seconds):
+warm-up state (EMA/ADX/H4 bias) carries continuously across the 2016
+boundary exactly as a real continuously-running strategy would
+experience it, rather than artificially reseeding at the boundary.
+
+**One disclosed, deliberate deviation**: `CloseChannelBreakoutStrategy`
+has no incremental engine (FX-34 didn't need one at 10-year scale; this
+story's ~2.4x larger full-history range makes its O(n²) slow-engine cost
+non-trivial). For `USD_JPY` and `XAU_USD` specifically — the two
+instruments Part F's time-stability analysis needs fine-grained,
+genuinely continuous slicing for — it still runs as one continuous
+full-history call. For `EUR_USD`, `GBP_USD`, and `USD_CAD` (Part D/E
+only, no Part F requirement for this strategy on those three), it runs
+as two independent slow-engine calls — one over the development range,
+one over the holdout range — to avoid paying full-history O(n²) cost
+three times over for no analytical benefit. This introduces a small,
+disclosed discontinuity at exactly the 2016 boundary for those three
+(the strategy's own `lookback` warm-up reseeds there instead of
+carrying over) — negligible against this dataset's scale, not a change
+to strategy semantics, and named here explicitly rather than left
+implicit. If `CloseChannelBreakoutStrategy`'s continuous full-history
+run for `USD_JPY`/`XAU_USD` turns out impractical once measured, that
+will be documented as a stopped experiment, not worked around by
+changing what's being measured.
+
+**No parameter tuning, no start-date adjustment, and no unfavorable-
+year discarding will occur past this point in the story.** If any
+locked strategy cannot be run unchanged for some instrument, that
+specific experiment stops and is documented as such — nothing is
+modified to improve its result.
