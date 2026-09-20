@@ -480,12 +480,21 @@ discipline as FX-29's).
    mode: a consistently HIGH win rate (0.60-0.63) throughout, despite
    the net loss — many small wins, fewer larger losses, the classic
    mean-reversion signature. Full table in `docs/DECISIONS.md`.
-5. `FX-36` — `VolatilityExpansionBreakoutStrategy` (FX-20). O(n)/call,
-   and a heavier constant (two full ATR passes each call) — timed at
-   ~92 min/instrument extrapolated, ~7.7 hours for all 5 instruments at
-   that rate: genuinely impractical. Needs an incremental engine first,
-   same rigor as FX-29 (golden parity against the unmodified slow
-   strategy, proven bit-for-bit identical). Not yet started.
+5. ~~`FX-36` — `VolatilityExpansionBreakoutStrategy` (FX-20)~~ — complete.
+   Needed a new incremental engine first (~92 min/instrument
+   extrapolated on the slow path, genuinely impractical) — new
+   `IncrementalWilderAtr` primitive + `IncrementalVolatilityExpansion
+   BreakoutStrategy`, golden-parity-tested including a hand-constructed
+   exact-ATR-ratio-threshold boundary case (closed a real gap: a `>`
+   vs `>=` bug passed every naturally-varied-data parity test
+   undetected until that specific test was added). Measured: full
+   62,194-candle series in ~2.5s, down from ~92 minutes. Empirical
+   result, default params: only n=11-27 trades per instrument over 10
+   years (the double breakout-AND-expansion condition is rare) — closer
+   to FX-21/23's own flagged-as-too-small samples than this batch's
+   other runs; 4 of 5 instruments show poor profit factors (0.06-0.45),
+   `USD_JPY` near breakeven (1.003) but not a confident finding at that
+   n. Full table in `docs/DECISIONS.md`.
 6. `FX-37` — `MultiTimeframeTrendStrategy` (FX-25). O(n)/call on its H1
    side (same from-scratch EMA recompute pattern FX-29 already solved
    once) — timed at ~41 min/instrument extrapolated, ~3.4 hours for all

@@ -2758,3 +2758,44 @@ win rate) exists to catch.
 
 **Verification**: existing pipeline unmodified, pure empirical
 analysis. ~10.5 min/instrument, ~53 minutes total.
+
+## 2026-09-19 — Research dataset run 5/6: FX-36, VolatilityExpansionBreakoutStrategy
+
+`VolatilityExpansionBreakoutStrategy` (FX-20), default parameters
+(`short_period=14`, `long_period=50`, `breakout_lookback=20`,
+`expansion_threshold=1.5`), run via the new
+`IncrementalVolatilityExpansionBreakoutStrategy` (this story's own
+first part) — measured 2.3-2.6s/instrument, down from an extrapolated
+92 minutes each.
+
+**Results, full 10-year H1, all 5 instruments:**
+
+| Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| EUR_USD | 14 | 0.286 | -0.00293 USD | 0.189 | -0.471 |
+| GBP_USD | 11 | 0.364 | -0.00256 USD | 0.452 | -0.222 |
+| USD_JPY | 27 | 0.519 | +0.00111 JPY | 1.003 | +0.001 |
+| USD_CAD | 11 | 0.182 | -0.00230 CAD | 0.056 | -0.871 |
+| XAU_USD | 19 | 0.316 | -17.04568 USD | 0.116 | -0.500 |
+
+**Findings, read with real caution — unlike FX-32/33/35's samples**:
+the double condition (fresh Donchian breakout AND simultaneous ATR
+expansion above 1.5x) is rare at H1 with these default parameters —
+n=11-27 trades per instrument over 10 years, closer to FX-21/23's own
+flagged-as-too-small samples than to this batch's other, much larger
+runs. Where a pattern IS visible, it's negative: 4 of 5 instruments
+show poor profit factors (0.06-0.45), and `USD_JPY` is the only one
+near breakeven (profit factor 1.003) — but at n=27, "near breakeven"
+isn't a finding either way. Unlike FX-32/34/35, this result does not
+support a confident conclusion about the strategy itself; it does
+confirm the *engine* works correctly (verified separately, in depth,
+via golden parity tests including a hand-constructed exact-threshold
+boundary case — see the incremental-engine commit). A meaningfully
+looser parameterization (lower `expansion_threshold` or shorter
+`breakout_lookback`) would likely be needed before this strategy's
+real performance question could be answered with a large enough
+sample — not attempted here, flagged as a possible follow-up rather
+than pursued in this story.
+
+**Verification**: golden-parity-tested incremental engine (own commit).
+This run: 2.3-2.6s/instrument, under 15 seconds total for all 5.

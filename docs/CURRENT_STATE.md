@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-35)_
+_Last updated: 2026-09-19 (FX-36)_
 
 ## What exists
 
@@ -292,7 +292,15 @@ _Last updated: 2026-09-19 (FX-35)_
   independently hand-derived synthetic series covering all five
   `evaluate()` outcomes, through `run_backtest` + `simulate_trades`
   (confirming FLAT-closes-without-reopening end to end), and against
-  live OANDA practice candles.
+  live OANDA practice candles. `IncrementalWilderAtr` (`forex_agent.
+  domain.incremental_atr`) + `IncrementalVolatilityExpansionBreakout
+  Strategy` (FX-36) — O(1)-per-bar counterparts, golden-parity-tested
+  including a hand-constructed exact-threshold boundary case; this
+  strategy remains completely unmodified as the reference. Run across
+  the full 10-year, 5-instrument research dataset: only n=11-27 trades
+  per instrument (the double breakout-AND-expansion condition is rare
+  at default params) — too small a sample for a confident finding
+  either way, unlike FX-32/34/35's runs — see `docs/DECISIONS.md`.
 - `MultiTimeframeTrendStrategy` (`forex_agent.domain.strategies.
   multi_timeframe_trend`, `strategy_key="multi_timeframe_trend_v1"`,
   FX-25, H4 visibility canonicalized FX-25H) — the sixth concrete
