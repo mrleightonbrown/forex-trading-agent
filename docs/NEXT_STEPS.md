@@ -472,9 +472,14 @@ discipline as FX-29's).
    separates the winners from the losers — the first strategy in this
    batch where the answer genuinely depends on the instrument. Full
    table in `docs/DECISIONS.md`.
-4. `FX-35` — `MeanReversionStrategy` (FX-19). Same O(n)/call profile —
-   ~8 min/instrument extrapolated, ~42 min total; also tolerable
-   as-is. Not yet started.
+4. ~~`FX-35` — `MeanReversionStrategy` (FX-19)~~ — complete. Same
+   O(n)/call profile as FX-34, ~10.5 min/instrument actual (~53 min
+   total). Default `period=20`, `entry_threshold=2.0`: unprofitable on
+   **every single instrument** (profit factor 0.74-0.98) at
+   n=2,200-2,555 trades each — decisive, like FX-32. Notable failure
+   mode: a consistently HIGH win rate (0.60-0.63) throughout, despite
+   the net loss — many small wins, fewer larger losses, the classic
+   mean-reversion signature. Full table in `docs/DECISIONS.md`.
 5. `FX-36` — `VolatilityExpansionBreakoutStrategy` (FX-20). O(n)/call,
    and a heavier constant (two full ATR passes each call) — timed at
    ~92 min/instrument extrapolated, ~7.7 hours for all 5 instruments at

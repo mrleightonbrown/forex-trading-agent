@@ -2725,3 +2725,36 @@ clean project-wide answer.
 
 **Verification**: existing pipeline unmodified, pure empirical
 analysis. ~10.7 min/instrument, ~53 minutes total.
+
+## 2026-09-19 — Research dataset run 4/6: FX-35, MeanReversionStrategy
+
+`MeanReversionStrategy` (FX-19), default `period=20`,
+`entry_threshold=2.0`: O(n) per call (same full-closes-list-per-call
+pattern as FX-34), ~600-645s/instrument actual — consistent with
+FX-34's own timing, no incremental engine needed.
+
+**Results, full 10-year H1, all 5 instruments:**
+
+| Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|
+| EUR_USD | 2555 | 0.616 | -0.00003 USD | 0.977 | -0.008 |
+| GBP_USD | 2537 | 0.614 | -0.00017 USD | 0.912 | -0.031 |
+| USD_JPY | 2274 | 0.602 | -0.05535 JPY | 0.739 | -0.092 |
+| USD_CAD | 2514 | 0.627 | -0.00005 CAD | 0.968 | -0.011 |
+| XAU_USD | 2236 | 0.618 | -1.47744 USD | 0.782 | -0.062 |
+
+**Findings**: unprofitable on **every single instrument** (profit
+factor 0.74-0.98, all below breakeven) at n=2,200-2,555 trades each —
+as decisive and consistent as FX-32's `PreviousBarDirection` result.
+Notably, this happens **despite a consistently high win rate**
+(0.60-0.63 across all five) — the classic mean-reversion signature of
+many small wins offset by a smaller number of larger losses, where the
+strategy is "usually right" bar-by-bar but structurally loses money
+overall. This is a genuinely informative failure mode, distinct from
+FX-32/33's "loses because win rate is low": a strategy can look
+statistically appealing on win rate alone and still be a net loser —
+exactly the kind of thing `compute_metrics`' full field set (not just
+win rate) exists to catch.
+
+**Verification**: existing pipeline unmodified, pure empirical
+analysis. ~10.5 min/instrument, ~53 minutes total.

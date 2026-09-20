@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-34)_
+_Last updated: 2026-09-19 (FX-35)_
 
 ## What exists
 
@@ -269,7 +269,12 @@ _Last updated: 2026-09-19 (FX-34)_
   synthetic series with exact clean z-scores at every relevant bar,
   through `run_backtest` + `simulate_trades` (confirming FLAT-closes-
   without-reopening produces the right trade count end to end), and
-  against live OANDA practice candles.
+  against live OANDA practice candles. Run across the full 10-year,
+  5-instrument research dataset (FX-35), default params: unprofitable
+  on **every single instrument** (profit factor 0.74-0.98) despite a
+  consistently HIGH win rate (0.60-0.63) throughout — many small wins,
+  fewer larger losses, the classic mean-reversion failure signature —
+  see `docs/DECISIONS.md`.
 - `VolatilityExpansionBreakoutStrategy` (`forex_agent.domain.strategies.
   volatility_expansion`, `strategy_key="volatility_expansion_breakout_v1"`)
   — the fifth concrete `Strategy` (FX-20). LONG/SHORT when the current
