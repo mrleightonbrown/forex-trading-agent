@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-36)_
+_Last updated: 2026-09-19 (FX-37)_
 
 ## What exists
 
@@ -321,7 +321,26 @@ _Last updated: 2026-09-19 (FX-36)_
   through `run_backtest` + `simulate_trades`, and against live OANDA
   candles at both granularities. This closes out the original
   strategy-suite roadmap — see `docs/DECISIONS.md`'s FX-25/FX-25H
-  entries.
+  entries. `IncrementalMultiTimeframeTrendStrategy` (FX-37) — the sixth
+  and final `IncrementalStrategy` counterpart, and the only one needing
+  two candle series: `IncrementalStrategy.on_candle` only ever receives
+  one stream, so the full H4 series stays a constructor argument (same
+  shape as the slow strategy) while an internal cursor advances into it
+  as H1 time progresses, feeding each newly-visible H4 candle into a
+  reused `IncrementalSmaSeededEma` pair exactly once, in order, instead
+  of refiltering and recomputing the H4 EMA from scratch every H1 bar.
+  Golden-parity-tested against the unmodified slow strategy, including
+  the FX-25H DST fall-back regression reused verbatim and a
+  hand-constructed edge case closing a real gap: the slow strategy's
+  own H4-bias gate requires `slow_period + 1` *visible* candles, one
+  more than `_sma_seeded_ema` itself needs to produce a value, so an
+  incremental EMA tracker's own readiness would fire one candle too
+  early without an explicit extra counter (confirmed via regression-
+  proof discipline — removing the counter makes the new test fail,
+  restoring it passes again). Run across the full 10-year, 5-instrument
+  research dataset — see `docs/DECISIONS.md`. This closes out the
+  user-authorized batch of running every remaining concrete strategy
+  across the research dataset (FX-32 through FX-37).
 - `RegimeSegmentedTrades` + `segment_trades_by_regime`
   (`forex_agent.domain.regime_segmentation`, FX-21, look-ahead fixed
   FX-21H): performs **entry-regime attribution** — buckets a strategy's

@@ -2799,3 +2799,60 @@ than pursued in this story.
 
 **Verification**: golden-parity-tested incremental engine (own commit).
 This run: 2.3-2.6s/instrument, under 15 seconds total for all 5.
+
+## 2026-09-19 — Research dataset run 6/6: FX-37, MultiTimeframeTrendStrategy (engine)
+
+The sixth and final strategy in the user-authorized batch, and the only
+one of the six genuinely requiring a new incremental engine solely
+because of its shape (two candle series), not its cost — `Multi
+TimeframeTrendStrategy`'s per-call work is dominated by refiltering and
+recomputing the whole H4 EMA from scratch every H1 bar, an O(n) cost
+per call the other five strategies mostly don't share.
+
+`IncrementalStrategy.on_candle` (FX-29) only ever receives one candle
+stream. `MultiTimeframeTrendStrategy` itself already solves the
+two-series problem by taking the full H4 series as a constructor
+argument (legitimate for backtesting) and filtering it by visibility on
+every call — `IncrementalMultiTimeframeTrendStrategy` keeps that exact
+same shape, but replaces the per-call refilter with an internal cursor
+that advances into the pre-supplied H4 series as H1 time progresses,
+feeding each newly-visible H4 candle into a reused `IncrementalSma
+SeededEma` pair exactly once, in order, the moment it becomes visible.
+Visibility still uses the shared, canonical `candle_boundary.
+candle_end_time` (FX-25H) — not duplicated.
+
+Two subtleties, both worked through by hand before writing any code,
+not discovered by trial and error:
+
+1. The slow strategy's own `len(candles) < h1_slow_period + 1: return
+   None` guard looks like a separate gate from EMA readiness, but
+   turns out to be *exactly* equivalent to "the H1 EMA doesn't have a
+   second diff value to compare yet" — confirmed by working through
+   `_sma_seeded_ema`'s own list-length arithmetic. That means
+   granularity/instrument validation is unreachable during H1 warm-up
+   in the slow strategy, and the incremental version reproduces that
+   for free just by placing its own equivalent checks in the same
+   relative position, rather than needing a separate counter.
+2. The slow strategy's own `_h4_bias` requires `slow_period + 1`
+   *visible* H4 candles before computing anything — one more than
+   `_sma_seeded_ema` itself needs to produce a value. An incremental H4
+   EMA tracker naturally becomes "ready" one candle earlier than that,
+   so the incremental engine needed an explicit extra counter
+   (`_h4_consumed_count`) gating bias reads at `slow_period + 1`, not
+   just EMA non-None-ness. This is a real, not hypothetical, gap:
+   confirmed via the same regression-proof discipline as FX-36's own
+   exact-threshold case — temporarily removed the counter, watched a
+   dedicated new test fail (a bias got computed one candle early) while
+   every other parity test still passed, then restored it.
+
+Golden-parity-tested against the unmodified slow strategy (which
+remains the permanent reference): the exact hand-derived FX-25 series
+(known trace: LONG/FLAT/LONG/SHORT), an independent longer sine-based
+series exercising both confirmed and unconfirmed paths at default
+periods, the FX-25H DST fall-back regression reused verbatim, and the
+`_h4_consumed_count` edge case above — plus a trade-level fingerprint
+check in `test_incremental_backtest_golden_parity.py`.
+
+**Verification**: `pytest` (unit — including the deliberate
+revert-and-confirm-failure step above), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`, full suite against live Postgres.

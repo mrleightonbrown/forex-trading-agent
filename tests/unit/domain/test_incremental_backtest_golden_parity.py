@@ -33,6 +33,10 @@ from forex_agent.domain.strategies.ema_crossover_trend_regime_gated import (
 from forex_agent.domain.strategies.ema_crossover_trend_regime_gated_incremental import (
     IncrementalEmaCrossoverTrendRegimeGatedStrategy,
 )
+from forex_agent.domain.strategies.multi_timeframe_trend import MultiTimeframeTrendStrategy
+from forex_agent.domain.strategies.multi_timeframe_trend_incremental import (
+    IncrementalMultiTimeframeTrendStrategy,
+)
 from forex_agent.domain.strategies.volatility_expansion import (
     VolatilityExpansionBreakoutStrategy,
 )
@@ -99,6 +103,50 @@ def test_volatility_expansion_breakout_golden_parity() -> None:
     )
     slow_trades = simulate_trades(run_backtest(slow, _CANDLES), _CANDLES)
     fast_trades = simulate_trades(run_backtest_incremental(fast, _CANDLES), _CANDLES)
+
+    assert len(slow_trades) > 2, "fixture must actually exercise several trades"
+    assert _fingerprints(slow_trades) == _fingerprints(fast_trades)
+
+
+def test_multi_timeframe_trend_golden_parity() -> None:
+    # A second, independent sine-based H4 series (own frequency/noise),
+    # long enough (4 H1 hours per H4 bar, over 500 H1 hours) to comfortably
+    # clear the default h4_slow_period=50 readiness bar.
+    h4_closes = [
+        100 + int(25 * __import__("math").sin(i / 6)) + (i % 5) for i in range(len(_CLOSES) // 4)
+    ]
+    h4_candles = [
+        Candle(
+            instrument=EUR_USD,
+            granularity=Granularity.H4,
+            start_time=UtcTimestamp(_EPOCH + timedelta(hours=4 * i)),
+            bid=Ohlc(
+                open=Decimal(c),
+                high=Decimal(c) + Decimal("1"),
+                low=Decimal(c) - Decimal("1"),
+                close=Decimal(c),
+            ),
+            ask=Ohlc(
+                open=Decimal(c),
+                high=Decimal(c) + Decimal("1"),
+                low=Decimal(c) - Decimal("1"),
+                close=Decimal(c),
+            ),
+            volume=1,
+            is_finalized=True,
+        )
+        for i, c in enumerate(h4_closes)
+    ]
+
+    slow_trades = simulate_trades(
+        run_backtest(MultiTimeframeTrendStrategy(h4_candles=h4_candles), _CANDLES), _CANDLES
+    )
+    fast_trades = simulate_trades(
+        run_backtest_incremental(
+            IncrementalMultiTimeframeTrendStrategy(h4_candles=h4_candles), _CANDLES
+        ),
+        _CANDLES,
+    )
 
     assert len(slow_trades) > 2, "fixture must actually exercise several trades"
     assert _fingerprints(slow_trades) == _fingerprints(fast_trades)

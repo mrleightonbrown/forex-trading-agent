@@ -498,8 +498,15 @@ discipline as FX-29's).
 6. `FX-37` — `MultiTimeframeTrendStrategy` (FX-25). O(n)/call on its H1
    side (same from-scratch EMA recompute pattern FX-29 already solved
    once) — timed at ~41 min/instrument extrapolated, ~3.4 hours for all
-   5: also needs an incremental engine, the most complex of the six
-   since it combines H1 and H4 series. Not yet started.
+   5: also needed an incremental engine, the most complex of the six
+   since it combines H1 and H4 series. Engine complete: `Incremental
+   MultiTimeframeTrendStrategy` keeps the H4 series as a constructor
+   argument (same shape as the slow strategy) with an internal cursor
+   advancing into it as H1 time progresses — golden-parity-tested,
+   including a real gap closed (the slow strategy's H4-bias gate needs
+   `slow_period + 1` visible candles, one more than raw EMA readiness).
+   Full details in `docs/DECISIONS.md`. Empirical run across the
+   research dataset: not yet started.
 
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
