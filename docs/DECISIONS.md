@@ -2885,12 +2885,27 @@ Notable, consistent across all 5 regardless of profitability: a LOW
 win rate (0.28-0.34) — the classic trend/breakout-confirmation
 signature (few larger wins carrying many small losses), the mirror
 image of FX-35's mean-reversion strategy (high win rate, net loss
-anyway). H4 confirmation clearly does filter something: this is a
-meaningfully higher trade count than a bare H1 EMA crossover would
-produce unfiltered scattered noise, though a direct head-to-head
-against unfiltered `EmaCrossoverStrategy` on the same instruments
-was not run in this story — flagged as a natural follow-up, not
-pursued here.
+anyway).
+
+**Correction (FX-38 Part G)**: this entry originally claimed H4
+confirmation produces "a meaningfully higher trade count than a bare H1
+EMA crossover would produce unfiltered" — that is backwards, and the
+direct head-to-head this entry called a follow-up already existed at
+the time: FX-29's own continuous rerun of `EmaCrossoverStrategy`
+("Unconditional" leg) shows **1,106-1,205** trades per instrument over
+the same 10-year window (EUR_USD 1165, GBP_USD 1181, USD_JPY 1119,
+USD_CAD 1205, XAU_USD 1132), against this strategy's own 425-462. H4
+confirmation materially **reduces** the number of EMA crossover trades
+(to roughly a third), not increases it — every H1 crossover event still
+fires, but most get closed straight back to FLAT by H4 disagreement
+rather than opening/reversing a position. On USD_JPY and XAU_USD
+specifically, the 2016-2026 results show that this smaller, reduced
+trade set had a better profit factor/expectancy than the corresponding
+bare H1 `EmaCrossoverStrategy` (FX-29's own continuous, non-withdrawn
+table: USD_JPY 1.306 vs. 1.085; XAU_USD 1.253 vs. 1.129) — stated here
+as what the 2016-2026 development data shows, not as a proven, durable,
+or future improvement; see FX-38 for the pre-development historical
+holdout evaluation of exactly this question.
 
 **This closes the user-authorized batch** (external review's closing
 recommendation, agreed 2026-09-19): every remaining concrete strategy
