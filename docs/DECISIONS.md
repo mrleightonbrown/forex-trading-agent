@@ -2593,3 +2593,67 @@ green — 605 passed, same 7 pre-existing/unrelated live-OANDA failures.
 The concurrency tests (including the forced-pool-churn one) all still
 pass using the new `get_lock_engine()` throughout. Lint/format/mypy/
 pre-commit clean.
+
+## 2026-09-19 — Research dataset run 1/6: FX-32, control strategies
+
+First of six planned runs of the existing concrete strategies across
+the full 10-year, 5-instrument research dataset, per the same external
+review's own closing recommendation: pause infrastructure hardening,
+use the now-trustworthy capability to find real economic questions
+faster than more platform work would. Ordered cheapest-and-most-
+foundational first: controls establish the no-skill baseline every
+later strategy's numbers get read against.
+
+**Scope check, timed not assumed**: all four control strategies are
+O(1) per `evaluate()` call (only ever look at the last 1-2 candles);
+`run_backtest`'s own O(n) reslicing is the only cost, and empirically
+that's cheap (~30s for a full 62,000-candle series) — no incremental
+engine needed, ran directly on the existing slow path.
+`NoTradeStrategy` trivially produces zero trades everywhere by
+definition (`compute_metrics` can't even be called on an empty list) —
+not run, its "result" is definitionally unconditional.
+
+**Results, full 10-year H1, all 5 instruments:**
+
+| Strategy | Instrument | n | win rate | expectancy | profit factor | Sharpe |
+|---|---|---|---|---|---|---|
+| AlwaysLong | EUR_USD | 1 | 1.000 | +0.03129 USD | n/a | n/a |
+| AlwaysLong | GBP_USD | 1 | 1.000 | +0.03557 USD | n/a | n/a |
+| AlwaysLong | USD_JPY | 1 | 1.000 | +54.988 JPY | n/a | n/a |
+| AlwaysLong | USD_CAD | 1 | 1.000 | +0.07744 CAD | n/a | n/a |
+| AlwaysLong | XAU_USD | 1 | 1.000 | +3062.62 USD | n/a | n/a |
+| AlwaysShort | (all 5) | 1 | 0.000 | exact negative of AlwaysLong | 0.000 | n/a |
+| PreviousBarDirection | EUR_USD | 32070 | 0.275 | -0.00020 USD | 0.639 | -0.141 |
+| PreviousBarDirection | GBP_USD | 32081 | 0.271 | -0.00029 USD | 0.626 | -0.148 |
+| PreviousBarDirection | USD_JPY | 31953 | 0.288 | -0.02015 JPY | 0.712 | -0.098 |
+| PreviousBarDirection | USD_CAD | 32147 | 0.265 | -0.00028 CAD | 0.577 | -0.174 |
+| PreviousBarDirection | XAU_USD | 30452 | 0.296 | -0.50228 USD | 0.776 | -0.058 |
+
+**Findings**: `AlwaysLong`/`AlwaysShort` are exactly one buy-and-hold/
+sell-and-hold trade each, as designed — every instrument in this
+10-year window ended up net favorable to being long (matches real
+macro history: broad USD strength/JPY weakness over the period, and a
+substantial gold rally), confirming these behave as intended, not a
+finding about skill.
+
+`PreviousBarDirectionStrategy` is the first genuinely decisive result
+this whole project has produced: **consistently unprofitable across
+every single instrument**, with profit factor well below 1.0 (0.58-0.78)
+and negative Sharpe throughout, at `n` = 30,000-32,000 trades per
+instrument — several orders of magnitude past FX-21/23's own `n=26`/
+`n=57` samples that were explicitly flagged as too small to draw
+conclusions from. This sample size, on this data, supports an actual
+conclusion: naively chasing the previous H1 bar's direction is not a
+free edge, and the effect is large and consistent enough that it's very
+unlikely to be sampling noise. Plausible mechanism (not verified
+further here): H1 bar-to-bar direction is closer to noise than trend,
+and 30,000+ round-trip trades each paying the bid/ask spread compounds
+into a large, structural drag — exactly the kind of "looks like
+momentum, is actually noise plus transaction costs" trap control
+strategies exist to catch.
+
+**Verification**: existing `run_backtest`/`simulate_trades`/
+`compute_metrics` pipeline, completely unmodified — this story is pure
+empirical analysis, no new production code. Timed: ~30s/instrument,
+~10 minutes total for all three non-trivial control strategies across
+all 5 instruments.

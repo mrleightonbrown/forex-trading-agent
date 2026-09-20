@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-19 (FX-29H/FX-31H third-round follow-ups)_
+_Last updated: 2026-09-19 (FX-32)_
 
 ## What exists
 
@@ -422,7 +422,12 @@ _Last updated: 2026-09-19 (FX-29H/FX-31H third-round follow-ups)_
   trade). `PreviousBarDirectionStrategy` has no lookback or threshold
   (deliberately simpler than FX-16's momentum strategy). `NoTradeStrategy`
   always returns `None` — `compute_metrics` can't even be called on zero
-  trades, which is the point.
+  trades, which is the point. Run across the full 10-year, 5-instrument
+  research dataset (FX-32) — `AlwaysLong`/`AlwaysShort` behaved exactly
+  as designed; `PreviousBarDirectionStrategy` produced this project's
+  first genuinely decisive result: unprofitable on every instrument,
+  profit factor 0.58-0.78, at n=30,000+ trades each — see
+  `docs/DECISIONS.md` for the full table.
 - `BacktestMetrics` + `compute_metrics` (`forex_agent.domain.
   backtest_metrics`, FX-17): trade/win/loss/breakeven counts, win rate,
   average win/loss, expectancy, profit factor, total P&L, max drawdown,

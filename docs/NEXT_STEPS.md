@@ -428,6 +428,54 @@ more pairs, more regimes, and out-of-sample testing. The research
 dataset and backtest engine are now both trustworthy at full scale —
 FX-28's rerun table is real evidence, not an exploratory approximation.
 
+## Running every existing strategy across the full research dataset
+
+Per the same external review's closing recommendation: pause
+infrastructure hardening, use the now-trustworthy capability. Six
+strategies (the ones FX-28/29 didn't already cover) each get their own
+story — a real empirical run across all 5 instruments' full 10-year H1
+history, findings recorded in `docs/DECISIONS.md`. Ordered by actual
+computational cost, timed directly before committing to an order (not
+assumed): cheap ones first (existing slow engine, no new code needed),
+expensive ones last (need a new incremental engine first, same
+discipline as FX-29's).
+
+1. ~~`FX-32` — control strategies~~ — complete. All four are O(1)/call
+   (~30s/instrument on the existing slow engine, no incremental engine
+   needed). `AlwaysLong`/`AlwaysShort` behaved exactly as designed (one
+   buy-and-hold/sell-and-hold trade each, every instrument net
+   favorable to long over this window — real macro history, not a
+   finding about skill). `NoTradeStrategy` trivially produces zero
+   trades by definition, not run. **`PreviousBarDirectionStrategy` is
+   the project's first genuinely decisive result**: unprofitable on
+   every single instrument, profit factor 0.58-0.78, at n=30,000-32,000
+   trades per instrument — several orders of magnitude past FX-21/23's
+   own flagged-as-too-small samples. Naive previous-bar momentum-
+   chasing is not a free edge at H1; the effect is large and consistent
+   enough to trust. Full table in `docs/DECISIONS.md`.
+2. `FX-33` — `TimeSeriesMomentumStrategy` (FX-16). O(1)/call (direct
+   indexing, no full-list rescans) — same cheap-as-controls profile,
+   timed directly (~30s/instrument extrapolated). Not yet started.
+3. `FX-34` — `CloseChannelBreakoutStrategy` (FX-15). O(n)/call (builds
+   a full closes list every call even though only the tail is used) —
+   ~7.6 min/instrument extrapolated, ~38 min total; tolerable for a
+   one-off run without needing an incremental engine. Not yet started.
+4. `FX-35` — `MeanReversionStrategy` (FX-19). Same O(n)/call profile —
+   ~8 min/instrument extrapolated, ~42 min total; also tolerable
+   as-is. Not yet started.
+5. `FX-36` — `VolatilityExpansionBreakoutStrategy` (FX-20). O(n)/call,
+   and a heavier constant (two full ATR passes each call) — timed at
+   ~92 min/instrument extrapolated, ~7.7 hours for all 5 instruments at
+   that rate: genuinely impractical. Needs an incremental engine first,
+   same rigor as FX-29 (golden parity against the unmodified slow
+   strategy, proven bit-for-bit identical). Not yet started.
+6. `FX-37` — `MultiTimeframeTrendStrategy` (FX-25). O(n)/call on its H1
+   side (same from-scratch EMA recompute pattern FX-29 already solved
+   once) — timed at ~41 min/instrument extrapolated, ~3.4 hours for all
+   5: also needs an incremental engine, the most complex of the six
+   since it combines H1 and H4 series. Not yet started.
+
+
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same
 goes for the downstream epics not in this list at all (Decision Engine,
