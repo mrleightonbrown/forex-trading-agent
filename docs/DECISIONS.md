@@ -4213,3 +4213,77 @@ changed beyond the previously-added `domain/sealed_window_backtest.py`
 — only the two analysis scripts changed), `ruff`, `mypy --strict`,
 `pre-commit run --all-files`. Rerun total: ~2 hours (same profile as
 FX-38H part 2 — `CloseChannelBreakoutStrategy` dominates).
+
+## 2026-09-21 — FX-39 (part 1): block-bootstrap significance testing primitive
+
+The natural next question FX-38H's own external review named: two of
+the four holdout candidates have profit factors only ~1.05-1.07 —
+close enough to breakeven that the real question is whether they're
+statistically distinguishable from a strategy with no real edge, once
+TRADE DEPENDENCE (a strategy's own state carries from one trade to the
+next — consecutive trades are not independent draws) and REGIME
+CLUSTERING (FX-38's own Part F found real multi-year strong/weak
+stretches) are accounted for, rather than an ordinary independence-
+assuming confidence interval that would understate the true
+uncertainty.
+
+**Method, locked before computing any result on real data**:
+
+1. **Moving-block bootstrap** (Künsch 1989) — the standard fix for
+   testing a sample mean's significance under autocorrelation: resample
+   OVERLAPPING CONSECUTIVE blocks (not individual points) with
+   replacement, preserving local dependence within each block. Block
+   length is chosen OBJECTIVELY from the series' own sample
+   autocorrelation function (`select_block_length`) — the first lag
+   from which the ACF stays inside the approximate white-noise 95% band
+   (`±1.96/sqrt(n)`) for 3 consecutive lags, not guessed or tuned to
+   produce a particular answer. Falls back to `round(sqrt(n))` (a
+   standard rule of thumb) if no such run is found, with that fallback
+   explicitly flagged to the caller rather than silently trusted.
+2. **Segment (regime) block bootstrap** — resamples WHOLE pre-defined
+   segments (e.g. the SAME 2-year calendar buckets already computed in
+   FX-38's own Part F) with replacement, directly addressing "regime
+   clustering" by construction — pooling by trade count (matching this
+   project's own `expectancy` convention: total P&L / total trade
+   count), not a naive average of segment-level means.
+
+Both produce 90%/95% percentile confidence intervals on expectancy
+(mean per-trade P&L). A CI excluding zero is evidence the population
+mean is likely non-zero even after accounting for the relevant
+dependence structure — explicitly NOT proof of a durable, tradeable
+edge, and not evidence about any period other than the one tested.
+
+**Implementation**: `domain/block_bootstrap.py` — pure functions over
+`Decimal` P&L sequences, no infrastructure/strategy/candle dependency
+(reusable for any strategy's trade list, not tied to this story). 29
+tests (`tests/unit/domain/test_block_bootstrap.py`), several built on
+values confirmed by direct computation before writing the assertion
+(this project's established practice for boundary-sensitive tests):
+the perfect-alternating-series ACF is `-0.95` exactly, not `-1` (hand-
+verified via direct computation — the standard biased estimator's
+numerator sums `n-lag` terms against a denominator summed over all
+`n`, so even perfect anti-correlation doesn't reach exactly -1); a
+"paired-repeat" series (each white-noise value repeated twice
+consecutively) gives a strong, verified lag-1 ACF with decay from lag 2
+onward, confirming `select_block_length` finds a run starting after
+lag 1, not at it; a 5-point series with one outlier at position 5 and
+`block_length=4` has, confirmed by hand-enumeration, only two possible
+truncated-resample means (0 or 20) — a real gap this test closes:
+regression-proof discipline caught that no other test would have
+noticed a missing truncation step (which allows an unrelated third
+value, 40, to leak in from beyond the original sample size). Two
+deliberately-injected bugs (segment bootstrap using naive mean-of-
+segment-means instead of pooled-by-count; missing post-concatenation
+truncation in the moving-block bootstrap) were each confirmed to make
+the relevant test fail before being reverted.
+
+**Not yet done in this part**: no real strategy data has been touched
+yet — this commit is the tested primitive only. Applying it to the
+four holdout candidates (plus the two known-negative comparison
+strategies as a validation check on the method itself) is FX-39 part
+2, next.
+
+**Verification**: `pytest` (635 passed, unit/contract/replay — full
+suite including integration not required for a pure-domain addition
+with no infrastructure/candle dependency), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`.
