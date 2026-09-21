@@ -3,7 +3,7 @@ import pytest
 from forex_agent.domain.point_in_time_safety import PointInTimeSafety
 from forex_agent.domain.provider_series_mapping import (
     ProviderSeriesMapping,
-    require_point_in_time_safe_mapping,
+    require_research_usable_mapping,
 )
 
 
@@ -67,15 +67,48 @@ def test_mapping_is_immutable() -> None:
         mapping.provider = "ECB_SDW"  # type: ignore[misc]
 
 
-def test_require_point_in_time_safe_mapping_passes_for_safe_mapping() -> None:
-    mapping = _mapping(point_in_time_safety=PointInTimeSafety.POINT_IN_TIME_SAFE)
+def test_require_research_usable_mapping_passes_when_verified_and_safe() -> None:
+    mapping = _mapping(verified=True, point_in_time_safety=PointInTimeSafety.POINT_IN_TIME_SAFE)
 
-    require_point_in_time_safe_mapping(mapping)  # must not raise
+    require_research_usable_mapping(mapping)  # must not raise
+
+
+def test_require_research_usable_mapping_fails_when_unverified_even_if_safe() -> None:
+    # FX-42H: PIT-safe alone is not enough -- verified must also be True.
+    mapping = _mapping(verified=False, point_in_time_safety=PointInTimeSafety.POINT_IN_TIME_SAFE)
+
+    with pytest.raises(ValueError, match="not verified"):
+        require_research_usable_mapping(mapping)
 
 
 @pytest.mark.parametrize("safety", [PointInTimeSafety.LATEST_ONLY, PointInTimeSafety.UNKNOWN])
-def test_require_point_in_time_safe_mapping_fails_closed(safety: PointInTimeSafety) -> None:
-    mapping = _mapping(point_in_time_safety=safety)
+def test_require_research_usable_mapping_fails_when_verified_but_not_safe(
+    safety: PointInTimeSafety,
+) -> None:
+    # FX-42H: verified alone is not enough -- point_in_time_safety must
+    # also be POINT_IN_TIME_SAFE. Being verified only confirms the
+    # identifier resolves to real data, not that it is safe for
+    # historical as-of queries.
+    mapping = _mapping(verified=True, point_in_time_safety=safety)
 
-    with pytest.raises(ValueError, match="not point-in-time safe"):
-        require_point_in_time_safe_mapping(mapping)
+    with pytest.raises(ValueError, match="point_in_time_safety"):
+        require_research_usable_mapping(mapping)
+
+
+def test_require_research_usable_mapping_fails_when_neither_condition_holds() -> None:
+    mapping = _mapping(verified=False, point_in_time_safety=PointInTimeSafety.UNKNOWN)
+
+    with pytest.raises(ValueError, match="not verified") as excinfo:
+        require_research_usable_mapping(mapping)
+
+    # Both failure reasons are reported, not just the first one found.
+    assert "point_in_time_safety" in str(excinfo.value)
+
+
+def test_require_research_usable_mapping_default_mapping_fails_closed() -> None:
+    # Every mapping constructed with defaults (UNKNOWN, verified=False) --
+    # exactly what this registry's own entries look like -- must fail.
+    mapping = _mapping()
+
+    with pytest.raises(ValueError):
+        require_research_usable_mapping(mapping)

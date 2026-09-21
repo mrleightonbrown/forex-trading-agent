@@ -24,15 +24,17 @@ def _ts(*args: int) -> UtcTimestamp:
     return UtcTimestamp(datetime(*args, tzinfo=UTC))
 
 
-def _series(key: str, currency: str) -> MacroSeriesDefinition:
-    return MacroSeriesDefinition(
-        key=key,
-        economy=currency[:2],
-        currency=currency,
-        category=MacroCategory.POLICY_RATE,
-        unit="PERCENT",
-        frequency=MacroFrequency.IRREGULAR,
-    )
+def _series(key: str, currency: str, **overrides: object) -> MacroSeriesDefinition:
+    defaults: dict[str, object] = {
+        "key": key,
+        "economy": currency[:2],
+        "currency": currency,
+        "category": MacroCategory.POLICY_RATE,
+        "unit": "PERCENT",
+        "frequency": MacroFrequency.IRREGULAR,
+    }
+    defaults.update(overrides)
+    return MacroSeriesDefinition(**defaults)  # type: ignore[arg-type]
 
 
 def _definition(
@@ -63,10 +65,10 @@ def test_registry_covers_all_five_required_currencies() -> None:
     assert {"USD", "EUR", "GBP", "JPY", "CAD"} == REQUIRED_CURRENCIES
 
 
-def test_each_currency_shares_one_canonical_series_key() -> None:
+def test_each_currency_shares_one_canonical_series_object() -> None:
     for currency in REQUIRED_CURRENCIES:
-        keys = {d.series.key for d in definitions_for_currency(currency)}
-        assert len(keys) == 1
+        series_set = {d.series for d in definitions_for_currency(currency)}
+        assert len(series_set) == 1
 
 
 def test_real_registry_passes_its_own_validation() -> None:
@@ -92,9 +94,31 @@ def test_every_definition_has_at_least_one_provider_mapping(currency: str) -> No
         assert len(definition.provider_mappings) >= 1
 
 
+@pytest.mark.parametrize("currency", sorted(REQUIRED_CURRENCIES))
+def test_no_mapping_in_the_registry_is_research_usable_yet(currency: str) -> None:
+    # FX-42H: do not mark any mapping POINT_IN_TIME_SAFE merely because
+    # the value series exists -- every mapping in this story's registry
+    # must still be unverified/unknown, fail closed by construction.
+    for definition in definitions_for_currency(currency):
+        for mapping in definition.provider_mappings:
+            assert mapping.verified is False
+            assert mapping.point_in_time_safety.value == "UNKNOWN"
+
+
 # ---------------------------------------------------------------------------
 # The required effective-dated example: USD's Dec 16, 2008 target-range switch
 # ---------------------------------------------------------------------------
+
+
+def test_usd_target_point_era_starts_february_1994_not_1954() -> None:
+    # FX-42H correction: 1954 wrongly implied the FOMC target-rate concept
+    # itself starts there; the corrected boundary is the first FOMC meeting
+    # after which policy changes were announced immediately (Feb 4, 1994).
+    assert definition_as_of("USD", _ts(1994, 2, 3)) is None
+
+    definition = definition_as_of("USD", _ts(1994, 2, 4))
+    assert definition is not None
+    assert definition.instrument_name == "Federal Funds Target Rate (single target point)"
 
 
 def test_usd_before_2008_switch_uses_target_point_identity_definition() -> None:
@@ -152,6 +176,130 @@ def test_definition_as_of_unknown_currency_is_none() -> None:
 
 
 # ---------------------------------------------------------------------------
+# EUR: corrected canonical scalar (MRO, not DFR continuously)
+# ---------------------------------------------------------------------------
+
+
+def test_eur_canonical_instrument_is_mro_not_deposit_facility_rate() -> None:
+    definition = definition_as_of("EUR", _ts(2020, 1, 1))
+
+    assert definition is not None
+    assert "Main Refinancing Operations" in definition.instrument_name
+    assert "Deposit Facility" not in definition.instrument_name
+
+
+def test_eur_provider_mapping_uses_mro_series_key() -> None:
+    definition = definition_as_of("EUR", _ts(2020, 1, 1))
+
+    assert definition is not None
+    ids = {i for m in definition.provider_mappings for i in m.provider_series_ids}
+    assert "FM.D.U2.EUR.4F.KR.MRR_RT.LEV" in ids
+
+
+def test_eur_deposit_facility_rate_is_documented_not_used() -> None:
+    # FX-42H: DFR must be documented as a candidate future regime-aware
+    # feature, not silently substituted into the initial series.
+    definition = definition_as_of("EUR", _ts(2020, 1, 1))
+
+    assert definition is not None
+    assert "Deposit Facility Rate" in definition.notes
+    assert "regime-aware" in definition.notes.lower()
+
+
+# ---------------------------------------------------------------------------
+# CAD: corrected boundary and provider ID
+# ---------------------------------------------------------------------------
+
+
+def test_cad_overnight_target_starts_february_1999_not_1991() -> None:
+    assert definition_as_of("CAD", _ts(1999, 1, 31)) is None
+
+    definition = definition_as_of("CAD", _ts(1999, 2, 1))
+    assert definition is not None
+    assert definition.instrument_name == "Overnight Rate Target"
+
+
+def test_cad_provider_mapping_uses_v39079() -> None:
+    definition = definition_as_of("CAD", _ts(2020, 1, 1))
+
+    assert definition is not None
+    ids = {i for m in definition.provider_mappings for i in m.provider_series_ids}
+    assert "V39079" in ids
+
+
+# ---------------------------------------------------------------------------
+# JPY: distinct operational-regime eras with intentional gaps
+# ---------------------------------------------------------------------------
+
+
+def test_jpy_no_longer_claims_one_continuous_definition() -> None:
+    assert len(definitions_for_currency("JPY")) >= 5
+
+
+def test_jpy_overnight_call_rate_target_era_one() -> None:
+    definition = definition_as_of("JPY", _ts(2000, 1, 1))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target"
+
+
+def test_jpy_returns_none_during_quantitative_easing_gap_2001_2006() -> None:
+    # The required "definition_as_of returns None in a quantitative-target
+    # era" case: 2001-2006 QEP targeted the outstanding balance of current
+    # accounts (a quantity), not a scalar short-term interest rate.
+    assert definition_as_of("JPY", _ts(2003, 1, 1)) is None
+    assert definition_as_of("JPY", _ts(2001, 3, 19)) is None
+    assert definition_as_of("JPY", _ts(2006, 3, 8)) is None
+
+
+def test_jpy_overnight_call_rate_target_era_two() -> None:
+    definition = definition_as_of("JPY", _ts(2006, 3, 9))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target"
+
+
+def test_jpy_returns_none_during_qqe_gap_2013_2016() -> None:
+    # A second intentional gap: 2013-2016 QQE targeted the monetary base.
+    assert definition_as_of("JPY", _ts(2014, 6, 1)) is None
+    assert definition_as_of("JPY", _ts(2013, 4, 4)) is None
+    assert definition_as_of("JPY", _ts(2016, 1, 28)) is None
+
+
+def test_jpy_policy_rate_balance_regime_2016_2024() -> None:
+    definition = definition_as_of("JPY", _ts(2020, 1, 1))
+
+    assert definition is not None
+    assert "Policy-Rate Balance" in definition.instrument_name
+    assert definition.transformation.kind is RateTransformationKind.IDENTITY
+
+
+def test_jpy_transitional_range_march_to_july_2024() -> None:
+    definition = definition_as_of("JPY", _ts(2024, 5, 1))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target Range"
+    assert definition.transformation.kind is RateTransformationKind.TARGET_RANGE_MIDPOINT
+
+    midpoint = definition.transformation.apply(Decimal("0.1"), Decimal("0.0"))
+    assert midpoint == Decimal("0.05")
+
+
+def test_jpy_single_point_target_resumes_july_2024() -> None:
+    definition = definition_as_of("JPY", _ts(2024, 7, 31))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target"
+    assert definition.transformation.kind is RateTransformationKind.IDENTITY
+    assert definition.valid_to is None
+
+
+def test_jpy_all_eras_share_one_canonical_series_key() -> None:
+    keys = {d.series.key for d in definitions_for_currency("JPY")}
+    assert keys == {"JPY_POLICY_RATE"}
+
+
+# ---------------------------------------------------------------------------
 # validate_registry against deliberately broken fixtures
 # ---------------------------------------------------------------------------
 
@@ -164,7 +312,22 @@ def test_validate_registry_rejects_split_series_keys_for_one_currency() -> None:
         _definition(series_b, _ts(2010, 1, 1), None),
     )
 
-    with pytest.raises(ValueError, match="one canonical series key"):
+    with pytest.raises(ValueError, match="identical canonical MacroSeriesDefinition semantics"):
+        validate_registry(broken)
+
+
+def test_validate_registry_rejects_same_key_but_different_semantics() -> None:
+    # FX-42H: the stricter check -- two definitions can share a key string
+    # while disagreeing on economy/unit/category/frequency, and that must
+    # still be rejected.
+    series_a = _series("ZZZ_POLICY_RATE", "ZZZ", unit="PERCENT")
+    series_b = _series("ZZZ_POLICY_RATE", "ZZZ", unit="BASIS_POINTS")
+    broken = (
+        _definition(series_a, _ts(2000, 1, 1), _ts(2010, 1, 1)),
+        _definition(series_b, _ts(2010, 1, 1), None),
+    )
+
+    with pytest.raises(ValueError, match="identical canonical MacroSeriesDefinition semantics"):
         validate_registry(broken)
 
 
@@ -179,15 +342,19 @@ def test_validate_registry_rejects_overlapping_windows() -> None:
         validate_registry(broken)
 
 
-def test_validate_registry_rejects_gaps_between_windows() -> None:
+def test_validate_registry_allows_intentional_gaps_between_windows() -> None:
+    # FX-42H: gaps are no longer rejected -- a currency can have a period
+    # with no comparable canonical scalar at all (see JPY). Combined with
+    # the real registry so the required-currency check doesn't mask this
+    # -- same pattern as test_validate_registry_accepts_well_formed_
+    # contiguous_windows below.
     series = _series("ZZZ_POLICY_RATE", "ZZZ")
-    broken = (
-        _definition(series, _ts(2000, 1, 1), _ts(2009, 1, 1)),
+    with_gap = (
+        _definition(series, _ts(2000, 1, 1), _ts(2005, 1, 1)),
         _definition(series, _ts(2010, 1, 1), None),
     )
 
-    with pytest.raises(ValueError, match="gap in validity"):
-        validate_registry(broken)
+    validate_registry(POLICY_RATE_DEFINITIONS + with_gap)  # must not raise
 
 
 def test_validate_registry_rejects_a_non_terminal_open_ended_definition() -> None:
@@ -221,3 +388,11 @@ def test_validate_registry_accepts_well_formed_contiguous_windows() -> None:
     # currency-coverage requirement.
     combined = POLICY_RATE_DEFINITIONS + ok
     validate_registry(combined)  # must not raise
+
+
+def test_validate_registry_accepts_the_real_registrys_intentional_jpy_gaps() -> None:
+    # The real registry itself relies on the gap-tolerance behavior above --
+    # confirm it directly rather than only via a synthetic ZZZ fixture.
+    jpy_definitions = definitions_for_currency("JPY")
+    assert len(jpy_definitions) >= 5
+    validate_registry(POLICY_RATE_DEFINITIONS)  # must not raise

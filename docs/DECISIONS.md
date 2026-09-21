@@ -4994,3 +4994,181 @@ Per this story's own explicit stop instruction: no rate-history download,
 no pair differential calculation, no carry strategy, no assumption that
 policy rate equals actual tradable carry, no CPI/GDP/employment, no rate
 expectations, and no trading follows this story.
+
+## 2026-09-21 — FX-42H: policy-rate registry semantic hardening
+
+**Scope**: correct FX-42's factual/semantic weaknesses before real
+ingestion (FX-43) begins, without changing FX-42's domain architecture
+(`RateTransformation`, `PolicyRateDefinition`, `ProviderSeriesMapping`,
+the registry/validation shape) or performing any ingestion, differential
+calculation, carry strategy, parameter research, or trading.
+
+**1. Point-in-time safety is now tracked solely on `ProviderSeriesMapping`.**
+FX-41 gave `MacroSeriesDefinition` its own `point_in_time_safety` field
+(defaulting to `UNKNOWN`) alongside `require_point_in_time_safe`. FX-42H
+removes both: a canonical economic CONCEPT is provider-independent by
+construction and has no source of its own to be trustworthy or not about
+-- only a specific `(provider, provider_series_ids)` mapping has a real
+source. `domain/macro_series_definition.py` no longer has a
+`point_in_time_safety` field at all (asserted structurally by
+`test_no_point_in_time_safety_field_exists`); `PointInTimeSafety` itself
+(the enum) is unchanged and still lives in `domain/point_in_time_safety.py`,
+now used only by `ProviderSeriesMapping`.
+
+**2. One combined, fail-closed guard replaces the narrower FX-42 one.**
+FX-42's `require_point_in_time_safe_mapping` checked only
+`point_in_time_safety`. FX-42H replaces it with
+`require_research_usable_mapping`, which requires BOTH `verified is True`
+AND `point_in_time_safety is POINT_IN_TIME_SAFE` -- neither condition
+alone is sufficient: a mapping believed point-in-time-safe in the
+abstract but never confirmed against the live provider is not
+research-usable, and a mapping confirmed to exist but not established as
+point-in-time-safe is not research-usable either. The function reports
+every failing condition, not just the first (`"not verified;
+point_in_time_safety is UNKNOWN"`, for a mapping failing both). No
+mapping in the registry currently passes this guard -- every entry
+remains `UNKNOWN`/`verified=False`, matching FX-42's original posture
+and this story's explicit instruction: do not mark any mapping
+`POINT_IN_TIME_SAFE` merely because the value series exists. FX-43 must
+independently verify how exact `released_at` timestamps are obtained;
+daily effective-date observations alone are not sufficient for H1
+no-lookahead research.
+
+**3. USD's target-point era corrected: 1994-02-04, not 1954.** FX-42
+claimed the concept effectively started with FRED's `DFEDTAR` series
+availability (1954), hedged only in prose. FX-42H moves `valid_from` to
+February 4, 1994 -- the first FOMC meeting after which policy changes
+were announced immediately and explicitly, the point at which an
+explicit numeric target became a contemporaneously PUBLISHED fact rather
+than something inferred after the fact. The 1982-1993 portion of FRED's
+`DFEDTAR` history is documented in the definition's own `notes` as a
+retrospective reconstruction by the data provider, not contemporaneously
+published data, and therefore unsuitable as pristine point-in-time
+historical information -- no canonical definition in this registry
+claims to cover it. `DFEDTARU`/`DFEDTARL`/`DFEDTAR` remain the confirmed
+candidate FRED IDs (unchanged from FX-42).
+
+**4. EUR's canonical scalar corrected: MRO, not DFR continuously.**
+FX-42 chose the ECB Deposit Facility Rate (DFR) as the single continuous
+EUR definition, reasoning from its post-2014 structural-liquidity-surplus
+relevance. FX-42H reverses this for the INITIAL cross-currency
+policy-rate-differential feature: under the ECB's pre-2008 "corridor
+system", the Main Refinancing Operations (MRO) minimum-bid/fixed rate was
+the actively-managed, headline-cited policy signal, with DFR a
+rarely-binding floor far below it -- DFR only became the effective
+binding rate under the post-2014 "floor system", a genuine regime
+difference, not just an emphasis shift. MRO is therefore the historically
+comparable scalar across the ECB's FULL history (1999 onward), matching
+this story's explicit instruction: use the ECB MRO minimum-bid/fixed-rate
+canonical series (`FM.D.U2.EUR.4F.KR.MRR_RT.LEV`) unless primary-source
+verification shows a better continuous choice. DFR is retained in the
+definition's `notes` as a documented CANDIDATE for a later, explicitly
+regime-aware feature (e.g. applicable only from the floor-system era
+onward) -- not discarded, and explicitly NOT to be silently substituted
+back in merely because doing so would improve some later research
+result; any such switch requires its own explicit, documented registry
+change.
+
+**5. JPY no longer claims one continuous definition.** This is FX-42H's
+largest structural change. FX-42 claimed a single continuous "short-term
+policy interest rate" concept from 1998 onward, hedging only that the
+underlying MECHANISM changed. That claim does not survive scrutiny: the
+BoJ's operating TARGET itself changed instrument type, not just
+mechanism -- during its quantitative-easing eras the operating target was
+a quantity (the outstanding balance of current accounts, or later the
+monetary base; both denominated in yen, not percent), which is not a
+"policy rate" in this registry's sense at all. Representing those eras
+with a borrowed or nearby rate value would misrepresent what was actually
+being targeted. FX-42H instead represents five distinct rate-target eras
+sharing one `JPY_POLICY_RATE` canonical series, with INTENTIONAL GAPS
+during the two quantitative-target eras:
+
+  - 1998-04-01 .. 2001-03-19 — overnight call rate target (including
+    ZIRP, 1999-2000)
+  - *(gap)* 2001-03-19 .. 2006-03-09 — Quantitative Easing Policy
+    (current-account-balance target; no rate-scalar definition)
+  - 2006-03-09 .. 2013-04-04 — overnight call rate target resumed
+    (including the 2010 "Comprehensive Monetary Easing" 0-0.1% range,
+    not separately modeled in this pass)
+  - *(gap)* 2013-04-04 .. 2016-01-29 — Quantitative and Qualitative
+    Monetary Easing (monetary-base target; no rate-scalar definition)
+  - 2016-01-29 .. 2024-03-19 — interest rate on policy-rate balances
+    (Negative Interest Rate Policy + Yield Curve Control)
+  - 2024-03-19 .. 2024-07-31 — overnight call rate target RANGE (0% to
+    0.1%; `TARGET_RANGE_MIDPOINT`, mirroring USD's post-2008 pattern)
+  - 2024-07-31 onward — overnight call rate target (single point again)
+
+`definition_as_of("JPY", ...)` correctly returns `None` for any instant
+in either gap -- proven directly by
+`test_jpy_returns_none_during_quantitative_easing_gap_2001_2006` and
+`test_jpy_returns_none_during_qqe_gap_2013_2016`. Every JPY boundary date
+is held to a LOWER confidence bar than the other four currencies given
+the operational complexity involved (the module docstring and each
+definition's own `notes` say so explicitly), and BoJ provider identifiers
+remain entirely unresolved -- every JPY `ProviderSeriesMapping` uses an
+explicit `VERIFY_BOJ_...` placeholder, per this story's own instruction
+that BoJ mapping stays unresolved until primary-source mapping is
+established. FX-43 must confirm every JPY boundary against BoJ primary
+sources before ingesting anything across it.
+
+**6. Registry validation now allows gaps and checks full series
+semantics, not just the key string.** `validate_registry`'s gap-rejection
+check (inherited from FX-42) is removed entirely -- gaps are now a
+legitimate, expected registry state (see JPY above), and
+`definition_as_of`'s existing logic already returns `None` correctly for
+an instant in one without any other code change. The overlap-rejection
+check is unchanged. Separately, FX-42's "same `series.key` string" check
+is replaced with a full `MacroSeriesDefinition` EQUALITY check (`{d.series
+for d in currency_definitions}`, relying on the dataclass's own
+auto-generated `__eq__`): two definitions could previously share a key
+string while silently disagreeing on economy, unit, category, or
+frequency, and FX-42's check would not have caught it --
+`test_validate_registry_rejects_same_key_but_different_semantics` proves
+the stricter check does.
+
+**7. CAD's overnight-target boundary corrected: 1999-02-01, not
+1991-02-01.** FX-42's `valid_from` (the Bank of Canada/Government of
+Canada's joint inflation-control target announcement) reached back to a
+period whose OPERATING FRAMEWORK was never confirmed to match this
+definition's single-point-target instrument. FX-42H moves `valid_from`
+to February 1999, per this story's explicit instruction, as the verified
+modern overnight-target framework boundary giving a clean,
+internationally comparable target definition; the pre-1999 era is
+removed rather than retained as an unconfirmed earlier definition -- if a
+future story confirms its exact instrument via BoC primary sources, it
+should be added as its own explicitly distinct definition, not backdated
+into this one. The provider mapping's placeholder ID is replaced with
+`V39079` (this story's supplied candidate), still `verified=False`,
+subject to FX-43's live API verification.
+
+**8. Confirmed candidate IDs, unchanged from FX-42**: FRED
+`DFEDTAR`/`DFEDTARU`/`DFEDTARL` (USD), BoE `IUDBEDR` (GBP). **New in
+FX-42H**: ECB MRO `FM.D.U2.EUR.4F.KR.MRR_RT.LEV` (EUR, replacing FX-42's
+DFR key), BoC `V39079` (CAD, replacing FX-42's placeholder). **Still
+unresolved**: every BoJ (JPY) mapping, per this story's own instruction
+that BoJ provider mapping stays unresolved until primary-source mapping
+is established -- five `VERIFY_BOJ_...` placeholders, one per era.
+
+**Regression-proof discipline applied**: `require_research_usable_mapping`
+was deliberately reduced to check only `point_in_time_safety` (dropping
+the `verified` check), confirmed the two tests exercising the `verified`
+failure path both failed as expected, then restored.
+`validate_registry`'s series-equality check was deliberately reverted to
+a key-string-only check, confirmed
+`test_validate_registry_rejects_same_key_but_different_semantics` failed
+(masked by the unrelated `missing required currencies` error, itself
+proof the weaker check let a semantically-broken registry through),
+then restored. `validate_registry`'s gap-rejection check was deliberately
+reintroduced, which made the real registry itself fail to IMPORT (not
+just fail a test) because JPY's own intentional gaps tripped it --
+concrete proof the real registry now depends on gap-tolerance, not just
+a synthetic test fixture -- then restored.
+
+**Verification**: `pytest` (875 passed, full suite -- 24 net new/changed
+tests, zero changes to any existing strategy, backtest, candle-data, or
+FX-41/FX-41H macro-observation code), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`.
+
+Per this story's own explicit stop instruction: no ingestion, differential
+calculation, carry strategy, parameter research, or trading follows this
+story.

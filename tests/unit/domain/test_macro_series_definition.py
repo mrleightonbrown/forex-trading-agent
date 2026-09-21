@@ -2,11 +2,7 @@ import pytest
 
 from forex_agent.domain.macro_category import MacroCategory
 from forex_agent.domain.macro_frequency import MacroFrequency
-from forex_agent.domain.macro_series_definition import (
-    MacroSeriesDefinition,
-    require_point_in_time_safe,
-)
-from forex_agent.domain.point_in_time_safety import PointInTimeSafety
+from forex_agent.domain.macro_series_definition import MacroSeriesDefinition
 
 
 def _series(**overrides: object) -> MacroSeriesDefinition:
@@ -22,17 +18,12 @@ def _series(**overrides: object) -> MacroSeriesDefinition:
     return MacroSeriesDefinition(**defaults)  # type: ignore[arg-type]
 
 
-def test_valid_series_definition_defaults_to_unknown_safety() -> None:
+def test_valid_series_definition_holds_fields() -> None:
     series = _series()
 
     assert series.key == "US_CPI_YOY"
-    assert series.point_in_time_safety is PointInTimeSafety.UNKNOWN
-
-
-def test_series_definition_accepts_explicit_safety_classification() -> None:
-    series = _series(point_in_time_safety=PointInTimeSafety.POINT_IN_TIME_SAFE)
-
-    assert series.point_in_time_safety is PointInTimeSafety.POINT_IN_TIME_SAFE
+    assert series.economy == "US"
+    assert series.currency == "USD"
 
 
 def test_rejects_empty_key() -> None:
@@ -85,19 +76,23 @@ def test_no_provider_specific_id_field_exists() -> None:
         "category",
         "unit",
         "frequency",
-        "point_in_time_safety",
     }
 
 
-def test_require_point_in_time_safe_passes_for_safe_series() -> None:
-    series = _series(point_in_time_safety=PointInTimeSafety.POINT_IN_TIME_SAFE)
+def test_no_point_in_time_safety_field_exists() -> None:
+    # FX-42H: point-in-time safety is now tracked solely on
+    # ProviderSeriesMapping, not on the canonical series itself -- see
+    # domain.provider_series_mapping.require_research_usable_mapping.
+    # Asserted structurally so a future field re-add trips this test.
+    assert "point_in_time_safety" not in MacroSeriesDefinition.__dataclass_fields__
 
-    require_point_in_time_safe(series)  # must not raise
+
+def test_two_definitions_with_identical_fields_are_equal() -> None:
+    # Registry validation (FX-42H) relies on MacroSeriesDefinition equality
+    # to detect "same key, different semantics" mismatches -- confirm plain
+    # dataclass equality holds for two structurally identical instances.
+    assert _series() == _series()
 
 
-@pytest.mark.parametrize("safety", [PointInTimeSafety.LATEST_ONLY, PointInTimeSafety.UNKNOWN])
-def test_require_point_in_time_safe_fails_closed(safety: PointInTimeSafety) -> None:
-    series = _series(point_in_time_safety=safety)
-
-    with pytest.raises(ValueError, match="not point-in-time safe"):
-        require_point_in_time_safe(series)
+def test_definitions_differing_in_one_field_are_not_equal() -> None:
+    assert _series() != _series(unit="INDEX_2015_100")

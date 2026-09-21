@@ -81,18 +81,24 @@ Five invariants this data model exists to protect:
    descending, so retrieval never depends on scan order.
 4. **Unsafe latest-only historical data must not be treated as
    research-safe.** `PointInTimeSafety` (`POINT_IN_TIME_SAFE`,
-   `LATEST_ONLY`, `UNKNOWN`) classifies whether a series' source actually
-   preserves revision history. `MacroSeriesDefinition` defaults to
-   `UNKNOWN`, and `require_point_in_time_safe` fails closed — it raises
-   for anything that isn't explicitly `POINT_IN_TIME_SAFE` — so a future
-   research/strategy consumer cannot silently trust an unverified or
-   latest-only source.
+   `LATEST_ONLY`, `UNKNOWN`) classifies whether a source actually
+   preserves revision history. FX-41 originally put this classification
+   on `MacroSeriesDefinition` itself; **FX-42H removed it from there** —
+   a canonical economic concept is provider-independent by construction
+   and has no source of its own to classify. It now lives solely on
+   `ProviderSeriesMapping.point_in_time_safety` (FX-42, see below), and
+   `require_research_usable_mapping` (FX-42H) is the fail-closed guard:
+   a mapping is research-usable only when it is BOTH `verified` (its
+   identifier has been confirmed against the live provider) AND
+   classified `POINT_IN_TIME_SAFE` — either condition alone is
+   insufficient, so a future research/strategy consumer cannot silently
+   trust an unverified, latest-only, or merely-plausible-looking source.
 5. **This story contains no trading hypothesis.** No policy-rate ingestion,
    no FRED/central-bank API client, no economic calendar, no carry or
    rate-differential strategy, no fundamental score, no BUY/SELL decision
    logic. Just the data model and its point-in-time safety invariant.
 
-## Canonical policy-rate registry (FX-42)
+## Canonical policy-rate registry (FX-42; hardened FX-42H)
 
 `domain/policy_rate_registry.py` defines, for USD/EUR/GBP/JPY/CAD, exactly
 one canonical policy-rate concept per currency — still no ingestion, no
@@ -100,24 +106,34 @@ strategy, purely semantics and provider mappings, built on FX-41's
 foundation. It introduces the split FX-41 deferred: canonical economic
 identity (`MacroSeriesDefinition`, provider-independent) versus
 provider/source mapping (`ProviderSeriesMapping`, which provider and
-identifier(s) actually supply the data, and that mapping's own
-point-in-time safety — see `docs/DECISIONS.md`'s FX-42 entry for the full
+identifier(s) actually supply the data, and — since FX-42H — that
+mapping's own, sole-source-of-truth point-in-time safety; see invariant 4
+above and `docs/DECISIONS.md`'s FX-42/FX-42H entries for the full
 reasoning).
 
 Central banks do not express monetary policy identically, and a single
-institution's own practice can change over time (the Federal Reserve's
-December 2008 shift from a single target rate to a target range is this
-registry's example). `PolicyRateDefinition` represents one effective-dated
-interpretation of a currency's canonical series — `valid_from`/`valid_to`
-bound exactly when it applies, and `transformation`
-(`RateTransformation`, explicit and versioned) says precisely how raw
-provider value(s) become one canonical `Decimal` during that window.
-Multiple `PolicyRateDefinition`s for one currency always share the same
-`MacroSeriesDefinition.key`, so a future query against
-`MacroObservationRepository` never needs to know which era's instrument
-mechanics produced a given historical value — `policy_rate_registry`'s own
-`validate_registry` enforces this (and non-overlapping, gap-free validity
-windows) at import time, failing fast on a malformed registry.
+institution's own practice can change over time — sometimes in a way that
+still describes one continuous concept (the ECB's Main Refinancing
+Operations rate, or the Federal Reserve's shift from a single target rate
+to a target range in December 2008), and sometimes in a way that changes
+the INSTRUMENT TYPE itself: the Bank of Japan's quantitative-easing eras
+targeted a quantity (the balance of current accounts, or the monetary
+base), not a scalar interest rate, so no canonical policy-RATE definition
+covers those periods at all. `PolicyRateDefinition` represents one
+effective-dated interpretation of a currency's canonical series —
+`valid_from`/`valid_to` bound exactly when it applies (a half-open
+window), and `transformation` (`RateTransformation`, explicit and
+versioned) says precisely how raw provider value(s) become one canonical
+`Decimal` during that window. Multiple `PolicyRateDefinition`s for one
+currency always share one canonical `MacroSeriesDefinition` — not merely
+the same `key` string, but fully identical semantics (economy, currency,
+category, unit, frequency), enforced by `validate_registry` at import
+time — so a future query against `MacroObservationRepository` never needs
+to know which era's instrument mechanics produced a given historical
+value. `validate_registry` rejects overlapping validity windows but
+deliberately ALLOWS gaps (FX-42H): `definition_as_of` returns `None` for
+an instant that falls in one, exactly representing "no comparable
+canonical scalar existed for this period" rather than fabricating a value.
 
 This story is intentionally narrow: it defines semantics and provider
 mappings only. No rate history is downloaded, no pair differential is

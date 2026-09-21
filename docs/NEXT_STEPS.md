@@ -712,46 +712,67 @@ follows this story.
 No further work has been requested; check in before starting anything
 new here or elsewhere.
 
-## FX-42: canonical central-bank policy-rate registry (complete)
+## FX-42: canonical central-bank policy-rate registry (complete; see
+FX-42H immediately below for corrections)
 
 Defines, for USD/EUR/GBP/JPY/CAD, one canonical policy-rate concept per
 currency plus its provider/source mapping — semantics only, no
 ingestion, no persistence, no strategy. Introduces the explicit split
 FX-41 deferred: `MacroSeriesDefinition` stays provider-independent;
 `ProviderSeriesMapping` (new) records which provider/identifier(s)
-supply a definition and that mapping's own (currently `UNKNOWN`,
-`verified=False`) point-in-time safety. USD is split into two
-effective-dated `PolicyRateDefinition`s (single target point through
-December 16, 2008; target range midpoint from then on, with an
-explicit, versioned `TARGET_RANGE_MIDPOINT` transformation) — the
-required effective-dated/transformed example. EUR/GBP/JPY/CAD are each
-one continuous definition, with institutional history (negative-rate
-periods, facility-rate emphasis shifts, renames, operational-framework
-changes) documented rather than silently spliced. `validate_registry`
-enforces registry-wide invariants at import time. Full details,
-including exactly what FX-43 must still verify before ingestion, in
-`docs/DECISIONS.md`'s FX-42 entry.
+supply a definition. USD is split into two effective-dated
+`PolicyRateDefinition`s (single target point through December 16, 2008;
+target range midpoint from then on, with an explicit, versioned
+`TARGET_RANGE_MIDPOINT` transformation) — the required effective-dated/
+transformed example. `validate_registry` enforces registry-wide
+invariants at import time. FX-42's initial EUR choice (Deposit Facility
+Rate continuously) and its claim that JPY is one continuous definition
+were both corrected by FX-42H below before this registry was relied on
+for anything further. Full details in `docs/DECISIONS.md`'s FX-42 entry.
 
-**Per this story's own explicit stop instruction**: do not download
-rate history, calculate pair differentials, build carry strategies,
-assume policy rate equals actual tradable carry, add CPI/GDP/
-employment, implement rate expectations, or trade as a result of
-completing this story.
+## FX-42H: policy-rate registry semantic hardening (complete)
+
+Corrects FX-42's factual/semantic weaknesses before FX-43 ingestion,
+without changing FX-42's domain architecture. Point-in-time safety is
+now tracked SOLELY on `ProviderSeriesMapping` (`MacroSeriesDefinition.
+point_in_time_safety` and `require_point_in_time_safe` are removed
+entirely), guarded by the new combined `require_research_usable_mapping`
+(fails closed unless a mapping is BOTH `verified` AND
+`POINT_IN_TIME_SAFE` — every mapping in the registry still fails this,
+by design). USD's target-point era now starts 1994-02-04, not 1954
+(the earlier `DFEDTAR` history is a retrospective reconstruction, not
+point-in-time-safe). EUR's canonical scalar is now the ECB MRO
+minimum-bid/fixed rate, not DFR continuously — DFR is documented as a
+candidate future regime-aware feature, explicitly not to be silently
+substituted back in. JPY no longer claims one continuous definition:
+five distinct rate-target eras with INTENTIONAL GAPS during its two
+quantitative-easing eras (2001-2006, 2013-2016), where
+`definition_as_of` correctly returns `None`. `validate_registry` now
+allows gaps and checks full `MacroSeriesDefinition` equality per
+currency, not just the same key string. CAD's boundary now starts
+1999-02-01, not 1991-02-01, with provider ID `V39079` replacing the
+placeholder. BoJ mapping remains entirely unresolved by design. Full
+details, including exactly what FX-43 must still verify before
+ingestion, in `docs/DECISIONS.md`'s FX-42H entry.
+
+**Per this story's own explicit stop instruction**: no ingestion,
+differential calculation, carry strategy, parameter research, or
+trading follows this story.
 
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-43 ingestion, named directly by
-this story's own Definition of Done as the natural next step.
+FX-42's own Definition of Done as the natural next step.
 
 Do not start fundamentals data ingestion (FRED/central-bank/commercial
 provider adapters), news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. FX-41/
-FX-41H/FX-42 above are the explicitly-scoped exceptions (domain model,
-storage-integrity hardening, and canonical registry/provider-mapping
-definitions only — still no provider actually called, no strategy) and
-do not open the door to the rest of this phase. The same goes for the
-downstream epics not in this list at all (Decision Engine, Risk Engine,
-Paper Trading Execution, Performance Analytics, Shadow Trading) — none
-are part of the current phase.
+FX-41H/FX-42/FX-42H above are the explicitly-scoped exceptions (domain
+model, storage-integrity hardening, and canonical registry/provider-
+mapping definitions plus their correction — still no provider actually
+called, no strategy) and do not open the door to the rest of this
+phase. The same goes for the downstream epics not in this list at all
+(Decision Engine, Risk Engine, Paper Trading Execution, Performance
+Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

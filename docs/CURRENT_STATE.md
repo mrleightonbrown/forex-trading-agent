@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-42)_
+_Last updated: 2026-09-21 (FX-42H)_
 
 ## What exists
 
@@ -377,49 +377,78 @@ _Last updated: 2026-09-21 (FX-42)_
   deliberately removed and confirmed to fail the relevant tests before
   being restored. No point-in-time semantics changed. Full details in
   `docs/DECISIONS.md`'s FX-41H entry.
-- **FX-42: canonical central-bank policy-rate registry (complete)**.
-  Semantics and provider mappings only, no persistence, no ingestion, no
-  strategy. `domain/rate_transformation.py` (new): `RateTransformation`
-  (`RateTransformationKind` `IDENTITY`/`TARGET_RANGE_MIDPOINT` + an
-  explicit `version` string) with a real `apply(*raw_values) -> Decimal`
-  method. `domain/provider_series_mapping.py` (new):
-  `ProviderSeriesMapping` (`provider`, `provider_series_ids` tuple, its
-  own `point_in_time_safety`, `verified: bool`, `notes`) +
-  `require_point_in_time_safe_mapping` — the explicit canonical-identity-
-  vs-provider-mapping split FX-41 deferred; every mapping in this
-  registry is `UNKNOWN`/`verified=False` (fail closed — researched in
-  good faith, not confirmed against a live provider). `domain/
-  policy_rate_definition.py` (new): `PolicyRateDefinition` (one
+- **FX-42: canonical central-bank policy-rate registry (complete;
+  corrected by FX-42H below — this bullet describes the CURRENT, post-
+  hardening state)**. Semantics and provider mappings only, no
+  persistence, no ingestion, no strategy. `domain/rate_transformation.py`:
+  `RateTransformation` (`RateTransformationKind` `IDENTITY`/
+  `TARGET_RANGE_MIDPOINT` + an explicit `version` string) with a real
+  `apply(*raw_values) -> Decimal` method. `domain/
+  provider_series_mapping.py`: `ProviderSeriesMapping` (`provider`,
+  `provider_series_ids` tuple, `point_in_time_safety`, `verified: bool`,
+  `notes`) — the explicit canonical-identity-vs-provider-mapping split
+  FX-41 deferred, and (since FX-42H) the SOLE place point-in-time safety
+  is tracked at all (`MacroSeriesDefinition` no longer has its own
+  `point_in_time_safety` field — see the FX-42H bullet below).
+  `domain/policy_rate_definition.py`: `PolicyRateDefinition` (one
   effective-dated definition — `series`, `institution`,
   `instrument_name`, `transformation`, half-open `valid_from`/`valid_to`
   with `covers()`, non-empty `provider_mappings`); `summary()` answers
-  the six required audit questions. `domain/policy_rate_registry.py`
-  (new): `POLICY_RATE_DEFINITIONS` — six definitions covering USD, EUR,
-  GBP, JPY, CAD. USD is split into two effective-dated eras sharing one
-  `USD_POLICY_RATE` series key (single target point, FRED `DFEDTAR`,
-  through December 16, 2008; target range midpoint, FRED
-  `DFEDTARU`/`DFEDTARL`, from then on) — the story's required
-  effective-dated/transformed example. EUR (ECB Deposit Facility Rate,
-  since 1999), GBP (BoE Bank Rate, since 1997), JPY (BoJ short-term
-  policy rate, since 1998), and CAD (BoC Overnight Rate Target, since
-  1991) are each one continuous definition, with `notes` documenting
-  institutional history (negative-rate periods, facility-rate emphasis
-  shifts, instrument renames, operational-framework changes) considered
-  and judged not to be a semantic splice. `definition_as_of`/
+  the six required audit questions. `domain/policy_rate_registry.py`:
+  `POLICY_RATE_DEFINITIONS` — ten definitions covering USD, EUR, GBP,
+  JPY, CAD (JPY needs five to represent its genuine operational-regime
+  history — see FX-42H). USD is split into two effective-dated eras
+  sharing one `USD_POLICY_RATE` series key (single target point, FRED
+  `DFEDTAR`, February 4 1994 through December 16, 2008; target range
+  midpoint, FRED `DFEDTARU`/`DFEDTARL`, from then on) — the story's
+  required effective-dated/transformed example. `definition_as_of`/
   `definitions_for_currency`/`canonical_series_for_currency` provide
   point-in-time definition lookup; `validate_registry` enforces
-  registry-wide invariants (one series key per currency, non-overlapping
-  gap-free validity windows, all five required currencies present) at
-  import time. 70 new tests, including the USD switch-date selection and
-  transformation-correctness cases, `validate_registry` against
-  deliberately broken fixtures, and the six-question `summary()` check.
-  Regression-proof discipline applied to `covers()`'s boundary, the
-  midpoint arithmetic, and `validate_registry`'s overlap/gap checks — each
-  deliberately broken, confirmed to fail the relevant tests, then
-  restored. No date or provider series ID above is confirmed against a
-  live provider — see `docs/DECISIONS.md`'s FX-42 entry for exactly what
-  FX-43 still needs to verify. Full details in `docs/DECISIONS.md`'s
-  FX-42 entry.
+  registry-wide invariants (identical `MacroSeriesDefinition` semantics
+  per currency, non-overlapping validity windows, all five required
+  currencies present — gaps allowed since FX-42H) at import time. No
+  date or provider series ID is confirmed against a live provider — see
+  `docs/DECISIONS.md`'s FX-42/FX-42H entries for exactly what FX-43
+  still needs to verify.
+- **FX-42H: policy-rate registry semantic hardening (complete)**.
+  Corrects FX-42's factual/semantic weaknesses before FX-43 ingestion,
+  without changing FX-42's domain architecture. (1) Removed
+  `MacroSeriesDefinition.point_in_time_safety`/`require_point_in_time_
+  safe` entirely (FX-41) — a canonical concept has no source of its own
+  to classify. (2) Replaced `require_point_in_time_safe_mapping` with
+  `require_research_usable_mapping`, which fails closed unless a mapping
+  is BOTH `verified` AND `POINT_IN_TIME_SAFE` — every mapping in the
+  registry still fails this guard, by design. (3) USD's target-point era
+  now starts 1994-02-04 (first FOMC meeting with immediate, explicit
+  policy announcements), not 1954 — the earlier `DFEDTAR` history is
+  documented as a retrospective reconstruction, not point-in-time-safe.
+  (4) EUR's canonical scalar is now the ECB MRO minimum-bid/fixed rate
+  (`FM.D.U2.EUR.4F.KR.MRR_RT.LEV`), not the Deposit Facility Rate
+  continuously — DFR is documented as a candidate future regime-aware
+  feature, explicitly not to be silently substituted back in. (5) JPY no
+  longer claims one continuous definition: five distinct rate-target eras
+  (overnight-call-rate target ×2, the 2016-2024 policy-rate-balance
+  regime, the transitional March-July 2024 0-0.1% range, and the current
+  single-point-target era) with INTENTIONAL GAPS during the two
+  quantitative-easing eras (2001-2006, 2013-2016) where the BoJ's
+  operating target was a quantity, not a rate — `definition_as_of`
+  correctly returns `None` for any instant in either gap. (6)
+  `validate_registry` now allows gaps (previously rejected) and checks
+  full `MacroSeriesDefinition` equality per currency, not just the same
+  `key` string. (7) CAD's overnight-target boundary now starts
+  1999-02-01, not 1991-02-01, with provider ID `V39079` replacing the
+  placeholder. BoJ mapping remains entirely unresolved (five
+  `VERIFY_BOJ_...` placeholders) — this story explicitly does not
+  attempt to resolve it. 24 net new/changed tests (875 total),
+  including both JPY quantitative-easing gaps, the combined guard's
+  four failure/success paths, a canonical-series-metadata-mismatch
+  rejection, and the corrected USD/EUR/CAD boundaries. Regression-proof
+  discipline applied to the combined guard, the stricter series-equality
+  check, and the gap-tolerance removal — each deliberately reverted,
+  confirmed to fail (the gap-tolerance revert made the real registry
+  fail to IMPORT, not just fail a test, since JPY's own gaps trip the
+  old check), then restored. Full details in `docs/DECISIONS.md`'s
+  FX-42H entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -831,19 +860,19 @@ _Last updated: 2026-09-21 (FX-42)_
   provider-independent domain model and its point-in-time safety
   invariant; nothing populates a real `MacroSeriesDefinition`/
   `MacroObservationVintage` from FRED, a central bank, or any other
-  source yet, and no `MacroSeriesDefinition` is currently classified
-  `POINT_IN_TIME_SAFE` — none has been verified against a real source.
-  FX-41H hardened the storage-level integrity of vintages already in
-  the repository (conflict detection, deterministic tie-breaking) but
-  deliberately did not build any provider mapping. FX-42 built that
-  provider mapping's SHAPE (`ProviderSeriesMapping` inside
-  `PolicyRateDefinition`) and populated it with researched-but-
-  unverified candidate providers/identifiers for USD/EUR/GBP/JPY/CAD —
-  it still does not fetch, store, or verify anything: every mapping is
-  `PointInTimeSafety.UNKNOWN` and `verified=False`, no
+  source yet. FX-41H hardened the storage-level integrity of vintages
+  already in the repository (conflict detection, deterministic
+  tie-breaking) but deliberately did not build any provider mapping.
+  FX-42 built that provider mapping's SHAPE (`ProviderSeriesMapping`
+  inside `PolicyRateDefinition`) and populated it with researched-but-
+  unverified candidate providers/identifiers for USD/EUR/GBP/JPY/CAD;
+  FX-42H corrected several of FX-42's factual boundaries (see above) and
+  made `ProviderSeriesMapping` the SOLE place point-in-time safety is
+  tracked at all. None of this fetches, stores, or verifies anything:
+  every mapping is `PointInTimeSafety.UNKNOWN` and `verified=False`, no
   `MacroObservationVintage` exists for any policy-rate series, and no
-  `MacroSeriesDefinition` is classified `POINT_IN_TIME_SAFE`. Turning
-  a `PolicyRateDefinition`'s provider mapping into real, verified,
+  mapping passes `require_research_usable_mapping`. Turning a
+  `PolicyRateDefinition`'s provider mapping into real, verified,
   persisted `MacroObservationVintage` rows is explicit future work for
   an ingestion story (FX-43), not sketched here.
 

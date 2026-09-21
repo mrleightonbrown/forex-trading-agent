@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from forex_agent.domain._guards import require_currency_code
 from forex_agent.domain.macro_category import MacroCategory
 from forex_agent.domain.macro_frequency import MacroFrequency
-from forex_agent.domain.point_in_time_safety import PointInTimeSafety
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +23,18 @@ class MacroSeriesDefinition:
     a generic economic-data warehouse before there is a second
     consumer that needs one.
 
+    No `point_in_time_safety` field here -- FX-41 originally gave this
+    class one (defaulting to `UNKNOWN`), but FX-42H removed it: a
+    canonical economic CONCEPT ("the USD policy rate") is
+    provider-independent by construction and has no point-in-time
+    trustworthiness of its own to classify -- trustworthiness is a
+    property of whichever SOURCE a research or ingestion consumer
+    actually reads from. That property now lives solely on
+    `ProviderSeriesMapping.point_in_time_safety` (`domain.
+    provider_series_mapping`), guarded there by
+    `require_research_usable_mapping`. See `docs/DECISIONS.md`'s FX-42H
+    entry.
+
     Fields:
         key: stable canonical identifier, e.g. "US_CPI_YOY". Chosen by
             this codebase, not borrowed from any provider.
@@ -40,11 +51,6 @@ class MacroSeriesDefinition:
             code change elsewhere.
         frequency: how often a new observation period is produced (see
             `MacroFrequency`).
-        point_in_time_safety: whether historical as-of queries against
-            this series' vintages can be trusted (see
-            `PointInTimeSafety`). Defaults to UNKNOWN, not
-            POINT_IN_TIME_SAFE -- fail closed until a source is
-            explicitly verified to preserve revision history.
     """
 
     key: str
@@ -53,7 +59,6 @@ class MacroSeriesDefinition:
     category: MacroCategory
     unit: str
     frequency: MacroFrequency
-    point_in_time_safety: PointInTimeSafety = PointInTimeSafety.UNKNOWN
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key.strip():
@@ -67,31 +72,3 @@ class MacroSeriesDefinition:
             raise TypeError(f"category must be a MacroCategory, got {type(self.category)!r}")
         if not isinstance(self.frequency, MacroFrequency):
             raise TypeError(f"frequency must be a MacroFrequency, got {type(self.frequency)!r}")
-        if not isinstance(self.point_in_time_safety, PointInTimeSafety):
-            raise TypeError(
-                "point_in_time_safety must be a PointInTimeSafety, "
-                f"got {type(self.point_in_time_safety)!r}"
-            )
-
-
-def require_point_in_time_safe(series: MacroSeriesDefinition) -> None:
-    """Fail closed: raise unless `series` is classified POINT_IN_TIME_SAFE.
-
-    This is the enforcement point for FX-41's "point-in-time safety
-    classification" requirement. It is a small, standalone guard rather
-    than logic embedded in the repository -- the repository only ever
-    sees a bare `series_key: str` and has no independent way to know a
-    series' safety classification, so any caller that intends to use a
-    repository's as-of query result for historical research must call
-    this guard against the series' own definition first.
-
-    No caller of this guard exists yet in this story -- FX-41 is the
-    data model and the safety invariant, not a research/strategy
-    consumer of it.
-    """
-    if series.point_in_time_safety is not PointInTimeSafety.POINT_IN_TIME_SAFE:
-        raise ValueError(
-            f"series {series.key!r} is not point-in-time safe "
-            f"(classified {series.point_in_time_safety.value}); "
-            "refusing to use it for historical research"
-        )
