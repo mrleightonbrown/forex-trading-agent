@@ -517,7 +517,18 @@ concrete strategy has a real empirical run across the full 10-year,
 5-instrument research dataset. See `docs/DECISIONS.md`'s FX-37 (results)
 entry for a cross-strategy summary.
 
-## FX-38 + FX-38H: pre-development historical holdout (both complete) — resulting research questions
+## FX-38 + FX-38H + FX-38H.1: pre-development historical holdout (all complete) — resulting research questions
+
+FX-38H.1 (external review of FX-38H itself) closed the last
+methodological gap — holdout warm-up bounded below by each series' own
+`earliest_usable_research_candle` (previously could reach slightly
+before it), plus explicit `CandleSource.NATIVE` filtering everywhere.
+Rerun confirmed the effect is exactly as small as predicted: XAU_USD's
+two candidates are bit-for-bit identical to FX-38H (no pre-existing
+data there to leak in the first place); USD_JPY's shift by ~0.001 PF.
+No result below changed materially, no sign flip anywhere was created
+or removed — the questions this raises are therefore unchanged from
+FX-38H's own list.
 
 FX-38 extended the research dataset back to each instrument's true
 earliest OANDA candle (FX pairs ~2002, XAU/USD 2006) and evaluated

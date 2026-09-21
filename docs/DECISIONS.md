@@ -3796,14 +3796,15 @@ merely mediocre.** But **2022-2023 is NOT** — it's mid-pack-to-weak in
 7 of 8 series, genuinely strong in exactly one
 (USD_JPY/MultiTimeframeTrendStrategy). Treating "2022-2025" as one
 uniformly-strong recent stretch across all eight series, as originally
-written, conflated a real pattern in ONE of its two years with the
-other. The accurate statement: **2024-2025 specifically (not the pair)
-is commonly, though not universally, one of each series' strongest
-windows** — real corroborating evidence that the development period
-partly overlaps a genuinely strong recent stretch, consistent with
-(not a replacement for) Part E's own finding that holdout results come
-back weaker than development without flipping sign — but a narrower,
-one-year claim, not the two-year one this entry originally made.
+written, conflated a real pattern in ONE of its two 2-year buckets with
+the other. The accurate statement: **the single 2024-2025 bucket
+specifically (not the 2022-2025 pair of buckets) is commonly, though
+not universally, one of each series' strongest windows** — real
+corroborating evidence that the development period partly overlaps a
+genuinely strong recent stretch, consistent with (not a replacement
+for) Part E's own finding that holdout results come back weaker than
+development without flipping sign — but a narrower, single-bucket
+claim, not the two-bucket one this entry originally made.
 
 XAU_USD/`EmaCrossoverTrendRegimeGatedStrategy` remains the one clear
 exception to "no single episode dominates" either way: its apparent
@@ -4112,3 +4113,103 @@ changed in this part, only the analysis script), `ruff`, `mypy
 (`CloseChannelBreakoutStrategy`'s slow engine across 10 sealed windows
 dominates; the other three strategies' incremental engines completed
 in seconds).
+
+## 2026-09-21 — FX-38H.1: holdout provenance & warm-up hardening
+
+External review of FX-38H itself (accepted the usable-history
+methodology, sealed windows, reproducibility, and the XAU density
+correction outright) found one real remaining inconsistency and one
+fragility, packaged as this small follow-up story.
+
+**Issue 1 — the holdout warm-up still used data just declared
+unusable.** `_window_candles`'s warm-up start was an unconditional
+`window_start - WARMUP_DAYS`, with no lower bound. For USD_JPY's
+holdout window (`window_start` = 2005-01-20), that reached back to
+~2004-11-21 — squarely inside the 2002-2004 stretch FX-38H's own
+usable-history algorithm had just excluded as not research-grade. A
+recursively-smoothed indicator (EMA/ADX) seeded partly from that data
+could carry a trace of it into the first real holdout decisions —
+small, but a genuine inconsistency between what the story concluded
+about that data and how it was actually used.
+
+**Fix (external review's own preferred option)**: `warmup_start =
+max(window_start - WARMUP_DAYS, earliest_usable_for_this_series)`.
+For the FIRST holdout window, `window_start` already equals that
+series' own `earliest_usable_research_candle` (by construction — see
+FX-38H part 1), so this now correctly collapses to ZERO pre-window
+warm-up: the strategy warms up naturally on its own first bars,
+sacrificing only its first handful of possible trades, with every
+piece of state provably derived from research-grade data only. The
+development window (2016-09-19) is unaffected — 60 days earlier is
+itself deep inside usable history for every series, so the bound is
+never binding there. Applied independently to
+`MultiTimeframeTrendStrategy`'s own H1 and H4 boundaries, not its
+combined (later) usable start — H1 data between its own usable start
+and the later H4-driven combined boundary is still legitimately usable
+H1 data, just not yet part of the combined window.
+
+**Issue 2 — `source=None` means "any provenance," not "native."**
+Every candle fetch across `determine_usable_history_start.py` and
+`run_fx38h_analysis.py` used `source=None`, which FX-27 defines as "no
+provenance filter" — not "native OANDA history," which is what this
+research protocol actually specifies and currently happens to hold.
+Harmless today (the research dataset has no overlapping NATIVE/
+AGGREGATED pairs to collide), but fragile: a future H4 aggregation
+alongside native H4 data would let this exact code path see duplicate
+timestamps, fail series validation, or (in the usable-history script's
+own present-times set) silently collapse two different-provenance
+observations into one. **Fix**: every fetch now explicitly passes
+`source=CandleSource.NATIVE` — an explicit provenance invariant
+instead of an implicit, currently-harmless default.
+
+**Rerun, otherwise unchanged (same locked parameters, same protocol)**:
+
+| Combination | Period | FX-38H n / PF / Exp | FX-38H.1 n / PF / Exp | Changed? |
+|---|---|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | Development | 1948 / 1.078 / +0.01982 JPY | 1948 / 1.078 / +0.01982 JPY | No |
+| USD_JPY + CloseChannelBreakoutStrategy | Holdout | 2319 / 1.071 / +0.01650 JPY | 2319 / 1.070 / +0.01629 JPY | Negligible (PF −0.001) |
+| USD_JPY + MultiTimeframeTrendStrategy | Development | 426 / 1.312 / +0.09105 JPY | 426 / 1.312 / +0.09105 JPY | No |
+| USD_JPY + MultiTimeframeTrendStrategy | Holdout | 537 / 1.145 / +0.04227 JPY | 536 / 1.146 / +0.04254 JPY | Negligible (n −1, PF +0.001) |
+| XAU_USD + CloseChannelBreakoutStrategy | Development | 1895 / 1.200 / +1.55492 USD | 1895 / 1.200 / +1.55492 USD | No |
+| XAU_USD + CloseChannelBreakoutStrategy | Holdout | 2157 / 1.058 / +0.28350 USD | 2157 / 1.058 / +0.28350 USD | **None — bit-for-bit identical** |
+| XAU_USD + MultiTimeframeTrendStrategy | Development | 433 / 1.250 / +2.23988 USD | 433 / 1.250 / +2.23988 USD | No |
+| XAU_USD + MultiTimeframeTrendStrategy | Holdout | 452 / 1.179 / +1.08224 USD | 452 / 1.179 / +1.08224 USD | **None — bit-for-bit identical** |
+
+**XAU_USD's two candidates are bit-for-bit identical, not just close —
+explained, not coincidental**: XAU/USD's `earliest_usable_research_
+candle` already equals its `earliest_available_candle` (FX-38H part
+1's own correction). Even the OLD, unbounded warm-up fetch
+(`window_start - 60 days`) reached back to a date BEFORE any XAU/USD
+data exists at all, so it already returned zero candles before the
+fix — there was never any actual not-research-grade data available to
+accidentally include for XAU/USD in the first place. The fix only
+changes behavior for the four FX pairs, where real (if sparse)
+2002-2004 data does exist and could previously leak in.
+
+**The two comparison-strategy sign-flips persist, essentially
+unchanged**: `EmaCrossoverStrategy` on USD_JPY (holdout PF 0.973 →
+0.974) and `EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD (holdout
+PF 0.890 → 0.890, identical, same "no prior data existed" reasoning as
+above).
+
+**Conclusion, exactly as the external review predicted**: removing the
+pre-usable-history warm-up changes at most a handful of early holdout
+trades and moves profit factor by ~0.001 for the affected instruments,
+literally nothing for XAU_USD's two candidates. No candidate result
+changes materially; no sign flips anywhere are created or removed.
+This closes the last methodological inconsistency in FX-38/FX-38H's
+holdout protocol — the finding was already sound; it now also has no
+remaining gap between what the story concluded about pre-2005 data and
+how that data was used.
+
+Also fixed per external review's minor note: FX-38H's own Part-F
+correction (above) said "narrower, one-year claim" — `2024-2025` is
+itself a 2-year bucket, so the accurate phrasing is "narrower, single-
+bucket claim" (vs. the original two-bucket "2022-2025" one) — corrected
+in place, not a substantive change.
+
+**Verification**: `pytest` (full suite, no production `src/` code
+changed beyond the previously-added `domain/sealed_window_backtest.py`
+— only the two analysis scripts changed), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`. Rerun total: ~2 hours (same profile as
+FX-38H part 2 — `CloseChannelBreakoutStrategy` dominates).

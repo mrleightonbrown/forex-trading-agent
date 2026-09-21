@@ -34,6 +34,13 @@ membership checks per expected slot).
 Purely a read against the already-backfilled Postgres research dataset
 (FX-38 Part B) -- no OANDA calls, no data mutated or deleted.
 
+FX-38H.1: explicitly filters to `CandleSource.NATIVE` (FX-27's actual
+provenance filter), not `source=None` (which means "any provenance,
+unfiltered" -- FX-27's own documented default, not "native only", a
+real distinction this research protocol should encode explicitly even
+though the research dataset currently holds no overlapping NATIVE/
+AGGREGATED pairs to disambiguate).
+
 Run:
     uv run python scripts/determine_usable_history_start.py
 
@@ -53,6 +60,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from forex_agent.domain.candle_boundary import candle_end_time, candle_start_boundary
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -196,7 +204,7 @@ async def main() -> None:
                     granularity,
                     earliest_ingested,
                     UtcTimestamp(SCAN_THROUGH),
-                    source=None,
+                    source=CandleSource.NATIVE,
                 )
                 present_times = {c.start_time.value for c in candles if c.is_finalized}
                 usable_start, _windows = _find_usable_start(

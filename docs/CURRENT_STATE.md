@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-20 (FX-38H)_
+_Last updated: 2026-09-21 (FX-38H.1)_
 
 ## What exists
 
@@ -241,6 +241,17 @@ _Last updated: 2026-09-20 (FX-38H)_
   (`scripts/determine_usable_history_start.py`, `scripts/run_fx38h_
   analysis.py`) alongside a machine-readable artifact
   (`research_results/fx38h/results.json`).
+  **FX-38H.1** (external review of FX-38H itself, complete): closed the
+  last methodological gap — holdout warm-up could previously reach
+  slightly before a series' own `earliest_usable_research_candle`
+  (fixed: bounded below by it, per-series, independently for
+  `MultiTimeframeTrendStrategy`'s H1/H4), and every candle fetch now
+  explicitly requests `CandleSource.NATIVE` rather than relying on
+  `source=None`'s "any provenance" default. Rerun confirmed the effect
+  is exactly as small as expected: XAU_USD's two candidates are
+  bit-for-bit identical (no pre-existing data there to have leaked in
+  the first place), USD_JPY's shift by ~0.001 PF. No result changes
+  materially; no sign flips created or removed.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

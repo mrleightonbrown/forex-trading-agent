@@ -15,6 +15,23 @@ a machine-readable artifact (`research_results/fx38h/results.json`)
 alongside the markdown tables it prints, so the numbers in
 docs/DECISIONS.md are not markdown-only claims.
 
+FX-38H.1 (external review of FX-38H itself): two hardening fixes.
+(1) `_window_candles`'s warm-up bound is now `max(window_start -
+WARMUP_DAYS, earliest_usable)`, not an unconditional `window_start -
+WARMUP_DAYS` -- for the FIRST holdout window, `window_start` already
+equals `earliest_usable`, so this now correctly produces ZERO
+pre-window warm-up rather than quietly seeding EMA/ADX state from
+data this same story just declared not research-grade. The
+development window is unaffected (60 days before 2016-09-19 is deep
+inside usable history either way). Applied independently to H1 and H4
+for `MultiTimeframeTrendStrategy`, per its own two separate usable-
+history boundaries. (2) every candle fetch now explicitly requests
+`CandleSource.NATIVE` (FX-27's real provenance filter), not
+`source=None` (which means "any provenance, unfiltered" -- a real
+distinction this research protocol should encode even though the
+dataset currently holds no overlapping NATIVE/AGGREGATED pairs to
+disambiguate).
+
 Run:
     uv run python scripts/run_fx38h_analysis.py
 
@@ -39,6 +56,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from forex_agent.domain.backtest import run_backtest
 from forex_agent.domain.backtest_metrics import BacktestMetrics, compute_metrics
 from forex_agent.domain.candle import Candle
+from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.incremental_strategy import run_backtest_incremental
 from forex_agent.domain.instrument import Instrument
@@ -108,11 +126,25 @@ async def _window_candles(
     granularity: Granularity,
     window_start: datetime,
     window_end: datetime,
+    earliest_usable: datetime,
     warmup_days: int = WARMUP_DAYS,
 ) -> tuple[list[Candle], list[Candle]]:
-    warmup_start = window_start - timedelta(days=warmup_days)
+    """FX-38H.1: warm-up never reaches before `earliest_usable` for THIS
+    series -- for the holdout window, `window_start` already equals
+    `earliest_usable` (see call sites), so this collapses to zero
+    pre-window warm-up there (the strategy warms up naturally on its own
+    first bars, sacrificing only its first handful of possible trades,
+    rather than seeding indicator state from data this same story just
+    declared not research-grade). For the development window, the 60
+    days before 2016-09-19 are themselves deep inside usable history, so
+    the bound is never binding there -- ordinary warm-up, unaffected."""
+    warmup_start = max(window_start - timedelta(days=warmup_days), earliest_usable)
     all_candles = await repo.get_range(
-        instrument, granularity, UtcTimestamp(warmup_start), UtcTimestamp(window_end), source=None
+        instrument,
+        granularity,
+        UtcTimestamp(warmup_start),
+        UtcTimestamp(window_end),
+        source=CandleSource.NATIVE,
     )
     warmup = [c for c in all_candles if c.start_time.value < window_start]
     window = [c for c in all_candles if c.start_time.value >= window_start]
@@ -184,7 +216,12 @@ async def _run_sealed_strategy(
             ("development", DEV_START, DEV_END),
         ]:
             warmup, window = await _window_candles(
-                repo, instrument, Granularity.H1, window_start, window_end
+                repo,
+                instrument,
+                Granularity.H1,
+                window_start,
+                window_end,
+                earliest_usable=EARLIEST_USABLE_H1[instrument],
             )
             sealed = run_sealed_window_backtest(make_run(instrument), warmup, window)
             trades = simulate_trades(sealed, window)
@@ -204,20 +241,29 @@ async def _run_sealed_mtt(repo: SqlAlchemyCandleRepository) -> None:
             ("holdout", holdout_start, DEV_START),
             ("development", DEV_START, DEV_END),
         ]:
+            # FX-38H.1: H1 and H4 warm-up are each bounded by THEIR OWN
+            # earliest_usable, independently -- not by EARLIEST_USABLE_MTT
+            # (their combined max), since e.g. H1 data between its own
+            # usable start and the later, MTT-combined boundary is still
+            # legitimately usable H1 data, just not yet part of the
+            # MTT-combined window.
             warmup, window = await _window_candles(
-                repo, instrument, Granularity.H1, window_start, window_end
+                repo,
+                instrument,
+                Granularity.H1,
+                window_start,
+                window_end,
+                earliest_usable=EARLIEST_USABLE_H1[instrument],
             )
-            # Anchored to THIS window's own start (holdout or development),
-            # not EARLIEST_USABLE_H4 unconditionally -- for the development
-            # window that would otherwise reach back to ~2002/2006 for no
-            # reason, defeating the whole point of a bounded warm-up buffer.
-            h4_start = window_start - timedelta(days=WARMUP_DAYS)
+            h4_start = max(
+                window_start - timedelta(days=WARMUP_DAYS), EARLIEST_USABLE_H4[instrument]
+            )
             h4_candles = await repo.get_range(
                 instrument,
                 Granularity.H4,
                 UtcTimestamp(h4_start),
                 UtcTimestamp(window_end),
-                source=None,
+                source=CandleSource.NATIVE,
             )
 
             def _run(candles: list[Candle], h4: list[Candle] = h4_candles) -> list:
@@ -243,7 +289,12 @@ async def _run_sealed_ccb(repo: SqlAlchemyCandleRepository) -> None:
             ("development", DEV_START, DEV_END),
         ]:
             warmup, window = await _window_candles(
-                repo, instrument, Granularity.H1, window_start, window_end
+                repo,
+                instrument,
+                Granularity.H1,
+                window_start,
+                window_end,
+                earliest_usable=EARLIEST_USABLE_H1[instrument],
             )
             t0 = time.time()
             sealed = run_sealed_window_backtest(
@@ -290,7 +341,7 @@ async def _audit_boundary_straddling(repo: SqlAlchemyCandleRepository) -> None:
             Granularity.H1,
             UtcTimestamp(audit_start),
             UtcTimestamp(audit_end),
-            source=None,
+            source=CandleSource.NATIVE,
         )
         if not audit_candles:
             continue
@@ -308,7 +359,7 @@ async def _audit_boundary_straddling(repo: SqlAlchemyCandleRepository) -> None:
             Granularity.H4,
             UtcTimestamp(audit_start),
             UtcTimestamp(audit_end),
-            source=None,
+            source=CandleSource.NATIVE,
         )
         mtt = IncrementalMultiTimeframeTrendStrategy(h4_candles=h4_candles)
         hyps = run_backtest_incremental(mtt, audit_candles)
