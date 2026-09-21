@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-20 (FX-38)_
+_Last updated: 2026-09-20 (FX-38H)_
 
 ## What exists
 
@@ -200,29 +200,47 @@ _Last updated: 2026-09-20 (FX-38)_
   correction and the objective usable-history-start algorithm that
   found it are in FX-38H's own entry.
 - **Pre-development historical holdout evaluation (FX-38 Parts D-G,
-  complete)**: `EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGated
-  Strategy`, `MultiTimeframeTrendStrategy`, and `CloseChannelBreakout
-  Strategy` — all with their existing default parameters, unchanged —
+  then re-run and hardened by FX-38H — both complete)**:
+  `EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGatedStrategy`,
+  `MultiTimeframeTrendStrategy`, and `CloseChannelBreakoutStrategy` —
+  all with their existing default parameters, unchanged throughout —
   evaluated separately on the already-inspected 2016-2026 development
-  window and the newly-available pre-2016 historical holdout (each
-  instrument's own earliest candle through 2016-09-18). None of the
-  story's four candidate combinations (`USD_JPY`/`XAU_USD` ×
-  `CloseChannelBreakoutStrategy`/`MultiTimeframeTrendStrategy`) flip
-  sign between periods, but all four are measurably weaker in holdout
-  than in development — the expected regression-to-the-mean pattern
-  for combinations selected BY the development data. Two comparison
-  strategies on the SAME two instruments (`EmaCrossoverStrategy` on
+  window and a pre-2016 historical holdout. FX-38's own first pass
+  used the raw technical earliest-available candle and a single
+  continuous run sliced by `entry_time`; external review found two
+  real methodological gaps (no objective usable-history threshold, and
+  a possible boundary-straddling trade leak), both fixed by FX-38H:
+  holdout now starts at each series' own objectively-determined
+  `earliest_usable_research_candle`, and every window (both
+  development AND holdout) is economically sealed (`domain.sealed_
+  window_backtest`) — no trade's entry or exit price can come from
+  outside its own window. **The finding survives, on firmer ground**:
+  none of the story's four candidate combinations (`USD_JPY`/`XAU_USD`
+  × `CloseChannelBreakoutStrategy`/`MultiTimeframeTrendStrategy`) flip
+  sign between periods under either methodology; two comparison
+  strategies on the same two instruments (`EmaCrossoverStrategy` on
   USD_JPY, `EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD) DO
-  sign-flip. Time-stability slicing (2-year and yearly, USD_JPY/
-  XAU_USD, all four strategies) found the apparent trend/breakout
-  pattern predates 2016 (comparable strong multi-year windows exist as
-  far back as 2006-2015) but is also measurably concentrated in an
-  unusually strong 2022-2025 stretch across all eight series studied —
-  and found one clear "one exceptional episode" case (XAU_USD's
-  ADX-gated EMA leaning heavily on 2020-2021 alone). No strategy in
-  this story is described as validated. Full results, all metrics, and
-  the four-combination comparison table are in `docs/DECISIONS.md`'s
-  FX-38 Parts D-F entry.
+  sign-flip, unchanged by the more rigorous rerun. A direct audit found
+  FX-38's original boundary-straddling exposure real but numerically
+  negligible (at most 1 straddling trade per combination, out of
+  hundreds to thousands). Time-stability slicing (2-year and yearly,
+  USD_JPY/XAU_USD, all four strategies) found the apparent trend/
+  breakout pattern predates 2016, and — corrected by FX-38H after an
+  overstated first version — found `2024-2025` specifically (not
+  "2022-2025" as a pair) near-best in 7 of 8 series studied, plus one
+  clear "one exceptional episode" case (XAU_USD's ADX-gated EMA
+  leaning heavily on 2020-2021 alone). No strategy in this story is
+  described as validated; the natural next question (statistical
+  significance of the ~1.05-1.18 holdout profit factors, accounting
+  for trade dependence and regime clustering) is open, not pursued
+  here. Full results, the four-combination comparison table showing
+  exactly what changed between FX-38 and FX-38H and why, the
+  boundary-straddling audit, and the corrected time-stability
+  conclusion are in `docs/DECISIONS.md`'s FX-38/FX-38H entries. The
+  actual analysis programs are committed
+  (`scripts/determine_usable_history_start.py`, `scripts/run_fx38h_
+  analysis.py`) alongside a machine-readable artifact
+  (`research_results/fx38h/results.json`).
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

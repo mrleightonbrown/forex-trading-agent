@@ -180,9 +180,8 @@ def test_force_closes_at_the_windows_own_last_candle_not_beyond() -> None:
 
     assert sealed_trades
     sealed_last_trade = sealed_trades[-1]
-    assert (
-        sealed_last_trade.exit_time.value == window_end
-    ), "must force-close exactly at the window's own last candle"
+    force_close_message = "must force-close exactly at the window's own last candle"
+    assert sealed_last_trade.exit_time.value == window_end, force_close_message
     assert sealed_last_trade.exit_time.value < continuous_exit_time
     assert sealed_last_trade.exit_price != continuous_exit_price
 

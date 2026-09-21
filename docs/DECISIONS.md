@@ -3767,26 +3767,51 @@ than four separate coincidences (see below).
 
 ### Part F conclusion — does the USD_JPY/XAU_USD trend/breakout behavior predate 2016?
 
-**Yes, partially — it is not purely a feature of the 2016-2026 macro
-environment, but the strongest evidence for it IS concentrated in
-recent years.** Every one of the 8 (instrument × strategy) time-series
-above shows comparably strong 2-year windows well before 2016 (USD_JPY
-MTT and gated-EMA both peak in 2012-2015; XAU_USD's four strategies
-all show real positive stretches in 2006-2011) — so this is not a
-pattern that simply switched on in 2016. But a second, independent
-pattern is equally clear and consistent across ALL EIGHT series: **the
-two most recent full 2-year windows (2022-2025) are at or near each
-series' own best**, most sharply for XAU_USD (all four strategies) and
-USD_JPY/MultiTimeframeTrendStrategy. That both things are true at once
-is the honest answer: there IS a longer-run pattern predating 2016,
-AND the specific period used to select these candidates also happens
-to sit inside an unusually strong recent stretch — which is exactly
-why Part E's holdout numbers come back weaker than development without
-flipping sign. XAU_USD/`EmaCrossoverTrendRegimeGatedStrategy` is the
-one clear exception to "no single episode dominates": its apparent
-edge is disproportionately one 2020-2021 episode, not a distributed
-pattern — and that is also the one candidate-adjacent combination that
-outright sign-flips in Part E.
+**Yes — it is not purely a feature of the 2016-2026 macro environment.**
+Every one of the 8 (instrument × strategy) time-series above shows
+comparably strong 2-year windows well before 2016 (USD_JPY MTT and
+gated-EMA both peak in 2012-2015; XAU_USD's four strategies all show
+real positive stretches in 2006-2011) — this is not a pattern that
+simply switched on in 2016.
+
+**Correction (FX-38H, external review)**: this entry originally also
+claimed "the two most recent full 2-year windows (2022-2025) are at or
+near each series' own best... across ALL EIGHT series." That overstates
+what the data actually shows — checked by ranking, not re-eyeballed:
+
+| Series | 2022-2023 rank (of its own full 2-year buckets) | 2024-2025 rank |
+|---|---|---|
+| USD_JPY/EmaCrossoverStrategy | mid (6th of 12) | top-3 |
+| USD_JPY/EmaCrossoverTrendRegimeGatedStrategy | low (11th of 13) | top-4 |
+| USD_JPY/MultiTimeframeTrendStrategy | top-2 | top-3 |
+| USD_JPY/CloseChannelBreakoutStrategy | mid (4th-5th of 12) | top-3 |
+| XAU_USD/EmaCrossoverStrategy | mid (6th-7th of 10) | **best** |
+| XAU_USD/EmaCrossoverTrendRegimeGatedStrategy | mid-low (4th-5th of 10) | mid-low (4th-5th) |
+| XAU_USD/MultiTimeframeTrendStrategy | mid (6th-7th of 10) | **best** |
+| XAU_USD/CloseChannelBreakoutStrategy | low (9th of 10) | **best** (excl. partial 2026-2027) |
+
+**2024-2025 is genuinely near-best (top 4) in 7 of 8 series — the one
+exception is XAU_USD/EmaCrossoverTrendRegimeGatedStrategy, where it is
+merely mediocre.** But **2022-2023 is NOT** — it's mid-pack-to-weak in
+7 of 8 series, genuinely strong in exactly one
+(USD_JPY/MultiTimeframeTrendStrategy). Treating "2022-2025" as one
+uniformly-strong recent stretch across all eight series, as originally
+written, conflated a real pattern in ONE of its two years with the
+other. The accurate statement: **2024-2025 specifically (not the pair)
+is commonly, though not universally, one of each series' strongest
+windows** — real corroborating evidence that the development period
+partly overlaps a genuinely strong recent stretch, consistent with
+(not a replacement for) Part E's own finding that holdout results come
+back weaker than development without flipping sign — but a narrower,
+one-year claim, not the two-year one this entry originally made.
+
+XAU_USD/`EmaCrossoverTrendRegimeGatedStrategy` remains the one clear
+exception to "no single episode dominates" either way: its apparent
+edge is disproportionately one 2020-2021 episode (this table's own
+2022-2023 AND 2024-2025 ranks for it are both mediocre, reinforcing
+that its real driver is neither of the two originally-claimed recent
+windows) — and that is also the one candidate-adjacent combination
+that outright sign-flips in Part E.
 
 ## 2026-09-20 — FX-38H (part 1): objective usable-history threshold + sealed evaluation windows
 
@@ -3892,3 +3917,198 @@ confirmed all 8 pass again.
 
 **Verification**: `pytest` (604 passed, unit/contract/replay), `ruff`,
 `mypy --strict`, `pre-commit run --all-files`.
+
+## 2026-09-20 — FX-38H (part 2): results — rerun from usable history, sealed windows
+
+`scripts/run_fx38h_analysis.py` (new, committed — this IS the
+reproducible source of every number below, not a markdown-only claim;
+also writes `research_results/fx38h/results.json`, a machine-readable
+artifact with full experiment config/metadata alongside every metric).
+Same locked default strategy parameters as FX-38 throughout — nothing
+tuned. Holdout windows now start at each series' own `earliest_usable_
+research_candle` (FX-38H part 1) instead of the raw technical start;
+every window (both holdout AND development, per the external review's
+own criterion 8) is economically sealed (`domain.sealed_window_
+backtest`): a 60-day explicit warm-up buffer before the window (>> the
+longest locked period, 50), portfolio starts flat at the window's own
+first candle, and force-close happens at the window's own last candle
+— no trade's entry or exit price can come from outside its window.
+
+### Development vs. holdout, by strategy (sealed windows, usable-history holdout start)
+
+**EmaCrossoverStrategy**
+
+| Instrument | Period | n | L/S | Win% | Expectancy | PF |
+|---|---|---|---|---|---|---|
+| EUR_USD | holdout | 1424 | 712/712 | 0.277 | -0.00044 USD | 0.893 |
+| EUR_USD | development | 1166 | 583/583 | 0.317 | -0.00015 USD | 0.938 |
+| GBP_USD | holdout | 1391 | 695/696 | 0.308 | -0.00012 USD | 0.975 |
+| GBP_USD | development | 1182 | 591/591 | 0.292 | -0.00024 USD | 0.927 |
+| USD_JPY | holdout | 1421 | 710/711 | 0.286 | -0.00812 JPY | 0.973 |
+| USD_JPY | development | 1121 | 561/560 | 0.312 | +0.02610 JPY | 1.084 |
+| USD_CAD | holdout | 1436 | 718/718 | 0.280 | -0.00026 CAD | 0.920 |
+| USD_CAD | development | 1208 | 604/604 | 0.269 | -0.00047 CAD | 0.830 |
+| XAU_USD | holdout | 1170 | 585/585 | 0.303 | +0.20195 USD | 1.032 |
+| XAU_USD | development | 1137 | 569/568 | 0.293 | +1.23126 USD | 1.128 |
+
+**EmaCrossoverTrendRegimeGatedStrategy**
+
+| Instrument | Period | n | L/S | Win% | Expectancy | PF |
+|---|---|---|---|---|---|---|
+| EUR_USD | holdout | 424 | 203/221 | 0.335 | +0.00011 USD | 1.029 |
+| EUR_USD | development | 296 | 148/148 | 0.311 | -0.00070 USD | 0.746 |
+| GBP_USD | holdout | 395 | 202/193 | 0.372 | +0.00034 USD | 1.073 |
+| GBP_USD | development | 307 | 152/155 | 0.326 | +0.00030 USD | 1.081 |
+| USD_JPY | holdout | 357 | 155/202 | 0.322 | +0.04389 JPY | 1.136 |
+| USD_JPY | development | 293 | 119/174 | 0.317 | +0.03225 JPY | 1.090 |
+| USD_CAD | holdout | 346 | 177/169 | 0.275 | -0.00117 CAD | 0.688 |
+| USD_CAD | development | 290 | 148/142 | 0.303 | -0.00048 CAD | 0.836 |
+| XAU_USD | holdout | 364 | 175/189 | 0.297 | -0.80484 USD | 0.890 |
+| XAU_USD | development | 313 | 142/171 | 0.304 | +2.67158 USD | 1.224 |
+
+**MultiTimeframeTrendStrategy**
+
+| Instrument | Period | n | L/S | Win% | Expectancy | PF |
+|---|---|---|---|---|---|---|
+| EUR_USD | holdout | 543 | 246/297 | 0.276 | -0.00043 USD | 0.895 |
+| EUR_USD | development | 427 | 217/210 | 0.316 | -0.00022 USD | 0.904 |
+| GBP_USD | holdout | 524 | 260/264 | 0.309 | +0.00081 USD | 1.181 |
+| GBP_USD | development | 459 | 228/231 | 0.305 | -0.00018 USD | 0.944 |
+| USD_JPY | holdout | 537 | 284/253 | 0.309 | +0.04227 JPY | 1.145 |
+| USD_JPY | development | 426 | 248/178 | 0.340 | +0.09105 JPY | 1.312 |
+| USD_CAD | holdout | 539 | 267/272 | 0.271 | -0.00055 CAD | 0.827 |
+| USD_CAD | development | 464 | 246/218 | 0.278 | -0.00024 CAD | 0.912 |
+| XAU_USD | holdout | 452 | 230/222 | 0.325 | +1.08224 USD | 1.179 |
+| XAU_USD | development | 433 | 268/165 | 0.314 | +2.23988 USD | 1.250 |
+
+**CloseChannelBreakoutStrategy**
+
+| Instrument | Period | n | L/S | Win% | Expectancy | PF |
+|---|---|---|---|---|---|---|
+| EUR_USD | holdout | 2527 | 1263/1264 | 0.350 | -0.00007 USD | 0.977 |
+| EUR_USD | development | 2066 | 1033/1033 | 0.343 | -0.00024 USD | 0.883 |
+| GBP_USD | holdout | 2517 | 1258/1259 | 0.347 | -0.00012 USD | 0.969 |
+| GBP_USD | development | 2129 | 1065/1064 | 0.349 | -0.00035 USD | 0.876 |
+| USD_JPY | holdout | 2319 | 1160/1159 | 0.359 | +0.01650 JPY | 1.071 |
+| USD_JPY | development | 1948 | 974/974 | 0.367 | +0.01982 JPY | 1.078 |
+| USD_CAD | holdout | 2523 | 1262/1261 | 0.336 | -0.00033 CAD | 0.877 |
+| USD_CAD | development | 2104 | 1052/1052 | 0.328 | -0.00038 CAD | 0.835 |
+| XAU_USD | holdout | 2157 | 1078/1079 | 0.363 | +0.28350 USD | 1.058 |
+| XAU_USD | development | 1895 | 948/947 | 0.356 | +1.55492 USD | 1.200 |
+
+### The four candidate combinations: FX-38 vs. FX-38H, exactly what changed and why
+
+| Combination | Period | FX-38 n / PF / Exp | FX-38H n / PF / Exp | What changed | Why |
+|---|---|---|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | Development | 1948 / 1.078 / +0.01982 JPY | 1948 / 1.078 / +0.01982 JPY | Nothing | Dev window already fully "usable"; both methodologies enter it equally warmed up |
+| USD_JPY + CloseChannelBreakoutStrategy | Holdout | 2358 / 1.051 / +0.01243 JPY | 2319 / 1.071 / +0.01650 JPY | n ↓39, PF ↑0.020, Exp ↑33% | Usable-history threshold drops USD_JPY's 2002-2004 ramp-up-era trades; audit found 1 boundary-straddling trade removed too. Net: slightly BETTER |
+| USD_JPY + MultiTimeframeTrendStrategy | Development | 426 / 1.312 / +0.09105 JPY | 426 / 1.312 / +0.09105 JPY | Nothing | Same as above |
+| USD_JPY + MultiTimeframeTrendStrategy | Holdout | 539 / 1.137 / +0.04017 JPY | 537 / 1.145 / +0.04227 JPY | n ↓2, PF ↑0.008, Exp ↑5% | Usable-history threshold only (audit found 0 straddling trades for this combo) — small effect since MTT's own H4 warm-up requirement already limited exposure to the sparse era |
+| XAU_USD + CloseChannelBreakoutStrategy | Development | 1895 / 1.200 / +1.55492 USD | 1895 / 1.200 / +1.55492 USD | Nothing | Same as above |
+| XAU_USD + CloseChannelBreakoutStrategy | Holdout | 2157 / 1.057 / +0.28111 USD | 2157 / 1.058 / +0.28350 USD | PF ↑0.001, Exp ↑0.9% | XAU/USD's usable start EQUALS its earliest available candle (FX-38H part 1's own correction) — no ramp-up era to exclude; audit found exactly 1 straddling trade, explaining the tiny residual shift |
+| XAU_USD + MultiTimeframeTrendStrategy | Development | 433 / 1.250 / +2.23988 USD | 433 / 1.250 / +2.23988 USD | Nothing | Same as above |
+| XAU_USD + MultiTimeframeTrendStrategy | Holdout | 452 / 1.179 / +1.08224 USD | 452 / 1.179 / +1.08224 USD | **Nothing measurable** | XAU usable start = earliest available AND the audit found ZERO straddling trades for this specific combination — FX-38's original number was already exactly right here |
+
+**None of the four candidates flip sign under the more rigorous
+methodology — if anything, two (both USD_JPY combinations) look
+slightly BETTER, and the other two (both XAU_USD combinations) are
+essentially unchanged, confirming FX-38's original XAU_USD numbers
+were already sound.** This directly answers the external review's own
+framing: "all four selected candidates survived the first historical
+challenge without sign-flipping" — FX-38H's more careful methodology
+CONFIRMS that finding rather than undermining it, and the two holdout
+PFs the review specifically flagged as "only around 1.05" (USD_JPY/CCB
+and XAU_USD/CCB) come back at 1.071 and 1.058 respectively — still
+modest, still not "validated," but not weaker either.
+
+**The two comparison-strategy sign-flips FX-38 found also persist,
+unchanged**: `EmaCrossoverStrategy` on USD_JPY (development PF 1.084,
+positive; holdout PF 0.973, still negative — was 0.916, so the flip is
+real but less dramatic under the cleaner methodology) and
+`EmaCrossoverTrendRegimeGatedStrategy` on XAU_USD (development PF
+1.224; holdout PF 0.890, was 0.888 — essentially identical). Applying
+more rigorous methodology did not manufacture or erase a single sign
+flip anywhere in this story — a real, if modest, piece of evidence
+that FX-38's qualitative conclusions were not artifacts of its
+methodological gaps.
+
+### Boundary-straddling audit of FX-38's original methodology
+
+Per external review's criterion 9: audited FX-38's ORIGINAL continuous-
+run-sliced-by-`entry_time` methodology directly (not assumed), over a
+±400-day window around the 2016-09-19 boundary (comfortably wider than
+any holding period observed anywhere in this project's trade tables —
+at most a few weeks) for all 4 strategies × 5 instruments:
+
+| Strategy | Instrument | Straddling trades | Local PF | PF excl. straddlers |
+|---|---|---|---|---|
+| ema_crossover_v1 | EUR_USD | 1 | 0.688 | 0.685 |
+| ema_crossover_trend_regime_gated_v1 | EUR_USD | 0 | 0.695 | 0.695 |
+| multi_timeframe_trend_v1 | EUR_USD | 0 | 0.569 | 0.569 |
+| close_channel_breakout_v1 | EUR_USD | 1 | 0.917 | 0.913 |
+| ema_crossover_v1 | GBP_USD | 1 | 1.170 | 1.153 |
+| ema_crossover_trend_regime_gated_v1 | GBP_USD | 0 | 1.483 | 1.483 |
+| multi_timeframe_trend_v1 | GBP_USD | 1 | 1.233 | 1.185 |
+| close_channel_breakout_v1 | GBP_USD | 1 | 1.021 | 1.015 |
+| ema_crossover_v1 | USD_JPY | 1 | 1.001 | 1.005 |
+| ema_crossover_trend_regime_gated_v1 | USD_JPY | 0 | 1.418 | 1.418 |
+| multi_timeframe_trend_v1 | USD_JPY | 0 | 1.026 | 1.026 |
+| close_channel_breakout_v1 | USD_JPY | 1 | 1.015 | 1.019 |
+| ema_crossover_v1 | USD_CAD | 1 | 1.033 | 1.037 |
+| ema_crossover_trend_regime_gated_v1 | USD_CAD | 1 | 0.741 | 0.750 |
+| multi_timeframe_trend_v1 | USD_CAD | 1 | 1.151 | 1.161 |
+| close_channel_breakout_v1 | USD_CAD | 1 | 0.883 | 0.886 |
+| ema_crossover_v1 | XAU_USD | 1 | 0.897 | 0.882 |
+| ema_crossover_trend_regime_gated_v1 | XAU_USD | 1 | 0.431 | 0.391 |
+| multi_timeframe_trend_v1 | XAU_USD | 0 | 0.977 | 0.977 |
+| close_channel_breakout_v1 | XAU_USD | 1 | 0.934 | 0.931 |
+
+**At most ONE straddling trade per (strategy, instrument) combination,
+never more, across all 20 combinations** — the boundary-straddling
+leak was real (confirmed directly, not assumed) but numerically tiny:
+even within this narrow ±400-day AUDIT window alone (not the full
+multi-year holdout, where its share is smaller still), removing the
+single straddling trade shifts PF by at most ~0.05 (`multi_timeframe_
+trend_v1`/GBP_USD: 1.233 → 1.185) and typically much less. Against
+FX-38's full holdout sample sizes (hundreds to thousands of trades),
+this is immaterial — consistent with, not contradicted by, the small
+holdout-vs-FX-38H deltas the four-candidate table above already shows.
+The methodological fix (sealed windows) was worth making on principle
+— a real trade should never be able to use a price from outside its
+own evaluation period — but it was not hiding a result-changing bug.
+
+### Overall FX-38H conclusion
+
+Every criterion in the external review is addressed: an objective,
+locked-before-running usable-history threshold (not 2002/2006, not an
+assumed 2005/2007 either — computed); sealed evaluation windows applied
+to BOTH development and holdout; a direct audit of FX-38's original
+boundary-straddling exposure, quantified and shown to be immaterial;
+the Part-F 2022-2025 overstatement corrected with a ranked re-
+derivation; and the actual analysis program committed
+(`scripts/determine_usable_history_start.py`,
+`scripts/run_fx38h_analysis.py`) alongside a machine-readable artifact
+(`research_results/fx38h/results.json`) — nothing here is a markdown-
+only claim. No strategy parameter was changed, no year was added or
+dropped based on performance, and no result was known before the
+protocol (usable-history rule, sealed-window design, warm-up size,
+audit margin) was locked.
+
+**The finding stands, now on firmer ground**: all four candidate
+combinations remain positive and sign-stable across development and
+historical holdout; two comparison strategies on the same instruments
+do not. Two of the four candidates' holdout profit factors are still
+modest (USD_JPY/CloseChannelBreakoutStrategy 1.071, XAU_USD/
+CloseChannelBreakoutStrategy 1.058) — not evidence of a durable edge,
+and not described as validated. The external review's own suggested
+next question — whether PF in the 1.05-1.18 range is statistically
+distinguishable from noise once trade dependence and regime clustering
+are accounted for — remains open and is the natural next step, not
+pursued in this story.
+
+**Verification**: `pytest` (604 passed — no production strategy code
+changed in this part, only the analysis script), `ruff`, `mypy
+--strict`, `pre-commit run --all-files`. Total runtime: ~2 hours
+(`CloseChannelBreakoutStrategy`'s slow engine across 10 sealed windows
+dominates; the other three strategies' incremental engines completed
+in seconds).
