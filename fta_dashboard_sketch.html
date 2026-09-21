@@ -227,6 +227,21 @@
     return div.innerHTML;
   }
 
+  var DISPLAY_DECIMAL_PLACES = 7;
+
+  // Display-only rounding -- the underlying report JSON (and this
+  // function's own input) always keeps full Decimal precision; this
+  // only shortens what's actually shown on screen. Trims trailing
+  // zeros after rounding so short values (e.g. "37.990") don't grow
+  // padding, and never touches non-numeric strings (e.g. "76 / 168").
+  function roundForDisplay(value, places) {
+    var num = parseFloat(value);
+    if (isNaN(num) || String(value).indexOf("/") !== -1) return String(value);
+    var fixed = num.toFixed(places);
+    fixed = fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    return fixed;
+  }
+
   function fmtMetric(value, opts) {
     opts = opts || {};
     if (value === null || value === undefined) {
@@ -239,7 +254,9 @@
         cls += n > 0 ? " pos" : n < 0 ? " neg" : "";
       }
     }
-    return '<span class="' + cls + '">' + escapeHtml(value) + "</span>";
+    var displayValue = roundForDisplay(value, DISPLAY_DECIMAL_PLACES);
+    var fullPrecisionTitle = displayValue !== String(value) ? ' title="' + escapeHtml(value) + '"' : "";
+    return '<span class="' + cls + '"' + fullPrecisionTitle + ">" + escapeHtml(displayValue) + "</span>";
   }
 
   function fmtPercent(value) {
