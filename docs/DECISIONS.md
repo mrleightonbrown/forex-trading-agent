@@ -4485,3 +4485,116 @@ new), `ruff`, `mypy --strict`, `pre-commit run --all-files`. Runtime
 ~28 minutes (the two `CloseChannelBreakoutStrategy` holdout reruns
 dominate; everything else — `MultiTimeframeTrendStrategy` and both
 negative controls, all incremental engines — completed in seconds).
+
+## 2026-09-21 — FX-40: backtest run report export + static HTML results viewer
+
+Observability/reporting only, requested to close out the pure-
+technical-strategy research phase FX-39 ended: a human should be able
+to inspect a real backtest run visually (metrics, an equity curve,
+individual trades) without reading terminal output or Markdown tables.
+No strategy behavior changed; `domain/backtest.py`, `trade_simulation.
+py`, and `backtest_metrics.py` are all untouched, and no new third-
+party dependency (Python or JavaScript) was introduced.
+
+**`domain/backtest_report.py`** (new): a pure serializer, not a use
+case or port — no file/DB/network I/O, no metric recomputation, no
+backtesting, no trade simulation. `to_report_dict(...)` turns an
+already-computed `list[SimulatedTrade]` + `BacktestMetrics | None`
+(plus caller-supplied metadata: strategy key/version/parameters,
+instrument, granularity, source, requested window, git commit,
+generated-at) into the canonical JSON-serializable report dict.
+`git_commit` and `generated_at` are supplied by the CALLER rather than
+read internally (a `subprocess`/`datetime.now()` call inside this
+function would make it impure and impossible to test against an exact
+expected value). Every `Decimal`-derived value — prices, `Money`
+amounts (serialized as just their `.amount` string; the report's own
+`instrument` field already fixes the currency, so nothing is lost),
+ratios (win_rate/profit_factor/Sharpe/Sortino), and any `Decimal`-typed
+strategy parameter — serializes as a JSON string; plain integers
+(counts, `int`-typed parameters) stay JSON integers; a mathematically
+undefined metric (e.g. `profit_factor` with zero gross loss, or every
+metric when there are zero trades — `metrics=None`, not a fabricated
+placeholder `BacktestMetrics`) serializes as JSON `null`, never `"None"`
+or an invented `0`. Also provides `config_identifier` (sha256 of a
+canonical sorted-keys JSON encoding of a parameter set, truncated to 8
+hex characters — deliberately NOT Python's own randomized-per-process
+`hash()`) and `report_filename` (deterministic, readable filenames;
+non-default parameter configurations get an 8-character suffix so two
+genuinely different configurations for the same strategy/instrument/
+granularity/date-range can never collide).
+
+24 tests (`tests/unit/domain/test_backtest_report.py`), including an
+exact-shape assertion against the real `compute_metrics` output (not
+hand-faked numbers), a dedicated "serializer performs no
+recalculation" test (passes METRICS that deliberately don't match the
+given trades and confirms the report reflects exactly what was passed
+in), and a filename-collision test. Regression-proof discipline
+applied twice: a `float()`-instead-of-`str()` bug in metric
+serialization, and a disabled filename-suffix branch, were each
+confirmed to fail the relevant tests before being reverted.
+
+**`scripts/export_backtest_report.py`** (new): composes this project's
+own already-trusted, unmodified pipeline — `SqlAlchemyCandleRepository.
+get_range(..., source=CandleSource.NATIVE)` (never `source=None`,
+matching FX-38H.1's own provenance hardening) → `run_backtest`/
+`run_backtest_incremental` → `simulate_trades` → `compute_metrics` →
+`to_report_dict` → write report + update `reports/index.json` +
+regenerate `reports/dashboard_data.js`. An explicit, small mapping (not
+a general strategy-plugin architecture) supports the 7 concrete
+strategies with real research findings — `EmaCrossoverStrategy`,
+`EmaCrossoverTrendRegimeGatedStrategy`, `CloseChannelBreakoutStrategy`,
+`VolatilityExpansionBreakoutStrategy`, `MeanReversionStrategy`,
+`TimeSeriesMomentumStrategy`, `MultiTimeframeTrendStrategy` — using
+each strategy's existing recommended engine (incremental where one
+exists and is golden-parity-tested; the slow reference otherwise, e.g.
+`CloseChannelBreakoutStrategy`, `MeanReversionStrategy`,
+`TimeSeriesMomentumStrategy`, which have none).
+`MultiTimeframeTrendStrategy` is handled as its own explicit special
+case (needs an H4 series too) rather than forced into the other
+strategies' uniform shape. Index updates are idempotent (re-exporting
+the same report never duplicates its filename) and use an atomic
+write-temp-then-replace pattern so an interruption can't leave a
+malformed `index.json`.
+
+**`fta_dashboard_sketch.html`** (new, repo root): a single static HTML
+file — no ES modules, no npm, no build step, no server. Loads
+`reports/dashboard_data.js` via an ordinary classic `<script src=...>`
+tag (browsers commonly block `fetch()` of local files under `file://`,
+so this is the load-bearing mechanism, not an enhancement) and reads
+`const RUNS = window.FTA_BACKTEST_RUNS || [];`. Shows strategy/
+instrument/parameters/granularity/source/date range/git commit,
+all eight metric cards (trade count, win rate, profit factor,
+expectancy, total P&L, max drawdown, Sharpe, Sortino — each rendering
+"N/A" rather than a fabricated value when the underlying JSON field is
+`null`), a cumulative-P&L equity curve drawn with a plain `<canvas>` 2D
+context (a native browser API, not a dependency), and a sortable-by-
+time trade table. A `<select>` run-picker (plain HTML/JS, no framework)
+appears whenever more than one report exists. Empty/error states are
+explicit rather than crashes: no reports at all shows install/usage
+instructions instead of a blank page; a report with zero trades shows
+"This run has zero trades" and an explicit "No trades to chart"
+message instead of an empty or broken chart.
+
+**Verified against three real exported runs** (`ema_crossover_v1`/
+EUR_USD, `close_channel_breakout_v1`/EUR_USD with a non-default
+`lookback=30` override — confirming the filename-suffix collision
+protection works live, not just in unit tests — and
+`multi_timeframe_trend_v1`/USD_JPY, exercising the H4-dependent path),
+plus a deliberate zero-trade export (very short date range) to confirm
+the empty-trades path end-to-end before being removed from the final
+demonstration set. `reports/` (the three JSON reports, `index.json`,
+`dashboard_data.js`) is committed alongside the code, matching this
+project's own `research_results/` precedent, so the demonstration is
+reviewable from git history directly, not just reproducible by rerunning
+the script.
+
+**Verification**: `pytest` (713 passed, full suite — no changes to
+`domain/backtest.py`/`trade_simulation.py`/`backtest_metrics.py`),
+`ruff`, `mypy --strict`, `pre-commit run --all-files`. JavaScript
+syntax verified directly (`node --check`) since this project has no
+JS test tooling and none was added. No new Python or JavaScript
+dependency of any kind.
+
+Per this story's own explicit stop instruction: no broader dashboard,
+database-backed report storage, live monitoring, paper-trading UI,
+strategy-editing UI, or API work follows this story.

@@ -644,6 +644,29 @@ of the above by tuning a strategy's parameters, adding a new technical
 strategy, or unilaterally starting the next architectural phase
 (regime/fundamentals/news/decision-engine work) without being asked.
 
+## FX-40: backtest run report export + static HTML results viewer (complete)
+
+Observability/reporting only, built to close out the pure-technical-
+strategy research phase: `scripts/export_backtest_report.py` exports
+any of 7 concrete strategies' backtest runs as canonical JSON reports;
+`fta_dashboard_sketch.html` (repo root) displays them with no server,
+no build step, and no new dependency — open it directly from disk.
+Three real runs are committed in `reports/` as a working demonstration.
+Full details in `docs/DECISIONS.md`'s FX-40 entry.
+
+**Per this story's own explicit stop instruction**: do not proceed into
+a broader dashboard, database-backed report storage, live monitoring,
+paper-trading UI, strategy-editing UI, or API work as a result of
+completing this story. If a future story wants the dashboard to cover
+more strategies, that is a small, explicit addition to `STRATEGIES` in
+the export script, not a reason to generalize it into a plugin
+architecture.
+
+No further work has been requested; check in before starting anything
+new here or elsewhere — including the next architectural phase
+(regime/fundamentals/news/decision-engine work) mentioned as the reason
+this story was requested now.
+
 
 Do not start fundamentals, news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. The same

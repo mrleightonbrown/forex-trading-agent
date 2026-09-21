@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-39)_
+_Last updated: 2026-09-21 (FX-40)_
 
 ## What exists
 
@@ -284,6 +284,35 @@ _Last updated: 2026-09-21 (FX-39)_
   Per this story's own locked, unconditional prohibition: no parameter,
   strategy, instrument, or period was changed in response to this
   result. Full tables in `docs/DECISIONS.md`'s FX-39 entries.
+- **FX-40: backtest run report export + static HTML results viewer
+  (complete)**. Observability/reporting only — no strategy behavior
+  changed, `domain/backtest.py`/`trade_simulation.py`/`backtest_
+  metrics.py` untouched, no new dependency. `domain/backtest_report.py`
+  (new): a pure serializer (`to_report_dict`, no file/DB/network I/O,
+  no metric recomputation) turning an already-computed `list[
+  SimulatedTrade]` + `BacktestMetrics | None` into the canonical report
+  schema — every `Decimal`-derived value (prices, `Money` amounts,
+  ratios, `Decimal`-typed strategy parameters) as a JSON string, plain
+  integers as JSON integers, mathematically undefined metrics as JSON
+  `null` (never fabricated). `scripts/export_backtest_report.py` (new)
+  composes the existing, unmodified `get_range(...,
+  source=CandleSource.NATIVE)` → `run_backtest`/`run_backtest_
+  incremental` → `simulate_trades` → `compute_metrics` → `to_report_
+  dict` pipeline for a small explicit mapping of 7 concrete strategies
+  (not a general plugin architecture), writing `reports/<name>.json` +
+  idempotently maintaining `reports/index.json` (atomic write) +
+  regenerating `reports/dashboard_data.js`. `fta_dashboard_sketch.html`
+  (new, repo root): a single static file, no ES modules/npm/server —
+  loads `dashboard_data.js` via a classic `<script src>` tag (works
+  under `file://`, where `fetch()` of local files is commonly blocked),
+  shows all required metrics (with explicit "N/A" for null fields, not
+  fabricated zeros), a `<canvas>`-drawn equity curve (native browser
+  API, no charting library), a trade table, a run selector for multiple
+  reports, and explicit empty/zero-trade states. Verified against three
+  real exported runs (`ema_crossover_v1`, `close_channel_breakout_v1`
+  with a non-default parameter override, `multi_timeframe_trend_v1`
+  exercising the H4-dependent path); `reports/` is committed alongside
+  the code. Full details in `docs/DECISIONS.md`'s FX-40 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
