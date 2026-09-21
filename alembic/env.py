@@ -13,6 +13,9 @@ from forex_agent.infrastructure.db.models.candle import CandleRow  # noqa: F401
 from forex_agent.infrastructure.db.models.ingestion_watermark import (  # noqa: F401
     IngestionWatermarkRow,
 )
+from forex_agent.infrastructure.db.models.macro_observation_vintage import (  # noqa: F401
+    MacroObservationVintageRow,
+)
 
 config = context.config
 

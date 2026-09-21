@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-40)_
+_Last updated: 2026-09-21 (FX-41)_
 
 ## What exists
 
@@ -313,6 +313,48 @@ _Last updated: 2026-09-21 (FX-40)_
   with a non-default parameter override, `multi_timeframe_trend_v1`
   exercising the H4-dependent path); `reports/` is committed alongside
   the code. Full details in `docs/DECISIONS.md`'s FX-40 entry.
+- **FX-41: point-in-time fundamental data model (complete)**.
+  Architecture/foundation only — no external provider, no ingestion
+  pipeline, no strategy, no score, no decision logic. `domain/
+  macro_series_definition.py` (new): `MacroSeriesDefinition` frozen
+  dataclass (`key`, `economy`, `currency`, `category`, `unit`,
+  `frequency`, `point_in_time_safety`) — canonical, provider-independent
+  series identity; no FRED/central-bank/vendor ID anywhere in it. Not
+  persisted in its own table — kept a pure in-memory value object (see
+  `docs/DECISIONS.md`). Also carries `require_point_in_time_safe`, a
+  fail-closed guard raising unless a series is classified
+  `PointInTimeSafety.POINT_IN_TIME_SAFE` (defaults to `UNKNOWN`, not
+  safe). `domain/macro_observation_vintage.py` (new):
+  `MacroObservationVintage` frozen dataclass — one immutable
+  point-in-time-safe fact per revision, with `observation_period`,
+  `released_at`, and optional `effective_at` kept explicitly distinct
+  (never collapsed); `value` is `Decimal`-only; a revision is a new
+  instance with a later `released_at` and higher `revision_sequence`,
+  never a mutation. `domain/macro_category.py`/`macro_frequency.py`/
+  `point_in_time_safety.py` (new): small closed enums
+  (`MacroCategory`, `MacroFrequency`, `PointInTimeSafety`).
+  `application/ports/macro_observation_repository.py` (new):
+  `MacroObservationRepository` Protocol — `add_vintage` (write, never
+  overwrites), `latest_available_as_of`/`observation_as_known_at`
+  (point-in-time reads); the invariant "a query at T cannot return a
+  vintage whose `released_at` is after T" is the entire contract.
+  `infrastructure/db/models/macro_observation_vintage.py` +
+  `infrastructure/db/macro_observation_repository.py` (new):
+  `MacroObservationVintageRow`/`SqlAlchemyMacroObservationRepository` —
+  every write is `INSERT ... ON CONFLICT DO NOTHING` keyed on
+  `(series_key, observation_period, revision_sequence)`, so no
+  application code path ever issues an UPDATE against a historical
+  vintage row; both read methods filter `released_at <= as_of` before
+  ordering. Migration `7f04ea660a34` (new table, composite unique
+  constraint, `(series_key, released_at)` index). Tests cover the
+  story's exact worked examples (February CPI released March 12 13:30
+  UTC; revision 2.1→2.4 between July 1/August 1 with as-of queries at
+  July 15/August 15), an explicit no-future-leakage test, Decimal
+  fidelity, and naive-timestamp rejection — against both a
+  `FakeMacroObservationRepository` and live Postgres; the `released_at`
+  filter was deliberately removed and confirmed to fail these tests
+  before being restored. Full details in `docs/DECISIONS.md`'s FX-41
+  entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -718,6 +760,14 @@ _Last updated: 2026-09-21 (FX-40)_
   concurrency protection makes this safe to build later, but nothing
   currently triggers `BackfillCandles` other than the one-off
   `scripts/build_research_dataset.py` run.
+- Any fundamental/macro data ingestion, provider adapter, economic
+  calendar, carry or rate-differential strategy, fundamental score, or
+  fundamentals-driven decision logic — FX-41 built only the
+  provider-independent domain model and its point-in-time safety
+  invariant; nothing populates a real `MacroSeriesDefinition`/
+  `MacroObservationVintage` from FRED, a central bank, or any other
+  source yet, and no `MacroSeriesDefinition` is currently classified
+  `POINT_IN_TIME_SAFE` — none has been verified against a real source.
 
 ## Next
 

@@ -4598,3 +4598,148 @@ dependency of any kind.
 Per this story's own explicit stop instruction: no broader dashboard,
 database-backed report storage, live monitoring, paper-trading UI,
 strategy-editing UI, or API work follows this story.
+
+## 2026-09-21 — FX-41: point-in-time fundamental data model
+
+**Numbering note**: the story spec supplied for this work called
+itself "FX-40" and its Definition of Done named the following story
+"FX-41". This codebase already has a committed, shipped FX-40 (the
+backtest report export/viewer, previous entry). To avoid colliding
+with that established numbering, this story is recorded as **FX-41**
+throughout — commits, code comments, and this entry — and the next
+story (the spec's own "FX-41") will be FX-42 when picked up. Flagged
+explicitly here rather than silently overwriting or ignoring the
+discrepancy.
+
+**Scope**: architecture/foundation only. At historical time T, the
+system may only see fundamental information that was actually
+available to the market at or before T — this story builds the domain
+model and repository contract that makes that statement checkable, and
+nothing else. No external provider, no ingestion pipeline, no
+economic calendar, no carry/rate-differential strategy, no fundamental
+score, no BUY/SELL decision logic, no LLM/news/sentiment analysis. No
+existing strategy, backtest, or candle-data code path is touched.
+
+**`MacroSeriesDefinition`** (`domain/macro_series_definition.py`):
+canonical, provider-independent series identity — `key`, `economy`,
+`currency`, `category` (`MacroCategory`), `unit`, `frequency`
+(`MacroFrequency`), `point_in_time_safety` (`PointInTimeSafety`,
+defaulting to `UNKNOWN`). Deliberately holds no FRED series ID, no
+central-bank API code, no vendor ticker — a future infrastructure
+adapter maps a specific provider's identifiers onto this identity, not
+the other way around, so the domain model supports an official
+central-bank source, a FRED/ALFRED-style source, or a commercial
+provider without changing shape. **Not persisted in its own database
+table** — a deliberate choice to keep it a pure in-memory value object.
+Reasoning: this story is explicitly told not to "design a giant
+generic economic-data warehouse," and a `macro_series_definitions`
+table would be exactly that ahead of any real second consumer needing
+one (no ingestion adapter exists yet to populate it, and the one
+existing consumer — `require_point_in_time_safe` — only needs the
+object in hand, not a lookup by key). If a future story needs to look
+up series metadata by key without the caller holding the object
+already, that is the trigger to add persistence for this type — not
+before.
+
+**`MacroObservationVintage`** (`domain/macro_observation_vintage.py`):
+a single class represents both a first release and every later
+revision — there is deliberately no separate "MacroObservation"
+wrapper type despite the story's own "MacroObservation /
+MacroObservationVintage" naming. A first release is not conceptually
+different from a revision: it is simply the vintage with
+`revision_sequence == 0`. Modelling them as two classes would invent a
+distinction with no distinct behaviour — again, the "giant generic
+warehouse" shape this story is told not to build. Three timestamps
+kept explicitly distinct per the story's own requirement:
+`observation_period` (which reference period — a calendar fact),
+`released_at` (when this vintage first became publicly knowable — the
+field every point-in-time query filters on), and optional
+`effective_at` (when a value takes legal/economic effect, only set
+when materially later than `released_at`; `None` for the large
+majority of series). `value` is `Decimal`-only. No `ingested_at`
+domain field — mirrors the existing precedent that `Candle` (domain)
+carries no such field while `CandleRow` (infrastructure) gets
+`created_at` for free from `TimestampMixin`; inventing a redundant
+domain-level ingestion timestamp would duplicate what the persistence
+layer's existing convention already covers.
+
+**Point-in-time safety classification** (`domain/
+point_in_time_safety.py`): `PointInTimeSafety` is `POINT_IN_TIME_SAFE`
+/ `LATEST_ONLY` / `UNKNOWN`. `require_point_in_time_safe` (in
+`macro_series_definition.py`, not `point_in_time_safety.py` — keeping
+the enum itself dependency-free avoided a circular import with the
+dataclass it classifies) fails closed: it raises for anything that
+isn't explicitly `POINT_IN_TIME_SAFE`, including `UNKNOWN`.
+`MacroSeriesDefinition.point_in_time_safety` defaults to `UNKNOWN`, not
+`POINT_IN_TIME_SAFE` — an unverified source must never silently pass
+as research-safe. Enforcement lives as a small standalone guard rather
+than inside the repository: the repository only ever sees a bare
+`series_key: str` and has no independent way to know a series' safety
+classification, so a future research/strategy consumer (none exists
+yet — this story is not one) must call this guard against the series'
+own definition before trusting an as-of query result for historical
+research.
+
+**`MacroObservationRepository`** (`application/ports/
+macro_observation_repository.py`, a `Protocol`): `add_vintage` (write,
+never overwrites), `latest_available_as_of(series_key, as_of)` ("what's
+the newest data point the market could have known about at all, by
+this instant, in its most up-to-date known form" — orders by
+`observation_period` then `released_at`, both descending), and
+`observation_as_known_at(series_key, observation_period, as_of)`
+("for this specific period, what was the most recently-revised value
+known by this instant" — orders by `released_at` descending within
+that fixed period). Neither method takes an `effective_at` cutoff —
+`effective_at` describes when a value takes effect, not when it became
+knowable, so it plays no part in what a point-in-time query is allowed
+to see. The shared invariant, stated once in the port's docstring: "a
+query at timestamp T must never return a vintage whose `released_at`
+is after T."
+
+**Persistence** (`infrastructure/db/models/
+macro_observation_vintage.py`, `infrastructure/db/
+macro_observation_repository.py`, migration `7f04ea660a34`): one table,
+`macro_observation_vintages`, following `CandleRow`'s established
+mixin pattern (`UUIDPrimaryKeyMixin`, `TimestampMixin`). Every write in
+`SqlAlchemyMacroObservationRepository` is `INSERT ... ON CONFLICT DO
+NOTHING` — there is no UPDATE anywhere in the class, so a historical
+vintage row can never be mutated once stored, satisfying "must not
+overwrite historical observations destructively" at the SQL level, not
+just by convention. Unique constraint on `(series_key,
+observation_period, revision_sequence)` — a vintage's natural identity,
+making a duplicate insert idempotent rather than something callers
+must deduplicate by hand. Index on `(series_key, released_at)`
+supports both query methods' shared `released_at <= as_of` filter.
+Explicitly not a generic economic-data warehouse: one table, no
+provider/source table, no metadata table — `source` is a plain string
+column for provenance, not a foreign key into anything.
+
+**Tests**: the story's own worked examples reproduced exactly, against
+both `FakeMacroObservationRepository` (`tests/unit/application/
+test_fake_macro_observation_repository.py`) and live Postgres
+(`tests/integration/test_macro_observation_repository.py`) — release
+timing (February observation released March 12 13:30 UTC: NOT
+AVAILABLE the day before, AVAILABLE from the release instant),
+revision (2.1 available July 1, revised to 2.4 available August 1: a
+July 15 query returns 2.1, an August 15 query returns 2.4), an
+explicit no-future-leakage test, Decimal fidelity (`2.123456789`
+round-trips exactly, including through Postgres `Numeric`), and
+naive-timestamp rejection (delegated to — and re-verified against —
+the existing `UtcTimestamp` guard). Domain validation tests for both
+dataclasses, including a structural test that
+`MacroSeriesDefinition`'s field set contains no provider-ID-shaped
+field. Regression-proof discipline applied to the point-in-time query
+logic specifically: the `released_at <= as_of` filter was deliberately
+removed from both `SqlAlchemyMacroObservationRepository` and
+`FakeMacroObservationRepository` in turn, confirmed each time that the
+no-future-leakage and revision tests failed as expected, then
+restored.
+
+**Verification**: `pytest` (767 passed, full suite — zero changes to
+any existing strategy, backtest, or candle-data code), `ruff`,
+`mypy --strict`, `pre-commit run --all-files`. `alembic upgrade head`
+applied clean against a fresh `docker compose up -d db`.
+
+Per this story's own explicit stop instruction: no ingestion adapter,
+no economic calendar, no carry or rate-differential strategy, no
+fundamental score, and no decision-engine work follows this story.

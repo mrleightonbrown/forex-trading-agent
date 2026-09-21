@@ -667,12 +667,40 @@ new here or elsewhere — including the next architectural phase
 (regime/fundamentals/news/decision-engine work) mentioned as the reason
 this story was requested now.
 
+## FX-41: point-in-time fundamental data model (complete)
 
-Do not start fundamentals, news intelligence, AI decision-making, or live
-trading — out of scope until explicitly assigned per CLAUDE.md. The same
-goes for the downstream epics not in this list at all (Decision Engine,
-Risk Engine, Paper Trading Execution, Performance Analytics, Shadow
-Trading) — none are part of the current phase.
+Architecture/foundation only, under `FX-EPIC-06 Fundamental Analysis`:
+`domain/macro_series_definition.py`/`macro_observation_vintage.py`
+give the codebase a provider-independent way to represent a macro/
+fundamental fact and query it point-in-time-safely —
+`MacroObservationRepository.latest_available_as_of`/
+`observation_as_known_at` can never return a vintage whose
+`released_at` is after the query's `as_of`, and `PointInTimeSafety`
+fails closed (`UNKNOWN` by default, not treated as safe). No provider
+is integrated, no ingestion pipeline exists, and no strategy or scoring
+logic consumes this data — this is the data model and its safety
+invariant only. Full details in `docs/DECISIONS.md`'s FX-41 entry
+(including a numbering note: this codebase's committed FX-40 is the
+backtest-report-viewer story above, so the spec's own "FX-40" is
+recorded here as FX-41, and its "FX-41" becomes FX-42 if picked up).
+
+**Per this story's own explicit stop instruction**: do not proceed
+into policy-rate ingestion, a FRED/central-bank API client, CPI/GDP/
+employment feeds, an economic calendar, a carry or rate-differential
+strategy, a fundamental score, or any BUY/SELL decision logic as a
+result of completing this story.
+
+No further work has been requested; check in before starting anything
+new here or elsewhere.
+
+Do not start fundamentals data ingestion (FRED/central-bank/commercial
+provider adapters), news intelligence, AI decision-making, or live
+trading — out of scope until explicitly assigned per CLAUDE.md. FX-41
+above is the one explicitly-scoped exception (domain model only, no
+provider, no strategy) and does not open the door to the rest of this
+phase. The same goes for the downstream epics not in this list at all
+(Decision Engine, Risk Engine, Paper Trading Execution, Performance
+Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
