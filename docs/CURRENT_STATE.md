@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-38H.1)_
+_Last updated: 2026-09-21 (FX-39)_
 
 ## What exists
 
@@ -252,6 +252,34 @@ _Last updated: 2026-09-21 (FX-38H.1)_
   bit-for-bit identical (no pre-existing data there to have leaked in
   the first place), USD_JPY's shift by ~0.001 PF. No result changes
   materially; no sign flips created or removed.
+- **FX-39: block-bootstrap statistical significance testing (complete)
+  — this closes the pure-technical-strategy research phase.**
+  `domain/block_bootstrap.py` (new): moving-block bootstrap (Künsch
+  1989, block length chosen objectively from each series' own sample
+  autocorrelation function) as the primary significance test, plus a
+  regime (2-year block) bootstrap as an explicitly-labeled secondary
+  ROBUSTNESS check (not an equally-precise significance test — only
+  ~6 source blocks per holdout), Holm-Bonferroni correction across the
+  four FX-38H candidates, and preregistered interpretation tiers, all
+  locked before any real result existed. Applied to the four holdout
+  candidates plus two negative controls (`scripts/run_fx39_
+  significance_testing.py`, `research_results/fx39/results.json`).
+  **Result: none of the four candidates are statistically
+  distinguishable from noise** — raw one-sided p-values 0.13-0.19,
+  Holm-adjusted p=0.53 for all four, nowhere near significance. One
+  nuance: XAU_USD/`MultiTimeframeTrendStrategy`'s regime-block CI
+  barely excludes zero, but that is the secondary robustness check
+  (only 6 blocks), not read as overriding the primary result. The two
+  negative controls also failed to reach significance in the negative
+  direction — not a method failure (verified separately on synthetic
+  data) but a structural finding: every holdout sample in this
+  research program, positive or negative, is too small/noisy to clear
+  a rigorous bar once trade dependence is honestly modeled. FX-38/
+  FX-38H's own findings (no sign flips, directional consistency) stand
+  unchanged — FX-39 recalibrates confidence, it doesn't overturn them.
+  Per this story's own locked, unconditional prohibition: no parameter,
+  strategy, instrument, or period was changed in response to this
+  result. Full tables in `docs/DECISIONS.md`'s FX-39 entries.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

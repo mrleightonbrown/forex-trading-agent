@@ -593,28 +593,50 @@ these should be acted on by tuning any of the strategies above**:
    per question 4) would benefit from one, following the same golden-
    parity-tested pattern as FX-36/FX-37 — not attempted here, this
    story's scope was evaluation, not infrastructure.
-4. **The external review's own suggested next step**: are the
-   remaining holdout profit factors (USD_JPY/CloseChannelBreakout
-   Strategy 1.071, XAU_USD/CloseChannelBreakoutStrategy 1.058 — the two
-   the review flagged as "only around 1.05") statistically
-   distinguishable from noise once trade dependence (autocorrelated
-   consecutive trades from the same strategy) and regime clustering are
-   accounted for? Not a parameter question — a statistical-significance
-   question, genuinely open, and the most promising concrete next step
-   named by external review.
+4. **ANSWERED by FX-39** (block-bootstrap significance testing,
+   complete): no. None of the four candidates' holdout profit factors
+   are statistically distinguishable from noise once trade dependence
+   (moving-block bootstrap, objectively-selected block length) and
+   multiple-comparison correction (Holm, across the four candidates)
+   are accounted for — raw one-sided p-values 0.13-0.19, Holm-adjusted
+   p=0.53 for all four. One nuance, not a reversal: XAU_USD/
+   `MultiTimeframeTrendStrategy`'s SECONDARY regime-block robustness
+   check (only ~6 available 2-year blocks, explicitly not read as an
+   equally-precise significance test) barely excludes zero. Full
+   results in `docs/DECISIONS.md`'s FX-39 entry.
 5. None of the four strategies studied here show a result strong
-   enough, in EITHER period, under EITHER methodology, to justify
+   enough, in EITHER period, under EITHER backtesting methodology, OR
+   once statistical significance is properly accounted for, to justify
    moving toward position sizing, risk management, or paper-trading
-   execution for any of them specifically. That remains true after both
-   stories, not resolved by either — the platform still has no strategy
-   anywhere in its results log that would be reasonable to deploy, even
-   on paper, based on evidence alone.
+   execution for any of them specifically. FX-39 makes this more
+   certain, not less — the platform still has no strategy anywhere in
+   its results log that would be reasonable to deploy, even on paper,
+   based on evidence alone.
 
-No further work in this area has been requested; check in before
-starting anything new here — including, explicitly, do not respond to
-the questions above by tuning any strategy's parameters, adding a new
-strategy, or starting fundamentals/news/decision-engine/live-trading
-work.
+## FX-14 through FX-39: pure-technical-strategy research phase — closed
+
+FX-39's result is the natural close of this phase (agreed with the
+user 2026-09-21): every concrete technical strategy this project built
+(EMA crossover, its ADX-gated variant, close-channel breakout, mean
+reversion, time-series momentum, volatility-expansion breakout,
+multi-timeframe trend, and the control strategies) has now been run
+across the full research dataset, re-evaluated on a genuine historical
+holdout with hardened methodology, and statistically tested for
+significance — and none reached a result strong enough to build
+further infrastructure around. That is a real, useful, honest
+conclusion, not a dead end: the platform's own roadmap always treated
+technical signals as ONE evidence layer among several (regime,
+fundamentals, event risk, news/intelligence, and eventually decision/
+risk machinery), not a phase to keep optimizing in isolation — and
+FX-39's own explicit, locked prohibition (no parameter tuning triggered
+by these results) forecloses the tempting-but-wrong path of trying yet
+another breakout lookback or ATR filter to chase significance.
+
+No further work of any kind has been requested; check in before
+starting anything new — including, explicitly, do not respond to any
+of the above by tuning a strategy's parameters, adding a new technical
+strategy, or unilaterally starting the next architectural phase
+(regime/fundamentals/news/decision-engine work) without being asked.
 
 
 Do not start fundamentals, news intelligence, AI decision-making, or live

@@ -4350,3 +4350,116 @@ restored, confirmed valid).
 
 **Verification**: `pytest` (644 passed), `ruff`, `mypy --strict`,
 `pre-commit run --all-files`.
+
+## 2026-09-21 — FX-39 (part 2): results — none of the four candidates survive
+
+`scripts/run_fx39_significance_testing.py` (new, committed — the
+reproducible source of every number below, alongside `research_results/
+fx39/results.json`, which also carries every series' full ACF
+diagnostics). Reran FX-38H.1's own sealed-window methodology exactly
+(same warm-up bound, `CandleSource.NATIVE` filtering, locked default
+strategy parameters — nothing changed) to regenerate the six holdout
+trade lists, then applied the locked protocol above unchanged.
+
+**Results, all four candidates (holdout)**:
+
+| Combination | n | Observed expectancy | Observed PF | MBB block length | MBB 90% CI | MBB 95% CI | MBB tier | Regime blocks | Regime 95% CI | Regime tier |
+|---|---|---|---|---|---|---|---|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | 2319 | +0.01629 JPY | 1.070 | 1 | [-0.0074, 0.0415] | [-0.0119, 0.0463] | cannot distinguish from noise | 6 | [-0.0255, 0.0640] | cannot distinguish from noise |
+| USD_JPY + MultiTimeframeTrendStrategy | 536 | +0.04254 JPY | 1.146 | 3 | [-0.0271, 0.1156] | [-0.0394, 0.1288] | cannot distinguish from noise | 6 | [-0.0295, 0.1382] | cannot distinguish from noise |
+| XAU_USD + CloseChannelBreakoutStrategy | 2157 | +0.28350 USD | 1.058 | 1 | [-0.2473, 0.8186] | [-0.3451, 0.9102] | cannot distinguish from noise | 6 | [-0.1996, 0.6531] | cannot distinguish from noise |
+| XAU_USD + MultiTimeframeTrendStrategy | 452 | +1.08224 USD | 1.179 | 1 | [-0.5250, 2.7507] | [-0.8245, 3.0801] | cannot distinguish from noise | 6 | **[0.0328, 1.7195]** | **evidence of positive expectancy** |
+
+**Multiple-comparison correction (Holm, across the four candidates only, not the controls)**:
+
+| Combination | Raw one-sided p | Holm-adjusted p |
+|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | 0.1324 | 0.5296 |
+| USD_JPY + MultiTimeframeTrendStrategy | 0.1545 | 0.5296 |
+| XAU_USD + CloseChannelBreakoutStrategy | 0.1933 | 0.5296 |
+| XAU_USD + MultiTimeframeTrendStrategy | 0.1383 | 0.5296 |
+
+**Classification matrix**:
+
+| Candidate | MBB evidence | Regime robustness |
+|---|---|---|
+| USD_JPY + CloseChannelBreakoutStrategy | no | no |
+| USD_JPY + MultiTimeframeTrendStrategy | no | no |
+| XAU_USD + CloseChannelBreakoutStrategy | no | no |
+| XAU_USD + MultiTimeframeTrendStrategy | no | **yes** (regime robustness only) |
+
+**The honest answer: none of the four candidates are statistically
+distinguishable from noise under the primary test (moving-block
+bootstrap), and none survive Holm correction (adjusted p = 0.53 for
+all four — nowhere near any conventional significance threshold).**
+Every raw one-sided p-value sits at 0.13-0.19 even before correction —
+this was never close for any of the four, not just after adjusting for
+multiplicity. Sample sizes that looked large in absolute terms
+(n=452-2319) simply don't translate into tight enough confidence
+intervals once genuine trade-to-trade dependence is accounted for via
+the objectively-selected block length.
+
+**The one nuance, reported exactly as the locked protocol requires —
+not overclaimed**: XAU_USD + `MultiTimeframeTrendStrategy`'s regime-
+block bootstrap 95% CI barely excludes zero (lower bound +0.033, out
+of an observed expectancy of +1.08). Per the protocol locked before
+this result existed, this is a SECONDARY ROBUSTNESS CHECK, not a peer
+significance test: with only 6 available 2-year regime blocks, 10,000
+resamples do not create 10,000 independent historical regimes, and a
+95% CI computed from 6 source blocks is not as precise as the same
+nominal CI computed from thousands of individual trades. This is
+directionally interesting — worth naming — but is not being read as
+"XAU_USD/MTT is validated" or as overriding its own "cannot
+distinguish from noise" result under the PRIMARY test.
+
+**A finding about the whole research program, not just this story**:
+the two negative controls (`EmaCrossoverStrategy`/USD_JPY, expectancy
+-0.00762 JPY; `EmaCrossoverTrendRegimeGatedStrategy`/XAU_USD, expectancy
+-0.80484 USD — both already known to sign-flip from FX-38's own
+development-vs-holdout comparison) ALSO come back "cannot distinguish
+from noise" under this same test, in the negative direction. This is
+NOT a failure of the bootstrap method itself — `domain/block_
+bootstrap.py`'s own test suite already confirms directly (on synthetic
+data with a known, low-variance non-zero mean) that the method
+correctly excludes zero when a real effect with adequate power is
+present. It means something more general: every holdout sample studied
+across FX-38/FX-38H/FX-39 — whether nominally positive or nominally
+negative — is small and noisy enough that NONE of them, in either
+direction, clear a rigorous statistical bar once trade dependence is
+honestly accounted for. The positive PFs (1.06-1.18) and the negative
+ones (0.89-0.97) are both consistent with a population expectancy at
+or near zero, given the sample sizes actually available. That is a
+real, structural limit of this research program's current holdout
+sample sizes, not something FX-39 could have designed around.
+
+**What this does NOT mean**: it does not mean the four candidates are
+"disproven" or that development-period profit factors were fabricated
+or wrong — FX-38/FX-38H's own findings (no sign flips, directionally
+consistent between development and holdout) stand as reported. What
+FX-39 adds is a calibration on CONFIDENCE: profit factors of 1.06-1.18
+on samples of this size, with this much trade-to-trade dependence, do
+not yet constitute statistically confident evidence of a durable edge.
+"Positive and stable across two periods" and "statistically
+distinguishable from noise" are different, both true-or-false-
+independently claims — FX-38/FX-38H established the first for all
+four candidates; FX-39 shows the second does not yet hold for any of
+them.
+
+**Per this story's own locked, unconditional prohibition**: no
+parameter was changed, no strategy was modified, no instrument or
+period was substituted, and no unfavorable regime was excluded in
+response to this result. The result is the result.
+
+This closes the pure-technical-signal research phase FX-14 through
+FX-39 opened. The next architectural step is not a different EMA
+variant, breakout parameter, or filter — per the project's own roadmap,
+technical signals are one evidence layer among several (regime,
+fundamentals, event risk, news/intelligence, and eventually decision/
+risk machinery), not a phase to keep optimizing in isolation.
+
+**Verification**: `pytest` (full suite, no production `src/` code
+changed beyond `domain/block_bootstrap.py` — only the driver script is
+new), `ruff`, `mypy --strict`, `pre-commit run --all-files`. Runtime
+~28 minutes (the two `CloseChannelBreakoutStrategy` holdout reruns
+dominate; everything else — `MultiTimeframeTrendStrategy` and both
+negative controls, all incremental engines — completed in seconds).
