@@ -4370,9 +4370,14 @@ trade lists, then applied the locked protocol above unchanged.
 | XAU_USD + CloseChannelBreakoutStrategy | 2157 | +0.28350 USD | 1.058 | 1 | [-0.2473, 0.8186] | [-0.3451, 0.9102] | cannot distinguish from noise | 6 | [-0.1996, 0.6531] | cannot distinguish from noise |
 | XAU_USD + MultiTimeframeTrendStrategy | 452 | +1.08224 USD | 1.179 | 1 | [-0.5250, 2.7507] | [-0.8245, 3.0801] | cannot distinguish from noise | 6 | **[0.0328, 1.7195]** | **evidence of positive expectancy** |
 
-**Multiple-comparison correction (Holm, across the four candidates only, not the controls)**:
+**Multiple-comparison correction (Holm, across the four candidates only, not the controls)**.
+`p` here is the approximate percentile-bootstrap one-sided p-value —
+the fraction of moving-block-bootstrap resamples at or below zero
+(`BootstrapResult.fraction_le_zero`), not a p-value from a closed-form
+test — and "Holm-adjusted" is the Holm-Bonferroni step-down adjustment
+of that same approximate quantity across the family of four:
 
-| Combination | Raw one-sided p | Holm-adjusted p |
+| Combination | Approx. one-sided p (bootstrap) | Holm-adjusted p |
 |---|---|---|
 | USD_JPY + CloseChannelBreakoutStrategy | 0.1324 | 0.5296 |
 | USD_JPY + MultiTimeframeTrendStrategy | 0.1545 | 0.5296 |
@@ -4392,12 +4397,30 @@ trade lists, then applied the locked protocol above unchanged.
 distinguishable from noise under the primary test (moving-block
 bootstrap), and none survive Holm correction (adjusted p = 0.53 for
 all four — nowhere near any conventional significance threshold).**
-Every raw one-sided p-value sits at 0.13-0.19 even before correction —
-this was never close for any of the four, not just after adjusting for
-multiplicity. Sample sizes that looked large in absolute terms
-(n=452-2319) simply don't translate into tight enough confidence
-intervals once genuine trade-to-trade dependence is accounted for via
-the objectively-selected block length.
+Every approximate percentile-bootstrap one-sided p-value (the fraction
+of bootstrap resamples at or below zero, `BootstrapResult.fraction_le_
+zero`) sits at 0.13-0.19 even before Holm-adjusting that same
+approximate p-value across the family of four — this was never close
+for any of the four, not just after adjusting for multiplicity.
+
+**Correction**: this entry originally attributed the wide CIs to
+"trade dependence... accounted for via the objectively-selected block
+length" for all four candidates. That overstates what the block-length
+selection actually found: three of the four candidates (USD_JPY +
+CloseChannelBreakoutStrategy, XAU_USD + CloseChannelBreakoutStrategy,
+XAU_USD + MultiTimeframeTrendStrategy) selected `block_length=1` — no
+detectable lag-1+ linear autocorrelation, so the moving-block bootstrap
+degenerated to an ordinary individual-trade bootstrap for those three;
+their wide CIs reflect genuine sampling variability given the observed
+effect size relative to per-trade variance, not a dependence
+correction inflating them. Only USD_JPY + `MultiTimeframeTrendStrategy`
+selected a larger block (`block_length=3`), where a real, if modest,
+dependence adjustment was actually in effect. The correct, general
+statement: given the observed effect sizes, variability, and available
+holdout samples, neither the positive candidates nor the negative
+controls are distinguishable from zero — for three of the four
+candidates that conclusion holds even under an ordinary (non-block)
+bootstrap, not because of any dependence correction.
 
 **The one nuance, reported exactly as the locked protocol requires —
 not overclaimed**: XAU_USD + `MultiTimeframeTrendStrategy`'s regime-
@@ -4422,23 +4445,22 @@ NOT a failure of the bootstrap method itself — `domain/block_
 bootstrap.py`'s own test suite already confirms directly (on synthetic
 data with a known, low-variance non-zero mean) that the method
 correctly excludes zero when a real effect with adequate power is
-present. It means something more general: every holdout sample studied
-across FX-38/FX-38H/FX-39 — whether nominally positive or nominally
-negative — is small and noisy enough that NONE of them, in either
-direction, clear a rigorous statistical bar once trade dependence is
-honestly accounted for. The positive PFs (1.06-1.18) and the negative
-ones (0.89-0.97) are both consistent with a population expectancy at
-or near zero, given the sample sizes actually available. That is a
-real, structural limit of this research program's current holdout
-sample sizes, not something FX-39 could have designed around.
+present. It means something more general: given the observed effect
+sizes, variability, and available holdout samples, neither the
+positive candidates nor the negative controls are distinguishable from
+zero. The positive PFs (1.06-1.18) and the negative ones (0.89-0.97)
+are both consistent with a population expectancy at or near zero,
+given the samples actually available — not something FX-39 could have
+designed around.
 
 **What this does NOT mean**: it does not mean the four candidates are
 "disproven" or that development-period profit factors were fabricated
 or wrong — FX-38/FX-38H's own findings (no sign flips, directionally
 consistent between development and holdout) stand as reported. What
-FX-39 adds is a calibration on CONFIDENCE: profit factors of 1.06-1.18
-on samples of this size, with this much trade-to-trade dependence, do
-not yet constitute statistically confident evidence of a durable edge.
+FX-39 adds is a calibration on CONFIDENCE: given the observed effect
+sizes, variability, and available holdout samples, profit factors of
+1.06-1.18 do not yet constitute statistically confident evidence of a
+durable edge.
 "Positive and stable across two periods" and "statistically
 distinguishable from noise" are different, both true-or-false-
 independently claims — FX-38/FX-38H established the first for all

@@ -31,10 +31,11 @@ LOCKED PROTOCOL (before any real result was computed):
     95% lower bound > 0            -> "evidence of positive expectancy"
     90% lower bound > 0, 95% not   -> "suggestive, not strong evidence"
     90% lower bound <= 0           -> "cannot distinguish from noise"
-  Multiplicity: raw one-sided p-values reported AND Holm-adjusted
-    across the FOUR candidates (not the two negative controls, which
-    are not part of the "selected by prior research" multiplicity
-    problem).
+  Multiplicity: approximate percentile-bootstrap one-sided p-values
+    (the fraction of bootstrap resamples at or below zero) reported AND
+    Holm-adjusted across the FOUR candidates (not the two negative
+    controls, which are not part of the "selected by prior research"
+    multiplicity problem).
   Secondary robustness check: whole 2-year regime-block bootstrap.
     The number of source regime blocks (~5-6) is reported explicitly
     next to every regime CI -- 10,000 resamples from 5-6 blocks is NOT
@@ -254,7 +255,10 @@ def _analyze(label: str, trades: list[SimulatedTrade], holdout_start: datetime) 
     print(f"| MBB bootstrap mean expectancy | {mbb_result.observed_mean:.5f} {currency} |")
     print(f"| MBB 90% CI | [{mbb_result.lower_90:.5f}, {mbb_result.upper_90:.5f}] |")
     print(f"| MBB 95% CI | [{mbb_result.lower_95:.5f}, {mbb_result.upper_95:.5f}] |")
-    print(f"| MBB raw one-sided p (H0: expectancy<=0) | {mbb_result.fraction_le_zero:.4f} |")
+    print(
+        f"| MBB approx. one-sided p, bootstrap (H0: expectancy<=0) | "
+        f"{mbb_result.fraction_le_zero:.4f} |"
+    )
     print(f"| P(expectancy > 0), MBB | {(1 - mbb_result.fraction_le_zero):.2%} |")
     print(f"| MBB interpretation tier | {tier} |")
     print(f"| Regime blocks available | {len(segments)} |")
@@ -369,7 +373,7 @@ async def main() -> None:
         result["holm_adjusted_p"] = str(p_adj)
 
     print("\n### Multiple-comparison correction (Holm, across the four candidates only)\n")
-    print("| Candidate | Raw one-sided p | Holm-adjusted p |")
+    print("| Candidate | Approx. one-sided p (bootstrap) | Holm-adjusted p |")
     print("|---|---|---|")
     for result, p_adj in zip(CANDIDATE_RESULTS, adjusted_p, strict=True):
         print(f"| {result['label']} | {result['mbb']['fraction_le_zero']} | {p_adj} |")

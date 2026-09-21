@@ -265,18 +265,22 @@ _Last updated: 2026-09-21 (FX-39)_
   candidates plus two negative controls (`scripts/run_fx39_
   significance_testing.py`, `research_results/fx39/results.json`).
   **Result: none of the four candidates are statistically
-  distinguishable from noise** — raw one-sided p-values 0.13-0.19,
-  Holm-adjusted p=0.53 for all four, nowhere near significance. One
-  nuance: XAU_USD/`MultiTimeframeTrendStrategy`'s regime-block CI
-  barely excludes zero, but that is the secondary robustness check
-  (only 6 blocks), not read as overriding the primary result. The two
-  negative controls also failed to reach significance in the negative
-  direction — not a method failure (verified separately on synthetic
-  data) but a structural finding: every holdout sample in this
-  research program, positive or negative, is too small/noisy to clear
-  a rigorous bar once trade dependence is honestly modeled. FX-38/
-  FX-38H's own findings (no sign flips, directional consistency) stand
-  unchanged — FX-39 recalibrates confidence, it doesn't overturn them.
+  distinguishable from noise** — approximate percentile-bootstrap
+  one-sided p-values 0.13-0.19, Holm-adjusted p=0.53 for all four,
+  nowhere near significance. Three of the four selected `block_length
+  =1` (no detectable autocorrelation — an ordinary, non-block
+  bootstrap for those three); only USD_JPY/`MultiTimeframeTrendStrategy`
+  selected a larger block (3). One nuance: XAU_USD/
+  `MultiTimeframeTrendStrategy`'s regime-block CI barely excludes zero,
+  but that is the secondary robustness check (only 6 blocks), not read
+  as overriding the primary result. The two negative controls also
+  failed to reach significance in the negative direction — not a
+  method failure (verified separately on synthetic data). Given the
+  observed effect sizes, variability, and available holdout samples,
+  neither the positive candidates nor the negative controls are
+  distinguishable from zero. FX-38/FX-38H's own findings (no sign
+  flips, directional consistency) stand unchanged — FX-39 recalibrates
+  confidence, it doesn't overturn them.
   Per this story's own locked, unconditional prohibition: no parameter,
   strategy, instrument, or period was changed in response to this
   result. Full tables in `docs/DECISIONS.md`'s FX-39 entries.

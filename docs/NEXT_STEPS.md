@@ -595,15 +595,21 @@ these should be acted on by tuning any of the strategies above**:
    story's scope was evaluation, not infrastructure.
 4. **ANSWERED by FX-39** (block-bootstrap significance testing,
    complete): no. None of the four candidates' holdout profit factors
-   are statistically distinguishable from noise once trade dependence
-   (moving-block bootstrap, objectively-selected block length) and
-   multiple-comparison correction (Holm, across the four candidates)
-   are accounted for — raw one-sided p-values 0.13-0.19, Holm-adjusted
-   p=0.53 for all four. One nuance, not a reversal: XAU_USD/
-   `MultiTimeframeTrendStrategy`'s SECONDARY regime-block robustness
-   check (only ~6 available 2-year blocks, explicitly not read as an
-   equally-precise significance test) barely excludes zero. Full
-   results in `docs/DECISIONS.md`'s FX-39 entry.
+   are statistically distinguishable from noise under the moving-block
+   bootstrap (objectively-selected block length — three of the four
+   selected `block_length=1`, i.e. no detected autocorrelation, so an
+   ordinary rather than dependence-adjusted bootstrap for those three;
+   only USD_JPY/`MultiTimeframeTrendStrategy` selected a larger block)
+   and multiple-comparison correction (Holm, across the four
+   candidates) — approximate percentile-bootstrap one-sided p-values
+   0.13-0.19, Holm-adjusted p=0.53 for all four. One nuance, not a
+   reversal: XAU_USD/`MultiTimeframeTrendStrategy`'s SECONDARY
+   regime-block robustness check (only ~6 available 2-year blocks,
+   explicitly not read as an equally-precise significance test) barely
+   excludes zero. Given the observed effect sizes, variability, and
+   available holdout samples, neither the positive candidates nor the
+   negative controls are distinguishable from zero. Full results in
+   `docs/DECISIONS.md`'s FX-39 entry.
 5. None of the four strategies studied here show a result strong
    enough, in EITHER period, under EITHER backtesting methodology, OR
    once statistical significance is properly accounted for, to justify
