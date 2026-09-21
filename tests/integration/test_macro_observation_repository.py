@@ -1,5 +1,6 @@
 """FX-41: `SqlAlchemyMacroObservationRepository` round-trip and point-in-time
-query tests against live Postgres.
+query tests against live Postgres. FX-41H: conflict/idempotency hardening
+and deterministic tie-breaking tests.
 
 Requires a live Postgres with the FX-41 migration applied — run
 `docker compose up -d db && uv run alembic upgrade head` first. See
@@ -12,9 +13,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from forex_agent.application.ports.macro_observation_repository import (
+    MacroVintageConflictError,
+)
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.macro_observation_repository import (
@@ -179,10 +183,10 @@ async def test_latest_available_as_of_reflects_most_recent_known_period_and_revi
 
 @pytest.mark.asyncio
 async def test_add_vintage_never_overwrites_an_existing_vintage(session: AsyncSession) -> None:
-    # FX-41: revisions must not destructively overwrite. Attempting to
+    # FX-41H: revisions must not destructively overwrite. Attempting to
     # add a vintage with the same (series_key, observation_period,
-    # revision_sequence) but a different value must be a no-op -- the
-    # originally stored value must survive.
+    # revision_sequence) but a different value must raise
+    # MacroVintageConflictError -- the originally stored value must survive.
     repo = SqlAlchemyMacroObservationRepository(session)
     period = _ts(2024, 6, 1)
     original = MacroObservationVintage(
@@ -202,7 +206,8 @@ async def test_add_vintage_never_overwrites_an_existing_vintage(session: AsyncSe
         source="FRED",
     )
     await repo.add_vintage(original)
-    await repo.add_vintage(conflicting)
+    with pytest.raises(MacroVintageConflictError):
+        await repo.add_vintage(conflicting)
 
     result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
     assert result is not None
@@ -230,3 +235,201 @@ async def test_decimal_fidelity_round_trips_through_postgres(session: AsyncSessi
     assert result is not None
     assert result.value == precise
     assert isinstance(result.value, Decimal)
+
+
+def _base_vintage(period: UtcTimestamp) -> MacroObservationVintage:
+    return MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_duplicate_add_vintage_succeeds_without_duplicating(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    vintage = _base_vintage(period)
+
+    await repo.add_vintage(vintage)
+    await repo.add_vintage(vintage)  # must not raise
+
+    stored = (
+        (
+            await session.execute(
+                select(MacroObservationVintageRow).where(
+                    MacroObservationVintageRow.series_key == TEST_SERIES_KEY,
+                    MacroObservationVintageRow.observation_period == period.value,
+                    MacroObservationVintageRow.revision_sequence == 0,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(stored) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_value_is_a_conflict(session: AsyncSession) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_value = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("9.9"),
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    await repo.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await repo.add_vintage(different_value)
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.value == Decimal("2.1")
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_released_at_is_a_conflict(session: AsyncSession) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_released_at = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=_ts(2024, 7, 2),
+        revision_sequence=0,
+        source="FRED",
+    )
+    await repo.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await repo.add_vintage(different_released_at)
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.released_at == original.released_at
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_source_is_a_conflict(session: AsyncSession) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_source = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="ECB_SDW",
+    )
+    await repo.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await repo.add_vintage(different_source)
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.source == "FRED"
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_effective_at_is_a_conflict(session: AsyncSession) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_effective_at = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+        effective_at=_ts(2024, 8, 1),
+    )
+    await repo.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await repo.add_vintage(different_effective_at)
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.effective_at is None
+
+
+@pytest.mark.asyncio
+async def test_conflict_error_carries_existing_and_incoming_vintages(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    conflicting = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("9.9"),
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    await repo.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError) as excinfo:
+        await repo.add_vintage(conflicting)
+
+    assert excinfo.value.existing.value == Decimal("2.1")
+    assert excinfo.value.incoming.value == Decimal("9.9")
+
+
+@pytest.mark.asyncio
+async def test_tie_break_by_revision_sequence_when_released_at_matches(
+    session: AsyncSession,
+) -> None:
+    # FX-41H: two vintages of the same observation_period sharing the same
+    # released_at must resolve deterministically to the higher
+    # revision_sequence, not to whichever row the database happens to scan
+    # first.
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    shared_released_at = _ts(2024, 7, 1)
+    lower_revision = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=shared_released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    higher_revision = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.4"),
+        released_at=shared_released_at,
+        revision_sequence=1,
+        source="FRED",
+    )
+    # Inserted in ascending order so a naive "first match wins" scan would
+    # return the wrong (lower-revision) vintage.
+    await repo.add_vintage(lower_revision)
+    await repo.add_vintage(higher_revision)
+
+    known_at = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 15))
+    assert known_at is not None
+    assert known_at.value == Decimal("2.4")
+    assert known_at.revision_sequence == 1
+
+    latest = await repo.latest_available_as_of(TEST_SERIES_KEY, _ts(2024, 7, 15))
+    assert latest is not None
+    assert latest.value == Decimal("2.4")
+    assert latest.revision_sequence == 1

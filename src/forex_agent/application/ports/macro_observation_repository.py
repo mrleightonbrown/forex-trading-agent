@@ -4,29 +4,79 @@ from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
+class MacroVintageConflictError(Exception):
+    """Raised by `add_vintage` (FX-41H) when a vintage with the same
+    natural identity -- `(series_key, observation_period,
+    revision_sequence)` -- already exists in storage but its immutable
+    payload (`value`, `released_at`, `effective_at`, or `source`)
+    differs from the incoming one.
+
+    This is a data-integrity failure, not something to retry or
+    silently drop: the natural identity is supposed to uniquely name
+    one immutable fact, so two different payloads claiming the same
+    identity mean either a caller bug (e.g. a revision reused an
+    already-taken `revision_sequence`) or a source that is not
+    actually giving out stable, immutable vintages. An exact duplicate
+    of an already-stored vintage is NOT an error -- see `add_vintage`'s
+    idempotency requirement -- only a genuine content mismatch is.
+    """
+
+    def __init__(
+        self, existing: MacroObservationVintage, incoming: MacroObservationVintage
+    ) -> None:
+        self.existing = existing
+        self.incoming = incoming
+        super().__init__(
+            "vintage identity "
+            f"(series_key={incoming.series_key!r}, "
+            f"observation_period={incoming.observation_period.value.isoformat()!r}, "
+            f"revision_sequence={incoming.revision_sequence}) already exists with a "
+            f"different payload: existing={existing!r}, incoming={incoming!r}"
+        )
+
+
 class MacroObservationRepository(Protocol):
     """Port for storing and point-in-time-querying `MacroObservationVintage`
-    records (FX-41).
+    records (FX-41; hardened FX-41H).
 
     The defining invariant of both read methods: a query at timestamp T
     must never return a vintage whose `released_at` is after T. Neither
     method takes an `effective_at` cutoff -- `effective_at` describes
     when a value takes legal/economic effect, not when it became
     knowable, so it plays no part in what a point-in-time query is
-    allowed to see.
+    allowed to see. Ties within a query (same `released_at`, or -- for
+    `latest_available_as_of` -- same `observation_period` and
+    `released_at`) are broken deterministically by `revision_sequence`
+    descending, so which vintage is returned never depends on storage
+    or scan order.
 
     No HTTP/provider logic belongs behind this port -- see
     `docs/ARCHITECTURE.md`. A concrete implementation only ever receives
     already-constructed `MacroObservationVintage` domain objects;
     translating a specific provider's response into one is an
-    infrastructure adapter's job, not this port's.
+    infrastructure adapter's job, not this port's. Whether a given
+    provider/source can be trusted to produce point-in-time-safe
+    vintages at all is a `PointInTimeSafety` classification concern
+    (`domain.macro_series_definition`), not this port's -- and mapping a
+    specific provider's own revision/vintage semantics onto this port's
+    natural identity belongs to the provider mapping introduced by the
+    future policy-rate registry/ingestion stories, not here.
     """
 
     async def add_vintage(self, vintage: MacroObservationVintage) -> None:
         """Persist a new vintage. Never mutates or replaces an existing
         one -- a revision is a new vintage with a later `released_at`
         and higher `revision_sequence` for the same
-        (series_key, observation_period)."""
+        (series_key, observation_period).
+
+        Idempotent for an exact retry: calling this again with a
+        vintage identical in every field to one already stored is a
+        no-op, not an error. Raises `MacroVintageConflictError` (FX-41H)
+        if a vintage with the same `(series_key, observation_period,
+        revision_sequence)` identity already exists with a *different*
+        `value`, `released_at`, `effective_at`, or `source` -- the
+        already-stored vintage is left completely unchanged either way.
+        """
         ...
 
     async def latest_available_as_of(
@@ -38,10 +88,12 @@ class MacroObservationRepository(Protocol):
 
         Answers: "what is the newest data point the market could have
         known about at all, by this instant, and what did it look like
-        by then?" Orders by observation_period first (newest period
-        that was knowable at all), then by released_at within that
-        period (most recent revision of it that was knowable by
-        `as_of`).
+        by then?" Orders by observation_period descending (newest period
+        that was knowable at all), then released_at descending within
+        that period (most recent revision of it that was knowable by
+        `as_of`), then revision_sequence descending as a deterministic
+        tie-breaker (FX-41H) when two vintages of the same period share
+        the same released_at.
 
         Returns `None` if no vintage of `series_key` has `released_at
         <= as_of`.
@@ -56,8 +108,10 @@ class MacroObservationRepository(Protocol):
 
         Answers: "for THIS period specifically, what was the most
         recently-revised value the market knew, by this instant?"
-        Orders by released_at among vintages of that exact
-        observation_period.
+        Orders by released_at descending among vintages of that exact
+        observation_period, then revision_sequence descending as a
+        deterministic tie-breaker (FX-41H) when two vintages share the
+        same released_at.
 
         Returns `None` if no vintage of that `(series_key,
         observation_period)` pair has `released_at <= as_of` -- this is

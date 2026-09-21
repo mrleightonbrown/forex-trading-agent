@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-41)_
+_Last updated: 2026-09-21 (FX-41H)_
 
 ## What exists
 
@@ -355,6 +355,28 @@ _Last updated: 2026-09-21 (FX-41)_
   filter was deliberately removed and confirmed to fail these tests
   before being restored. Full details in `docs/DECISIONS.md`'s FX-41
   entry.
+- **FX-41H: macro vintage integrity hardening (complete)**. `add_vintage`
+  now raises `MacroVintageConflictError` (new, `application/ports/
+  macro_observation_repository.py`) when a vintage with the same
+  `(series_key, observation_period, revision_sequence)` identity
+  already exists with a different `value`/`released_at`/`effective_at`/
+  `source` — an exact duplicate retry remains a no-op (idempotent), but
+  a same-identity/different-payload write is now a caught
+  data-integrity error rather than a silent drop. Implemented
+  identically in `SqlAlchemyMacroObservationRepository` (via `INSERT
+  ... ON CONFLICT DO NOTHING RETURNING id`, then a comparison fetch on
+  conflict) and `FakeMacroObservationRepository`. `latest_available_as_
+  of`/`observation_as_known_at` both gained `revision_sequence DESC` as
+  a final ORDER BY tie-breaker after `released_at DESC`, so two
+  vintages sharing an identical `released_at` resolve deterministically
+  to the higher revision rather than to scan order. 14 new tests (exact
+  duplicate, conflicting value/released_at/effective_at/source, the
+  stored row's survival after a conflict, the exception's existing/
+  incoming payload, the tie-break scenario) against both the fake and
+  live Postgres; conflict detection and the tie-breaker were each
+  deliberately removed and confirmed to fail the relevant tests before
+  being restored. No point-in-time semantics changed. Full details in
+  `docs/DECISIONS.md`'s FX-41H entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -768,6 +790,12 @@ _Last updated: 2026-09-21 (FX-41)_
   `MacroObservationVintage` from FRED, a central bank, or any other
   source yet, and no `MacroSeriesDefinition` is currently classified
   `POINT_IN_TIME_SAFE` — none has been verified against a real source.
+  FX-41H hardened the storage-level integrity of vintages already in
+  the repository (conflict detection, deterministic tie-breaking) but
+  deliberately did not build any provider mapping — how a specific
+  provider's own revision numbering maps onto this repository's
+  natural identity is explicit future work for the policy-rate
+  registry/ingestion stories, not sketched here.
 
 ## Next
 

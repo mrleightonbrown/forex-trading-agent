@@ -71,6 +71,14 @@ Five invariants this data model exists to protect:
    observation_period)`. `SqlAlchemyMacroObservationRepository` has no
    UPDATE anywhere in it — every write is `INSERT ... ON CONFLICT DO
    NOTHING`, so a historical vintage can never be mutated once stored.
+   FX-41H hardened this further: `add_vintage` is idempotent for an
+   exact retry, but raises `MacroVintageConflictError` if a vintage
+   with the same identity already exists with a *different* payload —
+   a silent no-op would otherwise hide a caller bug or a non-immutable
+   source behind what looks like a successful write. Query ordering
+   (`latest_available_as_of`/`observation_as_known_at`) also breaks
+   ties on identical `released_at` values by `revision_sequence`
+   descending, so retrieval never depends on scan order.
 4. **Unsafe latest-only historical data must not be treated as
    research-safe.** `PointInTimeSafety` (`POINT_IN_TIME_SAFE`,
    `LATEST_ONLY`, `UNKNOWN`) classifies whether a series' source actually

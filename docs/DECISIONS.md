@@ -4743,3 +4743,89 @@ applied clean against a fresh `docker compose up -d db`.
 Per this story's own explicit stop instruction: no ingestion adapter,
 no economic calendar, no carry or rate-differential strategy, no
 fundamental score, and no decision-engine work follows this story.
+
+## 2026-09-21 — FX-41H: macro vintage integrity hardening
+
+**Scope**: harden `add_vintage`'s idempotency contract and the
+determinism of both point-in-time queries before real macro-data
+ingestion begins. No point-in-time semantics changed -- `released_at
+<= as_of` remains the entire safety guarantee for both read methods,
+untouched by this story. No external provider, no rate data, no
+strategy, no scoring, no decision logic.
+
+**Conflict detection** (`application/ports/
+macro_observation_repository.py`, new `MacroVintageConflictError`):
+FX-41's `add_vintage` silently no-opped on ANY insert conflict, whether
+the incoming vintage was an exact duplicate or a different payload
+wrongly reusing an already-taken `(series_key, observation_period,
+revision_sequence)` identity -- the latter case is a data-integrity bug
+that FX-41 let through unnoticed. `add_vintage` now distinguishes the
+two: an exact duplicate (every field equal) is still a no-op, matching
+FX-41's own idempotency requirement; a same-identity vintage with a
+different `value`, `released_at`, `effective_at`, or `source` now
+raises `MacroVintageConflictError`, carrying both the `existing` and
+`incoming` vintages for the caller to inspect. The already-stored
+vintage is left completely unchanged in both cases -- FX-41's "no
+UPDATE anywhere in this class" property is preserved exactly;
+`MacroVintageConflictError` is raised from a comparison against what
+was already committed, never from a partially-applied write.
+
+`SqlAlchemyMacroObservationRepository.add_vintage` detects the
+conflict by attempting `INSERT ... ON CONFLICT DO NOTHING RETURNING
+id`: if a row comes back, the insert happened and the vintage is new;
+if not, the identity already existed, so the existing row is fetched
+and compared field-by-field against the incoming vintage before
+deciding no-op vs. raise. `FakeMacroObservationRepository.add_vintage`
+does the equivalent dict-based comparison. Both implementations are
+exercised by the same scenario set (exact duplicate; conflicting
+value, `released_at`, `effective_at`, and `source`; the stored row's
+survival after a conflict; the exception's `existing`/`incoming`
+payload) in `tests/unit/application/
+test_fake_macro_observation_repository.py` and `tests/integration/
+test_macro_observation_repository.py`.
+
+**Deterministic tie-breaking**: `latest_available_as_of` (order by
+`observation_period DESC, released_at DESC`) and
+`observation_as_known_at` (order by `released_at DESC`) each now
+append `revision_sequence DESC` as a final tie-breaker. Without it, two
+vintages of the same period sharing an identical `released_at` (a
+legitimate case -- nothing in the domain model forbids a provider
+publishing two revisions at the same instant) resolved to whichever row
+the database happened to scan first, which is not guaranteed stable
+across queries or across a table's physical layout. A dedicated test
+(`test_tie_break_by_revision_sequence_when_released_at_matches`, both
+fake and Postgres) inserts the lower revision first and the higher
+revision second and asserts the higher one is returned regardless --
+proving the result depends on `revision_sequence`, not insertion or
+scan order.
+
+**Provider/source-specific point-in-time safety is explicitly deferred,
+not addressed here**: this story hardens the STORAGE-level integrity
+invariant (one immutable fact per natural identity, deterministic
+retrieval) for vintages that are already in the repository. It says
+nothing about how a specific provider's own revision numbering, release
+timing, or historical-vintage availability maps onto this repository's
+`(series_key, observation_period, revision_sequence)` identity -- that
+mapping, and the decision of which `PointInTimeSafety` classification a
+given provider integration deserves, belongs to the provider mapping
+layer the future policy-rate registry/ingestion stories will introduce.
+This story deliberately does not sketch or partially implement that
+layer.
+
+**Regression-proof discipline applied**: conflict detection was
+deliberately removed from both `SqlAlchemyMacroObservationRepository`
+and `FakeMacroObservationRepository` in turn (reverting `add_vintage` to
+FX-41's original ON-CONFLICT-DO-NOTHING/no-op behavior), confirmed each
+time that all five new conflict tests failed as expected, then restored.
+The `revision_sequence DESC` tie-breaker was separately removed from
+both `latest_available_as_of` and `observation_as_known_at` in both
+implementations, confirmed the tie-break test failed with the
+lower-revision vintage returned instead of the higher one, then restored.
+
+**Verification**: `pytest` (781 passed, full suite -- 14 new tests, zero
+changes to any existing strategy, backtest, or candle-data code), `ruff`,
+`mypy --strict`, `pre-commit run --all-files`.
+
+Per this story's own explicit stop instruction: no external provider, no
+rate data, no strategy, no scoring, and no decision logic follows this
+story.

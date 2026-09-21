@@ -693,14 +693,34 @@ result of completing this story.
 No further work has been requested; check in before starting anything
 new here or elsewhere.
 
+## FX-41H: macro vintage integrity hardening (complete)
+
+Hardens `add_vintage`'s idempotency contract before real macro-data
+ingestion begins: a same-identity `(series_key, observation_period,
+revision_sequence)` write with a different value/released_at/
+effective_at/source now raises `MacroVintageConflictError` instead of
+silently no-opping, and both point-in-time queries gained
+`revision_sequence DESC` as a deterministic tie-breaker after
+`released_at DESC`. No point-in-time semantics changed; no provider,
+rate data, strategy, or decision logic added. Full details in
+`docs/DECISIONS.md`'s FX-41H entry.
+
+**Per this story's own explicit stop instruction**: no external
+provider, no rate data, no strategy, no scoring, and no decision logic
+follows this story.
+
+No further work has been requested; check in before starting anything
+new here or elsewhere.
+
 Do not start fundamentals data ingestion (FRED/central-bank/commercial
 provider adapters), news intelligence, AI decision-making, or live
-trading — out of scope until explicitly assigned per CLAUDE.md. FX-41
-above is the one explicitly-scoped exception (domain model only, no
-provider, no strategy) and does not open the door to the rest of this
-phase. The same goes for the downstream epics not in this list at all
-(Decision Engine, Risk Engine, Paper Trading Execution, Performance
-Analytics, Shadow Trading) — none are part of the current phase.
+trading — out of scope until explicitly assigned per CLAUDE.md. FX-41/
+FX-41H above are the explicitly-scoped exceptions (domain model +
+storage-integrity hardening only, no provider, no strategy) and do not
+open the door to the rest of this phase. The same goes for the
+downstream epics not in this list at all (Decision Engine, Risk Engine,
+Paper Trading Execution, Performance Analytics, Shadow Trading) — none
+are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

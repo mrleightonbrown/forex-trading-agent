@@ -1,8 +1,9 @@
 """FX-41: point-in-time query semantics, exercised against the fake
-repository. `FakeMacroObservationRepository` re-implements the same
-filter/order rules as `SqlAlchemyMacroObservationRepository` -- see
-tests/integration/test_macro_observation_repository.py for the live-
-Postgres equivalents of the scenarios below.
+repository. FX-41H: conflict/idempotency hardening and deterministic
+tie-breaking. `FakeMacroObservationRepository` re-implements the same
+filter/order/conflict rules as `SqlAlchemyMacroObservationRepository`
+-- see tests/integration/test_macro_observation_repository.py for the
+live-Postgres equivalents of the scenarios below.
 
 Core invariant under test throughout: a query at timestamp T must never
 return a vintage whose released_at is after T.
@@ -15,6 +16,7 @@ import pytest
 
 from forex_agent.application.ports.macro_observation_repository import (
     MacroObservationRepository,
+    MacroVintageConflictError,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -233,3 +235,181 @@ async def test_different_series_do_not_leak_into_each_other() -> None:
 
     result = await fake.observation_as_known_at("EA_CPI_YOY", period, _ts(2024, 8, 1))
     assert result is None
+
+
+def _base_vintage(period: UtcTimestamp) -> MacroObservationVintage:
+    return MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_duplicate_add_vintage_succeeds_without_duplicating() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    vintage = _base_vintage(period)
+
+    await fake.add_vintage(vintage)
+    await fake.add_vintage(vintage)  # must not raise
+
+    assert len(fake._vintages) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_value_is_a_conflict() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_value = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("9.9"),
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    await fake.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await fake.add_vintage(different_value)
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.value == Decimal("2.1")
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_released_at_is_a_conflict() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_released_at = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=_ts(2024, 7, 2),
+        revision_sequence=0,
+        source="FRED",
+    )
+    await fake.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await fake.add_vintage(different_released_at)
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.released_at == original.released_at
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_source_is_a_conflict() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_source = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="ECB_SDW",
+    )
+    await fake.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await fake.add_vintage(different_source)
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.source == "FRED"
+
+
+@pytest.mark.asyncio
+async def test_same_identity_different_effective_at_is_a_conflict() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    different_effective_at = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=original.value,
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+        effective_at=_ts(2024, 8, 1),
+    )
+    await fake.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError):
+        await fake.add_vintage(different_effective_at)
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 15))
+    assert result is not None
+    assert result.effective_at is None
+
+
+@pytest.mark.asyncio
+async def test_conflict_error_carries_existing_and_incoming_vintages() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    original = _base_vintage(period)
+    conflicting = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("9.9"),
+        released_at=original.released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    await fake.add_vintage(original)
+
+    with pytest.raises(MacroVintageConflictError) as excinfo:
+        await fake.add_vintage(conflicting)
+
+    assert excinfo.value.existing.value == Decimal("2.1")
+    assert excinfo.value.incoming.value == Decimal("9.9")
+
+
+@pytest.mark.asyncio
+async def test_tie_break_by_revision_sequence_when_released_at_matches() -> None:
+    # FX-41H: two vintages of the same observation_period sharing the same
+    # released_at must resolve deterministically to the higher
+    # revision_sequence.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    shared_released_at = _ts(2024, 7, 1)
+    lower_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=shared_released_at,
+        revision_sequence=0,
+        source="FRED",
+    )
+    higher_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.4"),
+        released_at=shared_released_at,
+        revision_sequence=1,
+        source="FRED",
+    )
+    # Inserted in ascending order so a naive "first match wins" scan would
+    # return the wrong (lower-revision) vintage.
+    await fake.add_vintage(lower_revision)
+    await fake.add_vintage(higher_revision)
+
+    known_at = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 15))
+    assert known_at is not None
+    assert known_at.value == Decimal("2.4")
+    assert known_at.revision_sequence == 1
+
+    latest = await fake.latest_available_as_of(SERIES_KEY, _ts(2024, 7, 15))
+    assert latest is not None
+    assert latest.value == Decimal("2.4")
+    assert latest.revision_sequence == 1
