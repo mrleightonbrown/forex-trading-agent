@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-21T14:01:27Z",
+  "generated_at": "2026-09-21T14:20:27Z",
   "strategy": {
     "key": "multi_timeframe_trend_v1",
     "version": "1",
@@ -16,7 +16,7 @@
   "source": "NATIVE",
   "from": "2016-09-19T00:00:00Z",
   "to": "2026-09-19T00:00:00Z",
-  "git_commit": "6d66b9f4aa3e71b8a454f30241b7d9dc8db9d63f",
+  "git_commit": "b00ea2017064b42820a14ff1833c0fca7d43f18b",
   "metrics": {
     "trade_count": 425,
     "win_count": 144,

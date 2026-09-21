@@ -2,7 +2,10 @@
   "schema_version": 1,
   "reports": [
     "close_channel_breakout_v1_EUR_USD_H1_20240101_20251231_3e7b8b77.json",
+    "close_channel_breakout_v1_USD_JPY_H1_20160919_20260919.json",
+    "close_channel_breakout_v1_XAU_USD_H1_20160919_20260919.json",
     "ema_crossover_v1_EUR_USD_H1_20240101_20251231.json",
-    "multi_timeframe_trend_v1_USD_JPY_H1_20160919_20260919.json"
+    "multi_timeframe_trend_v1_USD_JPY_H1_20160919_20260919.json",
+    "multi_timeframe_trend_v1_XAU_USD_H1_20160919_20260919.json"
   ]
 }
