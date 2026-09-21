@@ -4287,3 +4287,66 @@ strategies as a validation check on the method itself) is FX-39 part
 suite including integration not required for a pure-domain addition
 with no infrastructure/candle dependency), `ruff`, `mypy --strict`,
 `pre-commit run --all-files`.
+
+## 2026-09-21 — FX-39 (part 1, continued): multiple-comparison correction, before any real result
+
+Review of FX-39's design itself (caught mid-turn, before the driver
+script had been run against real data — nothing to walk back) found
+the design was missing three things needed to interpret the eventual
+result honestly: multiple-comparison control across the four
+candidates, an explicit preregistered directional hypothesis with
+interpretation tiers, and clarity that the regime-block bootstrap is a
+robustness check, not an equally-precise significance test given only
+~5-6 available 2-year blocks. Incorporated into the primitive and its
+protocol before part 2 runs anything:
+
+- **`holm_bonferroni_adjusted_p_values`** (new): standard Holm step-
+  down family-wise-error-rate correction, valid under arbitrary
+  dependence between tests (no independence assumption needed, unlike
+  some alternatives) and uniformly at least as powerful as plain
+  Bonferroni. Will be applied across the FOUR candidates' one-sided
+  p-values (`BootstrapResult.fraction_le_zero`, which already doubles
+  as an approximate bootstrap one-sided p-value for `H0: expectancy <=
+  0` — documented explicitly now) — NOT the two negative controls,
+  which stay outside that family since they aren't part of the
+  "selected by prior research" multiplicity problem.
+- **`select_block_length`** now also returns `acf_by_lag` (every lag's
+  own autocorrelation, not just the selected one) and `band`, for full
+  per-series auditability in the eventual artifact — and accepts an
+  optional `max_block_length` hard cap (never below `min_block_length`)
+  so pathological ACF behavior can't select an absurd block. Noted
+  explicitly in its own docstring: zero linear autocorrelation does not
+  prove independence — volatility/regime-level dependence can persist
+  even with a flat ACF, which is precisely why the regime-block
+  bootstrap is a useful complement, not a redundant check.
+- **Preregistered interpretation tiers** (to be applied mechanically in
+  part 2, not decided after seeing results): 95% lower bound > 0 →
+  "evidence of positive expectancy"; 90% lower bound > 0 but 95% lower
+  bound <= 0 → "suggestive, not strong evidence"; 90% lower bound <= 0
+  → "cannot distinguish from noise." Applied per-candidate BEFORE
+  looking at the Holm-adjusted family result, so there's no later
+  temptation to pick whichever of 90%/95% "counts."
+- **Regime-block bootstrap reframed explicitly as a robustness check,
+  not a peer significance test**: the holdout windows span roughly
+  10.5-11.7 years, giving only ~5-6 independent 2-year blocks to draw
+  from. 10,000 resamples drawn from 5-6 source blocks does not create
+  10,000 independent historical regimes — part 2's own report states
+  the raw block count next to every regime-bootstrap CI, not just the
+  resample count, so a narrow-looking CI is never read as more precise
+  than the underlying evidence actually supports.
+- **Explicitly forbidden, stated here so it can be pointed back to
+  later**: no parameter optimization, strategy modification, instrument
+  substitution, period substitution, exclusion of unfavorable regimes,
+  or post-result change of bootstrap method, triggered by any FX-39
+  result. If a candidate's result doesn't survive, that is the answer,
+  not a prompt to try a different breakout lookback or add a filter.
+
+12 new tests (regression-proof discipline applied to the Holm
+implementation specifically: a naive per-rank formula without the
+running-max monotonization step was confirmed, via a hand-verified
+example — `[0.01, 0.011, 0.012]` → candidates `[0.03, 0.022, 0.012]`,
+strictly decreasing — to produce an invalid non-monotonic result;
+restored, confirmed valid).
+
+**Verification**: `pytest` (644 passed), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`.

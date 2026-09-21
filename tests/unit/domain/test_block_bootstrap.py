@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from forex_agent.domain.block_bootstrap import (
+    holm_bonferroni_adjusted_p_values,
     moving_block_bootstrap_means,
     percentile_ci,
     sample_autocorrelation,
@@ -130,6 +131,65 @@ def test_selected_run_is_self_consistent_with_the_actual_acf_values() -> None:
         assert abs(sample_autocorrelation(values, lag)) < band
     preceding_lag = selection.first_confirmed_lag - 1
     assert abs(sample_autocorrelation(values, preceding_lag)) >= band
+
+
+def test_select_block_length_records_full_diagnostics() -> None:
+    """External review: record ACF values, the band, and the qualifying
+    run for every series -- not just the final block_length -- so the
+    selection is auditable, not a black box."""
+    rng = random.Random(13)
+    base = [round(rng.gauss(0, 1), 4) for _ in range(200)]
+    values = [Decimal(str(b)) for b in base for _ in range(2)]
+
+    selection = select_block_length(values, max_lag=10, confirm_lags=3)
+
+    assert set(selection.acf_by_lag) == set(range(1, 11))
+    assert selection.acf_by_lag[1] == sample_autocorrelation(values, 1)
+    n = len(values)
+    assert selection.band == Decimal("1.96") / Decimal(n).sqrt()
+    assert not selection.capped_by_max_block_length
+
+
+def test_max_block_length_caps_a_confirmed_run() -> None:
+    rng = random.Random(13)
+    base = [round(rng.gauss(0, 1), 4) for _ in range(200)]
+    values = [Decimal(str(b)) for b in base for _ in range(2)]
+    uncapped = select_block_length(values, max_lag=10, confirm_lags=3)
+    assert uncapped.block_length > 1, "fixture must select a block length worth capping below"
+
+    capped = select_block_length(
+        values, max_lag=10, confirm_lags=3, max_block_length=uncapped.block_length - 1
+    )
+
+    assert capped.block_length == uncapped.block_length - 1
+    assert capped.capped_by_max_block_length
+
+
+def test_max_block_length_caps_the_fallback() -> None:
+    rng = random.Random(7)
+    x = 0.0
+    values = []
+    for _ in range(500):
+        x = 0.95 * x + rng.gauss(0, 1)
+        values.append(Decimal(str(round(x, 6))))
+
+    selection = select_block_length(values, max_lag=2, confirm_lags=3, max_block_length=5)
+
+    assert selection.used_fallback
+    assert selection.capped_by_max_block_length
+    assert selection.block_length == 5
+
+
+def test_max_block_length_never_goes_below_min_block_length() -> None:
+    rng = random.Random(13)
+    base = [round(rng.gauss(0, 1), 4) for _ in range(200)]
+    values = [Decimal(str(b)) for b in base for _ in range(2)]
+
+    selection = select_block_length(
+        values, max_lag=10, confirm_lags=3, min_block_length=3, max_block_length=1
+    )
+
+    assert selection.block_length == 3
 
 
 # --- moving_block_bootstrap_means -----------------------------------------
@@ -356,3 +416,58 @@ def test_nan_free_math_not_used() -> None:
 
     assert isinstance(acf, Decimal)
     assert not math.isnan(float(acf))
+
+
+# --- holm_bonferroni_adjusted_p_values -------------------------------------
+
+
+def test_holm_correction_hand_derived_textbook_example() -> None:
+    # p = [0.01, 0.04, 0.03, 0.005], m=4. Sorted ascending:
+    # 0.005(idx3), 0.01(idx0), 0.03(idx2), 0.04(idx1); multipliers
+    # 4,3,2,1 -> candidates 0.02, 0.03, 0.06, 0.04 -> running max
+    # (monotonized, non-decreasing) 0.02, 0.03, 0.06, 0.06. Mapped back
+    # to original order [idx0,idx1,idx2,idx3]: [0.03, 0.06, 0.06, 0.02].
+    p_values = [Decimal("0.01"), Decimal("0.04"), Decimal("0.03"), Decimal("0.005")]
+
+    adjusted = holm_bonferroni_adjusted_p_values(p_values)
+
+    assert adjusted == [Decimal("0.03"), Decimal("0.06"), Decimal("0.06"), Decimal("0.02")]
+
+
+def test_holm_correction_never_exceeds_one() -> None:
+    p_values = [Decimal("0.9"), Decimal("0.8"), Decimal("0.7")]
+
+    adjusted = holm_bonferroni_adjusted_p_values(p_values)
+
+    assert all(p <= Decimal(1) for p in adjusted)
+
+
+def test_holm_correction_is_monotonic_by_rank() -> None:
+    """Regression-proof-relevant property: adjusted p-values must never
+    decrease as the raw p-value's rank increases (the whole point of
+    the running-max monotonization step). Confirmed by direct
+    computation before writing this test: for p=[0.01, 0.011, 0.012]
+    (m=3), the naive per-rank candidates (multiply-only, no running
+    max) are 0.01*3=0.03, 0.011*2=0.022, 0.012*1=0.012 -- strictly
+    DECREASING, an invalid result the running-max step must prevent.
+    I confirmed this test fails without the running-max step (removed
+    it, watched this specific test fail) and passes with it restored."""
+    p_values = [Decimal("0.01"), Decimal("0.011"), Decimal("0.012")]
+
+    adjusted = holm_bonferroni_adjusted_p_values(p_values)
+    ordered_by_rank = sorted(zip(p_values, adjusted, strict=True))
+
+    for i in range(1, len(ordered_by_rank)):
+        assert ordered_by_rank[i][1] >= ordered_by_rank[i - 1][1]
+    # All three must equal the running max (0.03) exactly, not just
+    # "be monotonic by coincidence" -- the strongest check available.
+    assert adjusted == [Decimal("0.03"), Decimal("0.03"), Decimal("0.03")]
+
+
+def test_holm_correction_single_p_value_is_unchanged() -> None:
+    assert holm_bonferroni_adjusted_p_values([Decimal("0.03")]) == [Decimal("0.03")]
+
+
+def test_holm_correction_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="p_values"):
+        holm_bonferroni_adjusted_p_values([])

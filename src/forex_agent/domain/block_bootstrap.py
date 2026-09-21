@@ -48,6 +48,9 @@ class BlockLengthSelection:
     block_length: int
     used_fallback: bool
     first_confirmed_lag: int | None
+    acf_by_lag: dict[int, Decimal]
+    band: Decimal
+    capped_by_max_block_length: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +89,7 @@ def select_block_length(
     max_lag: int,
     confirm_lags: int = 3,
     min_block_length: int = 1,
+    max_block_length: int | None = None,
 ) -> BlockLengthSelection:
     """The smallest lag `k` such that `sample_autocorrelation(values, j)`
     for `j` in `[k, k + confirm_lags - 1]` are ALL within the
@@ -93,38 +97,72 @@ def select_block_length(
     not just one lag, so a single lag landing inside the band by chance
     before genuine correlation resumes doesn't stop the search early.
     If ACF(1) itself is already inside the band for `confirm_lags`
-    lags, `block_length` is 1 -- no detectable trade-to-trade
+    lags, `block_length` is 1 -- no detectable LINEAR trade-to-trade
     dependence, so the moving-block bootstrap correctly degenerates to
-    an ordinary (individual-point) bootstrap.
+    an ordinary (individual-point) bootstrap. (Zero linear
+    autocorrelation does not by itself prove independence -- volatility/
+    regime-level dependence can remain even when the ACF is flat; that
+    is exactly why a separate regime-block bootstrap over pre-defined
+    periods is a useful complement to this series-level rule, not a
+    redundant one.)
 
     Falls back to `round(sqrt(n))` (a standard block-bootstrap rule of
     thumb) if no such run is found within `max_lag`; `used_fallback`
     tells the caller this happened, since it usually means either
     unusually persistent dependence or `max_lag` was too small -- not
-    something to silently trust.
+    something to silently trust. If `max_block_length` is given, both
+    the confirmed-run result and the fallback are capped at it (never
+    below `min_block_length`) -- a hard ceiling so pathological ACF
+    behavior can't select an absurdly large block;
+    `capped_by_max_block_length` tells the caller if the cap actually
+    bound.
+
+    `acf_by_lag` (every lag from 1 to `max_lag`, independent of which
+    one was selected) and `band` are always returned for full
+    auditability -- callers should record them, not just the final
+    `block_length`.
     """
     n = len(values)
     band = Decimal("1.96") / Decimal(n).sqrt()
+    acf_by_lag = {lag: sample_autocorrelation(values, lag) for lag in range(1, max_lag + 1)}
     consecutive = 0
     run_start: int | None = None
     for lag in range(1, max_lag + 1):
-        acf = sample_autocorrelation(values, lag)
-        if abs(acf) < band:
+        if abs(acf_by_lag[lag]) < band:
             if consecutive == 0:
                 run_start = lag
             consecutive += 1
             if consecutive >= confirm_lags:
                 assert run_start is not None
+                chosen = max(run_start, min_block_length)
+                capped = max_block_length is not None and chosen > max_block_length
+                if capped:
+                    assert max_block_length is not None
+                    chosen = max(max_block_length, min_block_length)
                 return BlockLengthSelection(
-                    block_length=max(run_start, min_block_length),
+                    block_length=chosen,
                     used_fallback=False,
                     first_confirmed_lag=run_start,
+                    acf_by_lag=acf_by_lag,
+                    band=band,
+                    capped_by_max_block_length=capped,
                 )
         else:
             consecutive = 0
             run_start = None
     fallback = max(round(Decimal(n).sqrt()), min_block_length)
-    return BlockLengthSelection(block_length=fallback, used_fallback=True, first_confirmed_lag=None)
+    capped = max_block_length is not None and fallback > max_block_length
+    if capped:
+        assert max_block_length is not None
+        fallback = max(max_block_length, min_block_length)
+    return BlockLengthSelection(
+        block_length=fallback,
+        used_fallback=True,
+        first_confirmed_lag=None,
+        acf_by_lag=acf_by_lag,
+        band=band,
+        capped_by_max_block_length=capped,
+    )
 
 
 def moving_block_bootstrap_means(
@@ -229,7 +267,19 @@ def _interpolated_percentile(ordered: list[Decimal], p: Decimal) -> Decimal:
 def summarize_bootstrap(observed_values: list[Decimal], means: list[Decimal]) -> BootstrapResult:
     """Builds a `BootstrapResult` from an already-computed list of
     resampled means (from either bootstrap scheme above) against the
-    original `observed_values`."""
+    original `observed_values`.
+
+    `fraction_le_zero` doubles as an approximate ONE-SIDED bootstrap
+    p-value for `H0: population mean <= 0` vs. `H1: population mean >
+    0` (the fraction of the bootstrap's own estimate of the sampling
+    distribution that falls at or below zero -- equivalently, the
+    one-sided confidence level at which the percentile CI's lower bound
+    would land exactly on zero). `1 - fraction_le_zero` is the more
+    intuitive complementary reading: "this fraction of resamples showed
+    positive expectancy" -- useful DESCRIPTIVE information, but not a
+    Bayesian posterior probability that the true expectancy is
+    positive; don't conflate the two.
+    """
     if not observed_values:
         raise ValueError("observed_values must not be empty")
     if not means:
@@ -248,3 +298,41 @@ def summarize_bootstrap(observed_values: list[Decimal], means: list[Decimal]) ->
         num_resamples=len(means),
         sample_size=len(observed_values),
     )
+
+
+def holm_bonferroni_adjusted_p_values(p_values: list[Decimal]) -> list[Decimal]:
+    """Holm-Bonferroni step-down adjustment for a FAMILY of `m`
+    simultaneous hypothesis tests -- controls the family-wise error
+    rate (the chance of at least one false positive across the whole
+    family) under arbitrary dependence between the tests (no
+    independence assumption needed, unlike some alternatives), and is
+    uniformly at least as powerful as plain Bonferroni.
+
+    Returns adjusted p-values in the SAME order as the input `p_values`
+    (not sorted) -- the standard "adjusted p-value" convention: reject
+    hypothesis `i` at family-wise level `alpha` iff
+    `adjusted[i] <= alpha`.
+
+    Procedure: sort p-values ascending; the `k`-th smallest (1-indexed)
+    is multiplied by `m - k + 1`, capped at 1, then each is replaced by
+    the running maximum seen so far (so adjusted p-values are
+    non-decreasing in rank, the standard monotonization step) before
+    being mapped back to their original positions.
+
+    Raises `ValueError` if `p_values` is empty.
+    """
+    m = len(p_values)
+    if m == 0:
+        raise ValueError("p_values must not be empty")
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted_by_rank: list[Decimal] = []
+    running_max = Decimal(0)
+    for rank, idx in enumerate(order):
+        multiplier = Decimal(m - rank)
+        candidate = min(Decimal(1), multiplier * p_values[idx])
+        running_max = max(running_max, candidate)
+        adjusted_by_rank.append(running_max)
+    result = [Decimal(0)] * m
+    for rank, idx in enumerate(order):
+        result[idx] = adjusted_by_rank[rank]
+    return result
