@@ -712,12 +712,43 @@ follows this story.
 No further work has been requested; check in before starting anything
 new here or elsewhere.
 
+## FX-42: canonical central-bank policy-rate registry (complete)
+
+Defines, for USD/EUR/GBP/JPY/CAD, one canonical policy-rate concept per
+currency plus its provider/source mapping — semantics only, no
+ingestion, no persistence, no strategy. Introduces the explicit split
+FX-41 deferred: `MacroSeriesDefinition` stays provider-independent;
+`ProviderSeriesMapping` (new) records which provider/identifier(s)
+supply a definition and that mapping's own (currently `UNKNOWN`,
+`verified=False`) point-in-time safety. USD is split into two
+effective-dated `PolicyRateDefinition`s (single target point through
+December 16, 2008; target range midpoint from then on, with an
+explicit, versioned `TARGET_RANGE_MIDPOINT` transformation) — the
+required effective-dated/transformed example. EUR/GBP/JPY/CAD are each
+one continuous definition, with institutional history (negative-rate
+periods, facility-rate emphasis shifts, renames, operational-framework
+changes) documented rather than silently spliced. `validate_registry`
+enforces registry-wide invariants at import time. Full details,
+including exactly what FX-43 must still verify before ingestion, in
+`docs/DECISIONS.md`'s FX-42 entry.
+
+**Per this story's own explicit stop instruction**: do not download
+rate history, calculate pair differentials, build carry strategies,
+assume policy rate equals actual tradable carry, add CPI/GDP/
+employment, implement rate expectations, or trade as a result of
+completing this story.
+
+No further work has been requested; check in before starting anything
+new here or elsewhere — including FX-43 ingestion, named directly by
+this story's own Definition of Done as the natural next step.
+
 Do not start fundamentals data ingestion (FRED/central-bank/commercial
 provider adapters), news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. FX-41/
-FX-41H above are the explicitly-scoped exceptions (domain model +
-storage-integrity hardening only, no provider, no strategy) and do not
-open the door to the rest of this phase. The same goes for the
+FX-41H/FX-42 above are the explicitly-scoped exceptions (domain model,
+storage-integrity hardening, and canonical registry/provider-mapping
+definitions only — still no provider actually called, no strategy) and
+do not open the door to the rest of this phase. The same goes for the
 downstream epics not in this list at all (Decision Engine, Risk Engine,
 Paper Trading Execution, Performance Analytics, Shadow Trading) — none
 are part of the current phase.

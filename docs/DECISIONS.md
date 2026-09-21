@@ -4829,3 +4829,168 @@ changes to any existing strategy, backtest, or candle-data code), `ruff`,
 Per this story's own explicit stop instruction: no external provider, no
 rate data, no strategy, no scoring, and no decision logic follows this
 story.
+
+## 2026-09-21 — FX-42: canonical central-bank policy-rate registry
+
+**Scope**: define semantics and provider mappings for the policy-rate
+concept of USD, EUR, GBP, JPY, and CAD -- the five currencies in the
+research universe. No historical ingestion, no pair differential, no
+carry strategy, no rate-expectations logic, no trading. Builds directly
+on FX-41/FX-41H's foundation and, per this story's own instruction,
+introduces the explicit separation between canonical economic series
+identity and provider/source mapping + point-in-time safety that FX-41
+deferred.
+
+**Four new domain types, no persistence** (matching FX-41's own choice
+not to persist `MacroSeriesDefinition`: this story is semantics/metadata,
+not observations, so there is nothing to store in Postgres, no Alembic
+migration, and no `MacroObservationRepository` involvement):
+
+- **`RateTransformation`** (`domain/rate_transformation.py`): a
+  `RateTransformationKind` (`IDENTITY` | `TARGET_RANGE_MIDPOINT`) paired
+  with an explicit `version` string and a real `apply(*raw_values) ->
+  Decimal` method -- not just descriptive metadata. `version` exists
+  separately from `kind` so the deterministic rule itself is pinned and
+  auditable, per the story's "make that transformation explicit and
+  versioned" requirement: if `TARGET_RANGE_MIDPOINT`'s arithmetic mean is
+  ever replaced by a different rule, that is a new version, not a silent
+  behavior change under the same name.
+- **`ProviderSeriesMapping`** (`domain/provider_series_mapping.py`): maps
+  one provider's own identifier(s) onto a canonical definition --
+  `provider`, `provider_series_ids` (a tuple, since some canonical
+  scalars are derived from more than one raw series, e.g. a target
+  range's upper/lower bound), its own `point_in_time_safety`, a
+  `verified: bool`, and free-text `notes`. This is the explicit split
+  this story was asked to introduce: `point_in_time_safety` lives HERE,
+  not on `MacroSeriesDefinition`, because point-in-time trustworthiness
+  is a property of a SOURCE, not of the abstract economic concept -- the
+  same canonical "USD policy rate" concept could in principle be sourced
+  from a vintage-preserving archive (potentially `POINT_IN_TIME_SAFE`) or
+  a scraped current-value-only page (`LATEST_ONLY`). Every mapping this
+  registry adds is `PointInTimeSafety.UNKNOWN` and `verified=False` --
+  fail closed, matching FX-41's own principle: this story researched
+  candidate providers and identifiers in good faith, it did not call a
+  live provider API to confirm any of them. A new guard,
+  `require_point_in_time_safe_mapping`, mirrors FX-41's
+  `require_point_in_time_safe` at the mapping level.
+- **`PolicyRateDefinition`** (`domain/policy_rate_definition.py`): one
+  effective-dated definition -- `series` (a `MacroSeriesDefinition`,
+  whose `category` this class enforces must be `MacroCategory.
+  POLICY_RATE`), `institution`, `instrument_name`, `transformation`,
+  `valid_from`/`valid_to` (a half-open window; `covers(as_of)` answers
+  membership), and `provider_mappings` (always at least one -- an entry
+  naming zero providers is not "ready for FX-43 ingestion" per this
+  story's Definition of Done). `summary()` renders this definition's
+  answers to the six audit questions the spec requires a canonical
+  definition be able to answer (economic concept, currency/economy,
+  unit, transformation, provider mapping, valid period) as plain
+  strings, tested directly.
+- **`policy_rate_registry`** (`domain/policy_rate_registry.py`): the
+  actual registry -- `POLICY_RATE_DEFINITIONS`, a module-level tuple of
+  six `PolicyRateDefinition`s (five currencies, USD split into two
+  effective-dated eras -- see below), plus `definitions_for_currency`,
+  `definition_as_of` (the point-in-time definition lookup: which
+  definition applied at a given instant), and `canonical_series_for_
+  currency`. `validate_registry` checks registry-wide invariants no
+  single definition can check alone (all definitions for one currency
+  share exactly one `series.key`; validity windows for one currency
+  neither overlap nor leave a gap; all five required currencies are
+  present) and runs at import time, failing fast on a malformed
+  registry -- also called directly in tests against deliberately broken
+  fixtures.
+
+**USD is the story's required effective-dated example** ("do not
+silently splice unlike concepts... represent effective-dated
+definitions"): the Federal Open Market Committee announced a single
+numeric target rate until December 16, 2008, when it switched to
+announcing a target range instead -- a genuine instrument change, not a
+cosmetic one. Represented as two `PolicyRateDefinition`s sharing one
+`USD_POLICY_RATE` series key: `valid_from=1954-07-01` / `valid_to=
+2008-12-16` with `IDENTITY` (FRED's `DFEDTAR`), and `valid_from=
+2008-12-16` / `valid_to=None` with `TARGET_RANGE_MIDPOINT` (FRED's
+`DFEDTARU`/`DFEDTARL`, averaged). Tests prove `definition_as_of` selects
+the correct era on both sides of the switch date (including the switch
+date itself, since `valid_to` is an exclusive bound), and that the
+range-era transformation computes a numerically correct midpoint.
+
+**EUR/GBP/JPY/CAD are each one continuous definition**, not because
+those institutions' practices never changed, but because this registry
+judges none of their changes to be a genuine semantic splice of the
+canonical concept itself:
+
+- **EUR**: the ECB Deposit Facility Rate (DFR), continuously defined
+  since the euro's January 1, 1999 launch, chosen over the more
+  commonly-cited pre-2008 Main Refinancing Operations (MRO) rate because
+  the DFR (not MRO) has been the effective floor for euro area overnight
+  money markets under the ECB's post-2014 structural liquidity surplus
+  framework -- documented as a shift in relative importance, not a
+  definition change. Notes record the DFR's negative-rate period (June
+  11, 2014 to July 27, 2022).
+- **GBP**: Bank of England Bank Rate, `valid_from=1997-06-01` (the
+  Monetary Policy Committee's establishment). Notes record the 2006
+  rename from "Repo Rate" to "Bank Rate" as a label change to the same
+  instrument, not a splice.
+- **JPY**: a single continuous concept ("the short-term interest rate the
+  BoJ sets as its primary policy instrument"), `valid_from=1998-04-01`
+  (the new Bank of Japan Act taking effect), despite substantial
+  operational-mechanism change over time (uncollateralized overnight
+  call rate target pre-2016; a negative rate on a tier of current-account
+  balances under QQE+YCC January 2016-March 2024; overnight call rate
+  target again from March 2024). Notes explicitly flag that if FX-43
+  ingestion finds this mechanism change requires different derivation
+  logic (not just a different rate level), this definition should be
+  split into effective-dated definitions following the USD precedent --
+  deliberately not pre-emptively built here.
+- **CAD**: Bank of Canada Overnight Rate Target, `valid_from=1991-02-01`
+  (the Bank of Canada/Government of Canada's joint inflation-control
+  target announcement).
+
+**Every historical date above is this story's good-faith research, not a
+value confirmed against a primary source** -- each is documented with
+its own reasoning in `policy_rate_registry.py`'s notes and module
+docstring, but none were checked against a live provider API in this
+session. Likewise, `ECB_SDW`'s and `BOE_DATABASE`'s provider series IDs
+are best-effort based on commonly-documented naming conventions
+(`verified=False`); `BOJ_TIME_SERIES_DATA_SEARCH`'s and `BOC_VALET`'s are
+explicit placeholders (`VERIFY_BOJ_SHORT_TERM_POLICY_RATE`,
+`VERIFY_BOC_OVERNIGHT_RATE_TARGET`) where this story did not have enough
+confidence to assert a specific code. FX-43 must confirm all of the
+above against each provider's live API/database before ingesting
+anything -- this is the explicit intent of `verified=False` throughout,
+not an oversight.
+
+**Provider identifiers are not scattered through research code**: the
+only place any FRED/ECB/BoE/BoJ/BoC series identifier appears in this
+codebase is inside a `ProviderSeriesMapping` within this registry --
+there is no ingestion code yet to scatter them into.
+
+**Provider/source-specific point-in-time safety belongs to this
+registry's provider mappings, not to a future multi-provider ingestion
+system** -- per FX-41H's own explicit deferral note, this story is that
+promised follow-up, but it stops at defining WHERE that classification
+lives (`ProviderSeriesMapping.point_in_time_safety`) and HOW a consumer
+must fail closed against it (`require_point_in_time_safe_mapping`); it
+does not implement a multi-provider ingestion system, per this story's
+own non-goals.
+
+**Regression-proof discipline applied**: `PolicyRateDefinition.covers`'s
+half-open boundary was deliberately made fully-closed, confirmed the
+boundary test and the USD switch-date test both failed as expected, then
+restored. `RateTransformation.apply`'s `TARGET_RANGE_MIDPOINT` arithmetic
+was deliberately replaced with a wrong (non-averaging) return value,
+confirmed both the unit test and the USD-registry integration-style test
+failed with the exact wrong numeric result, then restored.
+`validate_registry`'s overlap/gap checks were deliberately removed,
+confirmed all four overlap/gap/non-terminal-open-ended tests failed
+(each for the right underlying reason -- the checks were simply gone),
+then restored.
+
+**Verification**: `pytest` (851 passed, full suite -- 70 new tests, zero
+changes to any existing strategy, backtest, candle-data, or FX-41/FX-41H
+macro-observation code), `ruff`, `mypy --strict`, `pre-commit run
+--all-files`.
+
+Per this story's own explicit stop instruction: no rate-history download,
+no pair differential calculation, no carry strategy, no assumption that
+policy rate equals actual tradable carry, no CPI/GDP/employment, no rate
+expectations, and no trading follows this story.

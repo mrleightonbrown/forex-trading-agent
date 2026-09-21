@@ -92,6 +92,40 @@ Five invariants this data model exists to protect:
    rate-differential strategy, no fundamental score, no BUY/SELL decision
    logic. Just the data model and its point-in-time safety invariant.
 
+## Canonical policy-rate registry (FX-42)
+
+`domain/policy_rate_registry.py` defines, for USD/EUR/GBP/JPY/CAD, exactly
+one canonical policy-rate concept per currency — still no ingestion, no
+strategy, purely semantics and provider mappings, built on FX-41's
+foundation. It introduces the split FX-41 deferred: canonical economic
+identity (`MacroSeriesDefinition`, provider-independent) versus
+provider/source mapping (`ProviderSeriesMapping`, which provider and
+identifier(s) actually supply the data, and that mapping's own
+point-in-time safety — see `docs/DECISIONS.md`'s FX-42 entry for the full
+reasoning).
+
+Central banks do not express monetary policy identically, and a single
+institution's own practice can change over time (the Federal Reserve's
+December 2008 shift from a single target rate to a target range is this
+registry's example). `PolicyRateDefinition` represents one effective-dated
+interpretation of a currency's canonical series — `valid_from`/`valid_to`
+bound exactly when it applies, and `transformation`
+(`RateTransformation`, explicit and versioned) says precisely how raw
+provider value(s) become one canonical `Decimal` during that window.
+Multiple `PolicyRateDefinition`s for one currency always share the same
+`MacroSeriesDefinition.key`, so a future query against
+`MacroObservationRepository` never needs to know which era's instrument
+mechanics produced a given historical value — `policy_rate_registry`'s own
+`validate_registry` enforces this (and non-overlapping, gap-free validity
+windows) at import time, failing fast on a malformed registry.
+
+This story is intentionally narrow: it defines semantics and provider
+mappings only. No rate history is downloaded, no pair differential is
+computed, no carry strategy exists, and every `ProviderSeriesMapping` in
+the registry is `verified=False` — see the module's own docstring and
+`docs/DECISIONS.md` for what FX-43 (ingestion) still needs to confirm
+before any of this data reaches a `MacroObservationRepository`.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
