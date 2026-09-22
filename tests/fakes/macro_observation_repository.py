@@ -46,6 +46,11 @@ class FakeMacroObservationRepository:
         verified_released_at: UtcTimestamp,
         verified_effective_at: UtcTimestamp | None,
     ) -> None:
+        # FX-43H.1: no `await` appears between the check and the write
+        # below, so nothing can interleave between them under Python's
+        # single-threaded cooperative asyncio scheduling -- this check-
+        # then-set is already as atomic as the real repository's single
+        # conditional UPDATE, without needing a lock.
         key = (series_key, observation_period.value, revision_sequence)
         existing = self._vintages.get(key)
         if existing is None:

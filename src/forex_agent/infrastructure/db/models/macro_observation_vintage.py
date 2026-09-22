@@ -18,11 +18,13 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     first stored the row -- separate from `released_at`, which is the
     market-knowledge timestamp the point-in-time queries actually
     filter on. FX-43H's `replace_provisional_release_timing` is the ONE
-    narrowly-scoped exception: it UPDATEs `released_at`/`effective_at`/
-    `released_at_is_verified` on an existing row, but ONLY when that row
-    is still marked provisional AND the incoming correction's `value`
-    matches exactly -- a genuine economic-value change never goes
-    through it, only ever through a new revision row.
+    narrowly-scoped exception: an atomic conditional UPDATE (FX-43H.1)
+    that only ever touches `released_at`/`effective_at`/`released_at_
+    is_verified`, and only on a row still marked provisional (its own
+    `WHERE released_at_is_verified = false` predicate) -- it has no
+    `value` parameter at all, so a genuine economic-value change is
+    structurally impossible through it; that only ever goes through a
+    new revision row via `add_vintage`.
 
     `(series_key, observation_period, revision_sequence)` is unique --
     it is a vintage's natural identity, and the constraint makes
@@ -57,11 +59,13 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revision_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String, nullable=False)
-    # FX-43H: True (default) means released_at/effective_at are confirmed
-    # timestamps; False marks a provisional proxy (e.g. FX-43's backfill,
-    # which uses an effective-date proxy for released_at). The ONE column
-    # a narrowly-scoped UPDATE is ever issued against -- see
+    # FX-43H.1: fails closed -- False (the default) marks a provisional
+    # proxy (e.g. FX-43's backfill, which uses an effective-date proxy
+    # for released_at); True means released_at/effective_at are confirmed
+    # timestamps, and must be set explicitly by a caller that actually
+    # has them. The ONE column a narrowly-scoped, atomic UPDATE is ever
+    # issued against -- see
     # SqlAlchemyMacroObservationRepository.replace_provisional_release_timing.
     released_at_is_verified: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
+        Boolean, nullable=False, server_default="false"
     )

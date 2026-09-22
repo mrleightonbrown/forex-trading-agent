@@ -265,6 +265,36 @@ as an economic revision. No caller of it exists yet; FX-43H's job was to
 make replacement possible and safe, not to perform it (no verified
 announcement timestamp exists yet to replace anything with).
 
+## Provisional timestamp fail-closed hardening (FX-43H.1)
+
+Two remaining gaps in FX-43H's own `released_at_is_verified`/
+`replace_provisional_release_timing` mechanisms (see
+`docs/DECISIONS.md`'s FX-43H.1 entry) were closed:
+
+1. **`released_at_is_verified` now defaults to `False`**, at both the
+   domain (`MacroObservationVintage`) and SQLAlchemy-model layers. A
+   caller that has not actually confirmed release timing gets a
+   provisional vintage by default; claiming verification requires
+   passing `released_at_is_verified=True` explicitly. Migration
+   `80c0ae20257b` carries this into the database two ways: it changes
+   the column's `server_default` for future rows, AND it
+   unconditionally reclassifies every row that already exists when it
+   runs to `False` — a schema-default change alone would not have
+   fixed rows already written under the old default, and this
+   codebase does not rely on an operator manually clearing or
+   reloading data to reach a correct state.
+2. **`replace_provisional_release_timing` is now a single atomic
+   conditional `UPDATE ... WHERE ... AND released_at_is_verified =
+   false ... RETURNING id`**, not a SELECT-then-UPDATE. The
+   provisional-row check and the write are the same statement, so two
+   concurrent callers racing the same identity cannot both succeed —
+   Postgres's row lock serializes them, and the second to commit
+   re-evaluates its own `WHERE` clause against the now-verified row
+   and correctly updates nothing. A `SELECT` after a non-matching
+   UPDATE exists only to distinguish "no such vintage" from "already
+   verified" for the error message; it never decides whether a write
+   happens.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

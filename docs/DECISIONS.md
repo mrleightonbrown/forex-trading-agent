@@ -5629,3 +5629,110 @@ Per this story's own explicit stop instruction: no rate differential,
 no carry strategy, no parameter research, no JPY provider work, no
 invented release timestamps, and no decision logic follows this
 story.
+
+## 2026-09-22 — FX-43H.1: provisional timestamp fail-closed hardening
+
+FX-43H introduced `released_at_is_verified` and
+`replace_provisional_release_timing` but left two gaps: the field
+DEFAULTED to `True` (verified) rather than failing closed, and the
+replacement method was a SELECT-then-conditional-UPDATE with a real
+race window between the two statements. This story closes both,
+touching only those two mechanisms -- no new provider, no verified
+announcement timestamp, no rate/carry/JPY work.
+
+**1. `MacroObservationVintage.released_at_is_verified` now defaults to
+`False`.** A caller that does not explicitly pass
+`released_at_is_verified=True` gets a provisional vintage, not a
+silently-assumed-verified one. Blast-radius check before flipping it:
+`grep -rn released_at_is_verified` across the whole codebase found
+exactly one test relying on the old default (renamed/inverted in
+place) and no non-test construction site that omits the field while
+depending on it being `True`.
+
+**2. The SQLAlchemy column's `server_default` now matches (`'false'`,
+was `'true'`).**
+
+**3. Migration `80c0ae20257b` conservatively reclassifies every
+pre-existing row, unconditionally.** It does not merely change the
+schema default for future inserts -- that alone would leave every row
+written under the old `server_default='true'` looking "verified" when
+it never actually was. The migration's `upgrade()` issues an
+unconditional `UPDATE macro_observation_vintages SET
+released_at_is_verified = false` (no `WHERE` clause narrowing which
+rows) BEFORE changing the schema default, so a database applying this
+migration ends up correct without an operator manually clearing or
+reloading data -- the story's own explicit constraint.
+`downgrade()` reverts only the schema-level default back to `'true'`;
+it deliberately does NOT attempt to restore per-row values, since we
+have no way to know which rows (if any) were ever genuinely verified
+versus merely defaulted -- inventing that certainty on downgrade would
+be worse than not reverting the data at all.
+
+**4. `replace_provisional_release_timing` is now one atomic
+conditional `UPDATE ... WHERE ... AND released_at_is_verified = false
+... RETURNING id`**, replacing the old SELECT-then-UPDATE. The
+provisional-row check and the write are the same statement; `RETURNING
+id` is how the caller learns whether it applied, with no second query
+deciding anything. Under Postgres's default READ COMMITTED isolation
+this is race-safe: a second concurrent UPDATE against the same
+identity blocks on the first's row lock, then -- once the first
+commits -- re-evaluates its own `WHERE` clause against the
+now-verified row and correctly matches zero rows. When the UPDATE
+matches nothing, a subsequent `SELECT` (reusing the existing
+`_select_one` helper) is purely diagnostic, distinguishing "no such
+vintage" from "already verified" for the raised error -- it never
+influences whether anything was written. The port's docstring
+(`application.ports.macro_observation_repository`) now states this
+atomicity as part of the contract itself, not just as an
+implementation detail of one adapter.
+
+**`FakeMacroObservationRepository`** needed no logic change: its
+check-then-set has no `await` between the two steps, so nothing can
+interleave under Python's single-threaded cooperative asyncio
+scheduling -- a comment now says so explicitly, to head off a future
+"make the fake atomic too" misunderstanding.
+
+**Regression-proof discipline applied to all three new guarantees,
+each deliberately broken and confirmed to fail for the right reason,
+then restored:**
+- domain default flipped back to `True` -- confirmed
+  `test_released_at_is_verified_defaults_to_false` fails;
+- the atomic UPDATE reverted to SELECT-then-UPDATE -- confirmed the
+  new concurrency test fails, and it failed by both racers reporting
+  success (`outcomes=[None, None]`) rather than an error, i.e. the
+  test caught exactly the double-write race it exists to catch;
+- the migration's reclassification narrowed with a `WHERE
+  released_at_is_verified IS NULL` escape hatch -- confirmed the new
+  migration unit test fails, correctly reporting the injected `WHERE`
+  clause.
+
+**New tests**: `test_released_at_is_verified_defaults_to_false` /
+`test_released_at_is_verified_can_be_explicitly_true` (domain);
+`test_migration_released_at_is_verified_fail_closed.py` (new file --
+loads migration `80c0ae20257b` directly via `importlib.util` rather
+than a dotted import, since `alembic/` collides in name with the
+installed `alembic` package and `alembic/versions/` has no
+`__init__.py`; patches `alembic.op.execute`/`alter_column` to assert
+the exact DDL/DML without touching a real database);
+`test_concurrent_replace_provisional_release_timing_only_one_wins`
+(integration -- two independent sessions/connections race
+`replace_provisional_release_timing` against the identical identity
+via `asyncio.gather`; asserts exactly one success and one
+already-verified failure). Existing `replace_provisional_release_
+timing` tests (fake and integration) needed no behavioural changes --
+same error-message text, same success/failure shape -- only the
+concurrency case was new.
+
+**Verification**: `pytest` (967 passed, full suite), `ruff`, `ruff
+format`, `mypy --strict`, `pre-commit run --all-files`. Applied
+migration `80c0ae20257b` against the real dev Postgres and confirmed
+directly via SQL: all 258 existing policy-rate rows read
+`released_at_is_verified = false` (they already did, from FX-43H's own
+explicit sets -- this migration's reclassification was a structural
+safety net here, not a correction of a known-wrong value) and the
+column's `information_schema` default is now `false`.
+
+Per this story's own explicit stop instruction: no providers, no
+verified announcement timestamps, no rate differential, no carry
+research, no JPY work, no release-time sourcing, no strategy changes
+follow this story.

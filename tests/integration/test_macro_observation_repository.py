@@ -8,6 +8,7 @@ tests/unit/application/test_fake_macro_observation_repository.py for the
 fast, DB-free equivalents of the core scenarios exercised here.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -532,3 +533,63 @@ async def test_replace_provisional_release_timing_rejects_already_verified_row(
     result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 1))
     assert result is not None
     assert result.released_at == _ts(2024, 7, 1)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_replace_provisional_release_timing_only_one_wins(
+    session: AsyncSession,
+) -> None:
+    """FX-43H.1 regression: this is the test the SELECT-then-UPDATE
+    version of `replace_provisional_release_timing` could NOT pass
+    reliably -- two genuinely concurrent verification attempts, each on
+    its own session/connection, racing the identical provisional
+    identity via `asyncio.gather`. Exactly one must succeed and the
+    other must observe the already-verified failure; the atomic
+    conditional UPDATE's `WHERE released_at_is_verified = false`
+    predicate, re-evaluated against the post-commit row by whichever
+    attempt is serialized second, is what this depends on.
+    """
+    setup_repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    provisional = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=period,
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=False,
+    )
+    await setup_repo.add_vintage(provisional)
+
+    # Two independent sessions -- each its own connection -- so the two
+    # attempts below are genuinely separate database transactions, not
+    # two operations sharing one session's single connection.
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async def _attempt(candidate_released_at: UtcTimestamp) -> str | None:
+        async with session_factory() as race_session:
+            race_repo = SqlAlchemyMacroObservationRepository(race_session)
+            try:
+                await race_repo.replace_provisional_release_timing(
+                    TEST_SERIES_KEY, period, 0, candidate_released_at, None
+                )
+            except ValueError as exc:
+                return str(exc)
+            return None
+
+    outcomes = await asyncio.gather(
+        _attempt(_ts(2024, 5, 30)),
+        _attempt(_ts(2024, 5, 31)),
+    )
+
+    successes = [outcome for outcome in outcomes if outcome is None]
+    failures = [outcome for outcome in outcomes if outcome is not None]
+    assert len(successes) == 1, f"expected exactly one winner, got outcomes={outcomes!r}"
+    assert len(failures) == 1
+    assert "already released_at_is_verified=True" in failures[0]
+
+    final = await setup_repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 12, 31))
+    assert final is not None
+    assert final.released_at_is_verified is True
+    assert final.released_at in (_ts(2024, 5, 30), _ts(2024, 5, 31))

@@ -121,6 +121,18 @@ class MacroObservationRepository(Protocol):
         True` -- WITHOUT touching its `value` or `revision_sequence`
         (FX-43H).
 
+        Atomic (FX-43H.1): an implementation must perform this as a
+        single atomic conditional write whose predicate includes
+        `released_at_is_verified = false` -- the provisional-row check
+        and the write are one operation, not a separate read followed
+        by an unconditional write. Two concurrent callers racing this
+        method against the same identity must never both succeed: at
+        most one write applies, and every other caller observes the
+        already-verified failure below. `SqlAlchemyMacroObservationRepository`
+        implements this via `UPDATE ... WHERE released_at_is_verified =
+        false ... RETURNING id`, relying on the database to serialize
+        concurrent attempts against the same row.
+
         This is the explicit, safe replacement path FX-43's effective-
         date-proxy rows (`released_at_is_verified=False`) are meant to
         go through once a future story establishes genuine announcement

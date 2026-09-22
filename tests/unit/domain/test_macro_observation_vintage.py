@@ -108,21 +108,22 @@ def test_vintage_is_immutable() -> None:
         vintage.value = Decimal("9.9")  # type: ignore[misc]
 
 
-def test_released_at_is_verified_defaults_to_true() -> None:
-    # FX-43H: the ordinary case -- a vintage's timestamps are simply what
-    # they claim to be -- must not require every existing caller to
-    # change.
+def test_released_at_is_verified_defaults_to_false() -> None:
+    # FX-43H.1: fail closed -- a caller that does not explicitly claim
+    # verified release timing must not have that go unnoticed by
+    # defaulting to "verified". A newly constructed vintage is
+    # provisional unless proven otherwise.
     vintage = _vintage()
 
-    assert vintage.released_at_is_verified is True
-
-
-def test_released_at_is_verified_can_be_set_false() -> None:
-    # FX-43's own use case: released_at is an effective-date proxy, not a
-    # confirmed announcement timestamp.
-    vintage = _vintage(released_at_is_verified=False)
-
     assert vintage.released_at_is_verified is False
+
+
+def test_released_at_is_verified_can_be_explicitly_true() -> None:
+    # A caller that genuinely possesses confirmed release timing must be
+    # able to say so explicitly.
+    vintage = _vintage(released_at_is_verified=True)
+
+    assert vintage.released_at_is_verified is True
 
 
 def test_rejects_non_bool_released_at_is_verified() -> None:

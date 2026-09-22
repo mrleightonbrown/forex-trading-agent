@@ -846,23 +846,53 @@ differential, no carry strategy, no parameter research, no JPY
 provider work, no invented release timestamps, and no decision logic
 follows this story.
 
+## FX-43H.1: provisional timestamp fail-closed hardening (complete)
+
+Hardens FX-43H's own `released_at_is_verified`/
+`replace_provisional_release_timing` mechanisms themselves — no new
+provider, no verified announcement timestamp, no rate/carry/JPY work.
+`released_at_is_verified` now DEFAULTS to `False` (was `True`) at both
+the domain and SQLAlchemy-model layers, so a caller must explicitly
+pass `released_at_is_verified=True` to claim verification rather than
+that going unnoticed. New migration `80c0ae20257b` changes the
+column's `server_default` to `'false'` AND unconditionally
+reclassifies every pre-existing row to `False` in the same migration —
+not relying on manually clearing/reloading the database, per the
+story's own explicit constraint; confirmed against real Postgres.
+`replace_provisional_release_timing` in
+`SqlAlchemyMacroObservationRepository` is now a single atomic
+conditional `UPDATE ... WHERE ... AND released_at_is_verified = false
+... RETURNING id`, replacing the old SELECT-then-UPDATE, so two
+concurrent replacement attempts against the same identity cannot both
+succeed — proven by a new concurrency regression test racing two
+independent database sessions. All existing guarantees preserved: no
+`value` parameter, no `revision_sequence` update, verified rows still
+cannot be rewritten. Full details in `docs/DECISIONS.md`'s FX-43H.1
+entry.
+
+**Per this story's own explicit stop instruction**: no providers, no
+verified announcement timestamps, no rate differential, no carry
+research, no JPY work, no release-time sourcing, no strategy changes
+follow this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including establishing genuine announcement
-timestamps (still the next review gate, now with a safe replacement
-path ready for it), JPY provider mapping, the pre-2009 CAD gap, or any
+timestamps (still the next review gate, now with both a safe
+replacement path AND a fail-closed, race-safe implementation of it
+ready for it), JPY provider mapping, the pre-2009 CAD gap, or any
 rate-differential/carry work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
-assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H
-above are the explicitly-scoped exceptions (domain model, storage-
-integrity hardening, canonical registry/provider-mapping definitions,
-real policy-rate ingestion, and now its own hardening — still no
-strategy, no decision logic, no "carry" framing) and do not open the
-door to the rest of this phase. The same goes for the downstream epics
-not in this list at all (Decision Engine, Risk Engine, Paper Trading
-Execution, Performance Analytics, Shadow Trading) — none are part of
-the current phase.
+assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
+FX-43H/FX-43H.1 above are the explicitly-scoped exceptions (domain
+model, storage-integrity hardening, canonical registry/provider-mapping
+definitions, real policy-rate ingestion, and now two rounds of its own
+hardening — still no strategy, no decision logic, no "carry" framing)
+and do not open the door to the rest of this phase. The same goes for
+the downstream epics not in this list at all (Decision Engine, Risk
+Engine, Paper Trading Execution, Performance Analytics, Shadow
+Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

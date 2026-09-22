@@ -77,15 +77,18 @@ class MacroObservationVintage:
             backfill, which sets `released_at` to the date a
             provider's raw series shows a value CHANGE -- an
             effective-date proxy, not a verified announcement
-            timestamp). Defaults to `True` (the ordinary case: a
-            vintage's timestamps are simply what they claim to be) so
-            existing callers are unaffected; a caller that knows its
-            `released_at` is only a best-available proxy must set this
-            `False` explicitly. This field exists so a future
-            correction to release timing can be represented and
-            applied safely (FX-43H) without conflating "we learned the
-            economic value was different" (a `revision_sequence` bump)
-            with "we learned exactly when this became knowable" (a
+            timestamp). Defaults to `False` (FX-43H.1: fail closed --
+            a caller that has not actually confirmed its release
+            timing must not have that go unnoticed by defaulting to
+            "verified"). A caller that genuinely possesses a confirmed
+            announcement/effective timestamp must pass
+            `released_at_is_verified=True` explicitly; nothing about
+            constructing a vintage may silently claim verification it
+            was never given. This field exists so a future correction
+            to release timing can be represented and applied safely
+            (FX-43H) without conflating "we learned the economic value
+            was different" (a `revision_sequence` bump) with "we
+            learned exactly when this became knowable" (a
             `released_at_is_verified` correction) -- see
             `MacroObservationRepository.
             replace_provisional_release_timing`.
@@ -98,7 +101,7 @@ class MacroObservationVintage:
     revision_sequence: int
     source: str
     effective_at: UtcTimestamp | None = None
-    released_at_is_verified: bool = True
+    released_at_is_verified: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.series_key, str) or not self.series_key.strip():

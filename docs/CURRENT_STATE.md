@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-22 (FX-43H)_
+_Last updated: 2026-09-22 (FX-43H.1)_
 
 ## What exists
 
@@ -584,6 +584,41 @@ _Last updated: 2026-09-22 (FX-43H)_
   raw-vs-change-point coverage aggregation (each reverted, confirmed
   to fail its dedicated test, restored). 962 tests pass (full suite,
   up from 942). Full details in `docs/DECISIONS.md`'s FX-43H entry.
+- **FX-43H.1: provisional timestamp fail-closed hardening (complete)**.
+  Hardens FX-43H's own `released_at_is_verified`/
+  `replace_provisional_release_timing` mechanisms themselves — no new
+  provider, no verified announcement timestamp. (1)
+  `released_at_is_verified` now DEFAULTS to `False` (was `True`) at
+  both the domain (`MacroObservationVintage`) and SQLAlchemy-model
+  layers — a caller must explicitly pass `released_at_is_verified=
+  True` to claim verification. (2) Migration `80c0ae20257b` changes
+  the column's `server_default` to `'false'` AND unconditionally
+  reclassifies every pre-existing row to `False` in the same
+  migration — a schema-default change alone would not retroactively
+  fix rows already written under the old default, and this codebase
+  does not rely on manually clearing/reloading the database to reach
+  a correct state; confirmed against real Postgres (all 258 rows
+  already `False` from FX-43H's own explicit sets, so this ran as a
+  structural safety net, not a live correction). (3)
+  `replace_provisional_release_timing` in
+  `SqlAlchemyMacroObservationRepository` is now a single atomic
+  conditional `UPDATE ... WHERE ... AND released_at_is_verified =
+  false ... RETURNING id`, replacing the old SELECT-then-UPDATE — the
+  provisional-row check and the write are one statement, so two
+  concurrent replacement attempts against the same identity cannot
+  both succeed. New concurrency regression test
+  (`test_concurrent_replace_provisional_release_timing_only_one_wins`)
+  races two independent sessions via `asyncio.gather`; a new migration
+  unit test (`tests/unit/infrastructure/
+  test_migration_released_at_is_verified_fail_closed.py`) asserts the
+  migration's exact DDL/DML by patching `alembic.op` directly, without
+  a real database. Regression-proof discipline applied to all three
+  new guarantees (domain default, atomic UPDATE, migration
+  reclassification) — each deliberately reverted, confirmed to fail
+  its dedicated test for the right reason (the reverted atomic UPDATE
+  failed with both racing attempts reporting success), then restored.
+  967 tests pass (full suite, up from 962). Full details in
+  `docs/DECISIONS.md`'s FX-43H.1 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

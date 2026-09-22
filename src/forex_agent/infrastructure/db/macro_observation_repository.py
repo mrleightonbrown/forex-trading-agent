@@ -74,26 +74,51 @@ class SqlAlchemyMacroObservationRepository:
     ) -> None:
         # The ONE UPDATE in this class -- see the class docstring and the
         # port's own docstring for why this is safe: value/revision_sequence
-        # are never touched, and the existing row must already be marked
-        # provisional (released_at_is_verified=False) or this refuses.
-        existing_row = await self._select_one(series_key, observation_period, revision_sequence)
-        if not existing_row.released_at_is_verified:
-            stmt = (
-                update(MacroObservationVintageRow)
-                .where(MacroObservationVintageRow.id == existing_row.id)
-                .values(
-                    released_at=verified_released_at.value,
-                    effective_at=(
-                        None if verified_effective_at is None else verified_effective_at.value
-                    ),
-                    released_at_is_verified=True,
-                )
+        # are never touched. FX-43H.1: this is a single atomic conditional
+        # UPDATE, not a SELECT-then-UPDATE -- `released_at_is_verified =
+        # false` is part of the UPDATE's own WHERE clause, so the
+        # provisional-row check and the write happen in one statement, and
+        # `RETURNING id` is how we learn whether it actually applied.
+        #
+        # Under Postgres's default READ COMMITTED isolation this is race-
+        # safe: if two sessions race this same UPDATE against the same
+        # identity, the second to reach the row blocks on the first's row
+        # lock, then -- once the first commits -- re-evaluates its own
+        # WHERE clause against the now-committed (already verified) row and
+        # correctly matches zero rows, rather than blindly overwriting.
+        stmt = (
+            update(MacroObservationVintageRow)
+            .where(
+                MacroObservationVintageRow.series_key == series_key,
+                MacroObservationVintageRow.observation_period == observation_period.value,
+                MacroObservationVintageRow.revision_sequence == revision_sequence,
+                MacroObservationVintageRow.released_at_is_verified.is_(False),
             )
-            await self._session.execute(stmt)
-            await self._session.commit()
+            .values(
+                released_at=verified_released_at.value,
+                effective_at=(
+                    None if verified_effective_at is None else verified_effective_at.value
+                ),
+                released_at_is_verified=True,
+            )
+            .returning(MacroObservationVintageRow.id)
+        )
+        updated_id = (await self._session.execute(stmt)).scalar_one_or_none()
+        await self._session.commit()
+        if updated_id is not None:
             return
 
-        await self._session.commit()  # close out the read-only lookup above
+        # The UPDATE above matched zero rows -- it, not this lookup,
+        # already decided nothing was written. Everything from here down is
+        # diagnostic only: it exists solely to tell "identity doesn't
+        # exist" apart from "identity exists but is already verified" in
+        # the raised error, and cannot itself cause (or prevent) a write.
+        # `_select_one` itself raises the missing-identity error if the row
+        # doesn't exist at all; reaching the line below means it exists and
+        # -- since the UPDATE's own WHERE already ruled out False -- is
+        # already verified.
+        await self._select_one(series_key, observation_period, revision_sequence)
+        await self._session.commit()
         raise ValueError(
             f"vintage identity (series_key={series_key!r}, "
             f"observation_period={observation_period.value.isoformat()!r}, "
