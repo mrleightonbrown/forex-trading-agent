@@ -5172,3 +5172,107 @@ FX-41/FX-41H macro-observation code), `ruff`, `mypy --strict`,
 Per this story's own explicit stop instruction: no ingestion, differential
 calculation, carry strategy, parameter research, or trading follows this
 story.
+
+## 2026-09-21 — FX-42H.1: policy-rate gap and JPY boundary hardening
+
+**Scope**: replace FX-42H's blanket gap tolerance with explicitly
+declared, auditable gaps, and correct two more JPY factual weaknesses
+(the 2010-10-05 target-range switch, the announcement-vs-effective-date
+distinction for the 2016 negative-rate transition) identified on further
+review. Preserves all accepted FX-42/FX-42H architecture. No provider
+verification, ingestion, rate differential, strategy, parameter research,
+or trading.
+
+**Declared gaps replace blanket tolerance.** FX-42H's `validate_registry`
+accepted ANY gap between two consecutive definitions for a currency,
+reasoning that some currencies genuinely have periods with no comparable
+canonical scalar (the Bank of Japan's quantity-target eras). That
+tolerance was too permissive: it could not tell an intentional gap from
+an accidental one (a boundary typo, a forgotten definition) -- both
+passed silently. `domain/declared_policy_rate_gap.py` (new):
+`DeclaredPolicyRateGap` -- `currency`, half-open `start`/`end`
+(`UtcTimestamp`), and a required non-empty `reason`. `validate_registry`
+(`domain/policy_rate_registry.py`) now, per currency:
+  - rejects any declared gap that overlaps an actual policy-rate
+    definition of that currency;
+  - for every gap between two consecutive definitions, requires EXACTLY
+    one declared gap whose `start`/`end` exactly match the definitions'
+    `valid_to`/`valid_from` boundaries -- anything else is an
+    "undeclared gap" validation error, including a deliberately
+    constructed one-day gap in tests;
+  - rejects declared gaps for the same currency that overlap each other.
+
+`DECLARED_GAPS` (new, `policy_rate_registry.py`) holds the registry's two
+real declared gaps, both for JPY (see below); `validate_registry` is now
+called at import time as `validate_registry(POLICY_RATE_DEFINITIONS,
+DECLARED_GAPS)`.
+
+**JPY's 2006-2013 overnight-call-rate era is split at October 5, 2010.**
+The BoJ explicitly changed its target from a single point (around 0.1%)
+to an explicit range (around 0% to 0.1%) under "Comprehensive Monetary
+Easing" on this date -- a genuine instrument-SHAPE change (point vs.
+range), not merely a level change, and the registry already represents
+published target ranges via `TARGET_RANGE_MIDPOINT` for USD and JPY's
+2024 transitional range. FX-42H's single 2006-2013 definition is
+replaced by two: `_JPY_CALL_RATE_ERA_2A` (2006-03-09 to 2010-10-05,
+`IDENTITY`) and `_JPY_CALL_RATE_ERA_2B` (2010-10-05 to 2013-04-04,
+`TARGET_RANGE_MIDPOINT`). `test_jpy_2010_10_04_uses_identity_
+transformation`/`test_jpy_2010_10_05_uses_target_range_midpoint_
+transformation` prove the boundary lands correctly on each side;
+`test_jpy_2010_2013_range_midpoint_of_zero_and_tenth_percent` proves the
+arithmetic (midpoint of 0 and 0.1 is `Decimal("0.05")`).
+
+**JPY's Policy-Rate Balance era now starts February 16, 2016 (effective
+date), not January 29, 2016 (announcement/release date).** The BoJ
+ANNOUNCED "Quantitative and Qualitative Monetary Easing with a Negative
+Interest Rate" on January 29, 2016, but the -0.10% rate did not take
+EFFECT until February 16, 2016. FX-42H's `valid_from=2016-01-29`
+conflated the two. This is exactly the distinction FX-41's own
+`MacroObservationVintage` already models with two separate fields
+(`released_at` vs. optional `effective_at`) -- the Policy-Rate Balance
+definition's `notes` now say so explicitly, so FX-43 knows to expect,
+for the observation marking this transition, `released_at` around
+January 29 and `effective_at` around February 16, and must not collapse
+the two into one timestamp. The preceding QQE declared gap is extended
+to end at February 16, 2016 (not January 29) -- the prior monetary-base-
+target framework arguably still governed policy until the new rate
+actually took effect, so the gap, not a rate definition, should cover
+the announcement-to-effect window. `test_jpy_2016_02_15_returns_no_
+canonical_policy_rate_definition`/`test_jpy_2016_02_16_returns_policy_
+rate_balance_definition` prove the exact boundary.
+
+**Stale documentation corrected.** `domain/policy_rate_definition.py`'s
+class docstring still described "EUR/GBP/JPY/CAD" together as this
+story's choice for a single continuous, open-ended definition -- true
+for EUR/GBP/CAD, but wrong for JPY since FX-42H itself split JPY into
+multiple effective-dated definitions with gaps. Corrected to list
+EUR/GBP/CAD only, with an explicit note that USD and JPY instead need
+multiple effective-dated definitions (USD for its 2008 switch, JPY for
+several genuine operating-target changes including declared gaps) and a
+pointer to `DeclaredPolicyRateGap` for periods with no comparable scalar
+at all.
+
+**Regression-proof discipline applied**: the undeclared-gap check, the
+gap-overlaps-definition check, and the gap-overlaps-gap check were each
+deliberately disabled in turn, confirmed the relevant tests failed
+(including, for the undeclared-gap check, three failures at once:
+the one-day-gap test, the mismatched-boundary test, and the
+per-real-gap-removal test), then restored. The real registry's own
+2010-10-05 split was regression-tested by temporarily corrupting era
+2A's `RateTransformationKind` to `TARGET_RANGE_MIDPOINT`, confirming
+`test_jpy_2010_10_04_uses_identity_transformation` failed with the wrong
+kind reported, then restored. The 2016-02-16 boundary was
+regression-tested by temporarily reverting both the Policy-Rate Balance
+definition's `valid_from` and the preceding declared gap's `end` back to
+2016-01-29, confirming `test_jpy_2016_02_15_returns_no_canonical_policy_
+rate_definition` failed (a definition was wrongly returned one day
+early), then restored.
+
+**Verification**: `pytest` (899 passed, full suite -- 24 net new/changed
+tests, zero changes to any existing strategy, backtest, candle-data, or
+FX-41/FX-41H macro-observation code), `ruff`, `mypy --strict`,
+`pre-commit run --all-files`.
+
+Per this story's own explicit stop instruction: no provider verification,
+ingestion, rate differential, strategy, parameter research, or trading
+follows this story.

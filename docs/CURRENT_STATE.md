@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-42H)_
+_Last updated: 2026-09-21 (FX-42H.1)_
 
 ## What exists
 
@@ -378,38 +378,45 @@ _Last updated: 2026-09-21 (FX-42H)_
   being restored. No point-in-time semantics changed. Full details in
   `docs/DECISIONS.md`'s FX-41H entry.
 - **FX-42: canonical central-bank policy-rate registry (complete;
-  corrected by FX-42H below — this bullet describes the CURRENT, post-
-  hardening state)**. Semantics and provider mappings only, no
-  persistence, no ingestion, no strategy. `domain/rate_transformation.py`:
-  `RateTransformation` (`RateTransformationKind` `IDENTITY`/
-  `TARGET_RANGE_MIDPOINT` + an explicit `version` string) with a real
-  `apply(*raw_values) -> Decimal` method. `domain/
+  corrected by FX-42H/FX-42H.1 below — this bullet describes the
+  CURRENT, post-hardening state)**. Semantics and provider mappings
+  only, no persistence, no ingestion, no strategy. `domain/
+  rate_transformation.py`: `RateTransformation` (`RateTransformationKind`
+  `IDENTITY`/`TARGET_RANGE_MIDPOINT` + an explicit `version` string) with
+  a real `apply(*raw_values) -> Decimal` method. `domain/
   provider_series_mapping.py`: `ProviderSeriesMapping` (`provider`,
   `provider_series_ids` tuple, `point_in_time_safety`, `verified: bool`,
   `notes`) — the explicit canonical-identity-vs-provider-mapping split
   FX-41 deferred, and (since FX-42H) the SOLE place point-in-time safety
   is tracked at all (`MacroSeriesDefinition` no longer has its own
-  `point_in_time_safety` field — see the FX-42H bullet below).
-  `domain/policy_rate_definition.py`: `PolicyRateDefinition` (one
-  effective-dated definition — `series`, `institution`,
-  `instrument_name`, `transformation`, half-open `valid_from`/`valid_to`
-  with `covers()`, non-empty `provider_mappings`); `summary()` answers
-  the six required audit questions. `domain/policy_rate_registry.py`:
-  `POLICY_RATE_DEFINITIONS` — ten definitions covering USD, EUR, GBP,
-  JPY, CAD (JPY needs five to represent its genuine operational-regime
-  history — see FX-42H). USD is split into two effective-dated eras
-  sharing one `USD_POLICY_RATE` series key (single target point, FRED
-  `DFEDTAR`, February 4 1994 through December 16, 2008; target range
-  midpoint, FRED `DFEDTARU`/`DFEDTARL`, from then on) — the story's
-  required effective-dated/transformed example. `definition_as_of`/
+  `point_in_time_safety` field — see the FX-42H bullet below). `domain/
+  policy_rate_definition.py`: `PolicyRateDefinition` (one effective-dated
+  definition — `series`, `institution`, `instrument_name`,
+  `transformation`, half-open `valid_from`/`valid_to` with `covers()`,
+  non-empty `provider_mappings`); `summary()` answers the six required
+  audit questions. `domain/declared_policy_rate_gap.py` (FX-42H.1, new):
+  `DeclaredPolicyRateGap` (`currency`, half-open `start`/`end`, required
+  non-empty `reason`) — every gap between consecutive definitions for a
+  currency must now be explicitly declared with matching boundaries, or
+  registry validation fails; a declared gap must not overlap an actual
+  definition or another declared gap. `domain/policy_rate_registry.py`:
+  `POLICY_RATE_DEFINITIONS` — eleven definitions covering USD, EUR, GBP,
+  JPY, CAD (JPY needs six to represent its genuine operational-regime
+  history, plus two declared gaps in `DECLARED_GAPS` — see FX-42H.1).
+  USD is split into two effective-dated eras sharing one
+  `USD_POLICY_RATE` series key (single target point, FRED `DFEDTAR`,
+  February 4 1994 through December 16, 2008; target range midpoint, FRED
+  `DFEDTARU`/`DFEDTARL`, from then on) — the story's required
+  effective-dated/transformed example. `definition_as_of`/
   `definitions_for_currency`/`canonical_series_for_currency` provide
   point-in-time definition lookup; `validate_registry` enforces
   registry-wide invariants (identical `MacroSeriesDefinition` semantics
-  per currency, non-overlapping validity windows, all five required
-  currencies present — gaps allowed since FX-42H) at import time. No
-  date or provider series ID is confirmed against a live provider — see
-  `docs/DECISIONS.md`'s FX-42/FX-42H entries for exactly what FX-43
-  still needs to verify.
+  per currency, non-overlapping validity windows, every gap explicitly
+  declared with matching boundaries, declared gaps not overlapping
+  definitions or each other, all five required currencies present) at
+  import time. No date or provider series ID is confirmed against a live
+  provider — see `docs/DECISIONS.md`'s FX-42/FX-42H/FX-42H.1 entries for
+  exactly what FX-43 still needs to verify.
 - **FX-42H: policy-rate registry semantic hardening (complete)**.
   Corrects FX-42's factual/semantic weaknesses before FX-43 ingestion,
   without changing FX-42's domain architecture. (1) Removed
@@ -449,6 +456,40 @@ _Last updated: 2026-09-21 (FX-42H)_
   fail to IMPORT, not just fail a test, since JPY's own gaps trip the
   old check), then restored. Full details in `docs/DECISIONS.md`'s
   FX-42H entry.
+- **FX-42H.1: policy-rate gap and JPY boundary hardening (complete)**.
+  Replaces FX-42H's blanket gap tolerance with explicitly declared,
+  auditable gaps, and corrects two further JPY factual weaknesses.
+  `domain/declared_policy_rate_gap.py` (new): `DeclaredPolicyRateGap`
+  (`currency`, half-open `start`/`end`, required non-empty `reason`).
+  `validate_registry` now rejects any undeclared gap between consecutive
+  definitions (even a deliberately-constructed one-day gap), rejects a
+  declared gap that overlaps an actual definition, and rejects declared
+  gaps that overlap each other — `DECLARED_GAPS` holds the registry's
+  two real gaps (both JPY). JPY's 2006-2013 overnight-call-rate era is
+  split at October 5, 2010 (`_JPY_CALL_RATE_ERA_2A`/`_2B`): the BoJ
+  explicitly changed its target from a single point (~0.1%) to a range
+  (~0-0.1%) under "Comprehensive Monetary Easing", now represented with
+  `TARGET_RANGE_MIDPOINT` from that date, matching how the registry
+  already treats USD and JPY's 2024 transitional range. JPY's
+  Policy-Rate Balance era now starts February 16, 2016 (the -0.10%
+  rate's EFFECTIVE date) rather than January 29, 2016 (its
+  ANNOUNCEMENT/release date) — the preceding QQE declared gap is
+  extended to match; the definition's `notes` tie this directly to
+  FX-41's `MacroObservationVintage.released_at`/`effective_at`
+  distinction for FX-43. Also corrected a stale `PolicyRateDefinition`
+  docstring that still described JPY as needing only one continuous
+  definition (true for EUR/GBP/CAD, wrong for JPY/USD since FX-42H
+  itself split them). 24 net new/changed tests (899 total), including
+  the undeclared one-day-gap rejection, each declared JPY gap's
+  boundaries, definition/gap and gap/gap overlap rejection, the exact
+  2010-10-04/2010-10-05 transformation-kind boundary, the 0/0.1 midpoint
+  arithmetic, and the exact 2016-02-15/2016-02-16 boundary.
+  Regression-proof discipline applied to the undeclared-gap,
+  gap-overlaps-definition, and gap-overlaps-gap checks (each disabled in
+  turn), and to the real registry's 2010-10-05 transformation split and
+  2016-02-16 boundary (each reverted in turn) — every case confirmed to
+  fail the relevant test(s) before being restored. Full details in
+  `docs/DECISIONS.md`'s FX-42H.1 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

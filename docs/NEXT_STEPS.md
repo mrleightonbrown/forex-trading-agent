@@ -759,6 +759,29 @@ ingestion, in `docs/DECISIONS.md`'s FX-42H entry.
 differential calculation, carry strategy, parameter research, or
 trading follows this story.
 
+## FX-42H.1: policy-rate gap and JPY boundary hardening (complete)
+
+Replaces FX-42H's blanket gap tolerance with explicitly declared,
+auditable gaps, and corrects two further JPY factual weaknesses.
+`DeclaredPolicyRateGap` (new) requires a currency, half-open
+`start`/`end`, and a non-empty `reason`; `validate_registry` now rejects
+any undeclared gap between consecutive definitions, any declared gap
+overlapping an actual definition, and any declared gaps overlapping each
+other. JPY's 2006-2013 overnight-call-rate era is split at October 5,
+2010 (the BoJ's "Comprehensive Monetary Easing" switch from a
+single-point target to a ~0-0.1% range, now `TARGET_RANGE_MIDPOINT`).
+JPY's Policy-Rate Balance era now starts February 16, 2016 (the -0.10%
+rate's EFFECTIVE date) rather than January 29, 2016 (its announcement
+date) — tied explicitly, in the definition's own notes, to FX-41's
+`released_at`/`effective_at` distinction for FX-43. A stale
+`PolicyRateDefinition` docstring still describing JPY as needing only
+one continuous definition was also corrected. Full details in
+`docs/DECISIONS.md`'s FX-42H.1 entry.
+
+**Per this story's own explicit stop instruction**: no provider
+verification, ingestion, rate differential, strategy, parameter
+research, or trading follows this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-43 ingestion, named directly by
 FX-42's own Definition of Done as the natural next step.
@@ -766,12 +789,12 @@ FX-42's own Definition of Done as the natural next step.
 Do not start fundamentals data ingestion (FRED/central-bank/commercial
 provider adapters), news intelligence, AI decision-making, or live
 trading — out of scope until explicitly assigned per CLAUDE.md. FX-41/
-FX-41H/FX-42/FX-42H above are the explicitly-scoped exceptions (domain
-model, storage-integrity hardening, and canonical registry/provider-
-mapping definitions plus their correction — still no provider actually
-called, no strategy) and do not open the door to the rest of this
-phase. The same goes for the downstream epics not in this list at all
-(Decision Engine, Risk Engine, Paper Trading Execution, Performance
+FX-41H/FX-42/FX-42H/FX-42H.1 above are the explicitly-scoped exceptions
+(domain model, storage-integrity hardening, and canonical registry/
+provider-mapping definitions plus their corrections — still no provider
+actually called, no strategy) and do not open the door to the rest of
+this phase. The same goes for the downstream epics not in this list at
+all (Decision Engine, Risk Engine, Paper Trading Execution, Performance
 Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per

@@ -1,11 +1,11 @@
 """Canonical, provider-independent policy-rate registry (FX-42; hardened
-FX-42H).
+FX-42H, FX-42H.1).
 
 Defines semantics and provider mappings for the five currencies in the
 research universe (USD, EUR, GBP, JPY, CAD). Deliberately does not
 ingest, fetch, or store any actual rate history -- see each
 `PolicyRateDefinition`'s docstring and `docs/DECISIONS.md`'s FX-42/
-FX-42H entries for what is and is not in scope.
+FX-42H/FX-42H.1 entries for what is and is not in scope.
 
 Every date below is this story's good-faith research into each
 institution's operational history, not a value confirmed against a
@@ -24,23 +24,40 @@ the full reasoning):
     continuously -- DFR is documented as a candidate future
     regime-aware feature instead.
   - JPY no longer claims one continuous short-term policy-rate
-    definition: genuine operational-regime changes (quantitative-easing
-    eras with no comparable rate target vs. overnight-call-rate-target
-    eras vs. the 2016-2024 policy-rate-balance regime vs. the transitional
-    2024 range) are represented as distinct definitions, with
-    INTENTIONAL GAPS during quantitative-target eras where
+    definition: genuine operational-regime changes are represented as
+    distinct definitions, with gaps during quantity-target eras where
     `definition_as_of` correctly returns `None`.
   - CAD's overnight-target framework now starts February 1999, not 1991.
-  - `validate_registry` now allows gaps (previously rejected) and checks
-    that every definition for one currency shares not just the same
-    `series.key` string but fully identical `MacroSeriesDefinition`
-    semantics.
+  - `validate_registry` checks that every definition for one currency
+    shares not just the same `series.key` string but fully identical
+    `MacroSeriesDefinition` semantics.
+
+FX-42H.1 hardening summary (see `docs/DECISIONS.md`'s FX-42H.1 entry
+for the full reasoning):
+  - FX-42H's blanket gap tolerance (ANY gap between consecutive
+    definitions was silently accepted) is replaced by
+    `DeclaredPolicyRateGap`: every gap must now be explicitly declared,
+    with a non-empty reason, or registry validation fails. An
+    undeclared gap is a validation error, not a silently accepted state.
+  - JPY's 2006-2013 overnight-call-rate era is split at October 5,
+    2010, when the BoJ changed its target from a single point
+    (~0.1%) to an explicit range (~0% to 0.1%) under "Comprehensive
+    Monetary Easing" -- the same target-range/midpoint pattern already
+    used for USD and JPY's 2024 transitional range.
+  - JPY's Policy-Rate Balance era now starts February 16, 2016 (the
+    -0.10% rate's EFFECTIVE date), not January 29, 2016 (its
+    ANNOUNCEMENT/release date) -- `released_at` can precede
+    `effective_at` (FX-41's own distinction), and the preceding QQE
+    quantity-target gap is extended to cover the announcement-to-effect
+    window, since the prior operating framework arguably still governed
+    until the new one actually took effect.
 """
 
 from collections import defaultdict
 from datetime import UTC, datetime
 from itertools import pairwise
 
+from forex_agent.domain.declared_policy_rate_gap import DeclaredPolicyRateGap
 from forex_agent.domain.macro_category import MacroCategory
 from forex_agent.domain.macro_frequency import MacroFrequency
 from forex_agent.domain.macro_series_definition import MacroSeriesDefinition
@@ -238,7 +255,7 @@ _EUR_DEFINITION = PolicyRateDefinition(
 
 
 # ---------------------------------------------------------------------------
-# GBP -- Bank of England (unchanged by FX-42H)
+# GBP -- Bank of England (unchanged by FX-42H/FX-42H.1)
 # ---------------------------------------------------------------------------
 
 _GBP_SERIES = MacroSeriesDefinition(
@@ -299,25 +316,34 @@ _GBP_DEFINITION = PolicyRateDefinition(
 # sense at all. Representing those eras with a borrowed/nearby rate value
 # would misrepresent what was actually being targeted.
 #
-# This registry instead represents five distinct rate-target eras, with
-# INTENTIONAL GAPS during the two quantitative-target eras where no
-# comparable scalar short-term policy-rate target existed:
+# FX-42H.1: the 2006-2013 overnight-call-rate era is further split at
+# October 5, 2010 (the BoJ's "Comprehensive Monetary Easing" switch from a
+# single-point target to an explicit 0%-0.1% range), and the Policy-Rate
+# Balance era now starts at the -0.10% rate's EFFECTIVE date (February 16,
+# 2016), not its announcement date (January 29, 2016) -- see that
+# definition's own notes on released_at vs effective_at. Both
+# quantity-target gaps are now DECLARED explicitly (`_JPY_GAPS` below),
+# not just silently tolerated.
+#
+# This registry represents six distinct rate-target eras, with two
+# explicitly DECLARED gaps during the quantity-target eras:
 #
 #   1998-04-01 .. 2001-03-19   overnight call rate target        (JPY-1)
-#   2001-03-19 .. 2006-03-09   [GAP] quantitative easing (balance target)
-#   2006-03-09 .. 2013-04-04   overnight call rate target        (JPY-2)
-#   2013-04-04 .. 2016-01-29   [GAP] QQE (monetary base target)
-#   2016-01-29 .. 2024-03-19   policy-rate balance (NIRP + YCC)  (JPY-3)
+#   2001-03-19 .. 2006-03-09   [DECLARED GAP] QEP (balance target)
+#   2006-03-09 .. 2010-10-05   overnight call rate target        (JPY-2A)
+#   2010-10-05 .. 2013-04-04   overnight call rate target RANGE  (JPY-2B)
+#   2013-04-04 .. 2016-02-16   [DECLARED GAP] QQE (monetary base target)
+#   2016-02-16 .. 2024-03-19   policy-rate balance (NIRP + YCC)  (JPY-3)
 #   2024-03-19 .. 2024-07-31   call rate target range 0-0.1%     (JPY-4)
 #   2024-07-31 ..              call rate target (single point)  (JPY-5)
 #
 # Every boundary date above is this story's good-faith research, held to
 # a LOWER confidence bar than the other four currencies given the
-# operational complexity involved -- FX-42H is explicit that exact
-# boundaries/effective dates must be confirmed against BoJ primary
+# operational complexity involved -- FX-42H/FX-42H.1 are explicit that
+# exact boundaries/effective dates must be confirmed against BoJ primary
 # sources before FX-43 relies on any of them. BoJ provider identifiers
-# remain entirely unresolved (see each mapping's notes) -- per FX-42H,
-# no primary-source mapping has been established for any BoJ era yet.
+# remain entirely unresolved (see each mapping's notes) -- no
+# primary-source mapping has been established for any BoJ era yet.
 # ---------------------------------------------------------------------------
 
 _JPY_SERIES = MacroSeriesDefinition(
@@ -363,17 +389,11 @@ _JPY_CALL_RATE_ERA_1 = PolicyRateDefinition(
         "TARGET from the overnight call rate to the outstanding balance "
         "of current accounts at the BoJ -- a quantity target, not a rate "
         "target, and therefore not representable by this registry (see "
-        "the intentional gap that follows)."
+        "the declared gap that follows)."
     ),
 )
 
-# GAP: 2001-03-19 .. 2006-03-09 -- Quantitative Easing Policy (QEP). The
-# BoJ's operating target was the outstanding balance of current accounts
-# (a yen-denominated quantity), not a short-term interest rate. No
-# PolicyRateDefinition covers this window -- definition_as_of("JPY", ...)
-# must correctly return None for any instant in it.
-
-_JPY_CALL_RATE_ERA_2 = PolicyRateDefinition(
+_JPY_CALL_RATE_ERA_2A = PolicyRateDefinition(
     series=_JPY_SERIES,
     institution="Bank of Japan",
     instrument_name="Uncollateralized Overnight Call Rate Target",
@@ -383,42 +403,78 @@ _JPY_CALL_RATE_ERA_2 = PolicyRateDefinition(
         description="BoJ-announced overnight call rate target used as-is.",
     ),
     valid_from=_ts(2006, 3, 9),
-    valid_to=_ts(2013, 4, 4),
+    valid_to=_ts(2010, 10, 5),
     provider_mappings=(
         ProviderSeriesMapping(
             provider="BOJ_TIME_SERIES_DATA_SEARCH",
-            provider_series_ids=("VERIFY_BOJ_CALL_RATE_TARGET_2006_2013",),
+            provider_series_ids=("VERIFY_BOJ_CALL_RATE_TARGET_2006_2010",),
             notes=(
-                "Unresolved (FX-42H): no specific Bank of Japan "
+                "Unresolved (FX-42H.1): no specific Bank of Japan "
                 "Time-Series Data Search series code is asserted here. "
                 "FX-43 must identify and verify."
             ),
         ),
     ),
     notes=(
-        "Reversion to an explicit overnight call rate target when QEP "
-        "ended (March 9, 2006), through the 2008-2010 financial-crisis "
-        "rate cuts and the October 2010 'Comprehensive Monetary Easing' "
-        "framework (which narrowed the target to a 0-0.1% range without "
-        "changing the underlying instrument type). This registry does "
-        "NOT further split 2010's range-narrowing into its own "
-        "definition in this pass -- the instrument stayed 'the overnight "
-        "call rate target', only its precision changed -- but FX-43 "
-        "should confirm this simplification holds before ingesting data "
-        "across the boundary. Ends when the BoJ adopted Quantitative and "
-        "Qualitative Monetary Easing (QQE) on April 4, 2013, switching "
-        "its main operating target from the overnight call rate to the "
-        "monetary base -- again a quantity target, not a rate target "
-        "(see the intentional gap that follows). This QQE-start date "
-        "carries lower confidence than most other boundaries in this "
-        "registry and should be an early FX-43 verification priority."
+        "Reversion to an explicit single-point overnight call rate "
+        "target when QEP ended (March 9, 2006), through the 2008-2010 "
+        "financial-crisis rate cuts. Ends October 5, 2010, when the BoJ "
+        "introduced 'Comprehensive Monetary Easing' and changed its "
+        "target from a single point (around 0.1%) to an explicit range "
+        "(around 0% to 0.1%) -- a genuine instrument-shape change, not "
+        "just a level change, represented by splitting into a second, "
+        "TARGET_RANGE_MIDPOINT definition (FX-42H.1) rather than folding "
+        "a range into this single-point definition."
     ),
 )
 
-# GAP: 2013-04-04 .. 2016-01-29 -- Quantitative and Qualitative Monetary
-# Easing (QQE). The BoJ's main operating target was the monetary base (a
-# yen-denominated quantity), not a short-term interest rate. No
-# PolicyRateDefinition covers this window.
+_JPY_CALL_RATE_ERA_2B = PolicyRateDefinition(
+    series=_JPY_SERIES,
+    institution="Bank of Japan",
+    instrument_name="Uncollateralized Overnight Call Rate Target Range",
+    transformation=RateTransformation(
+        kind=RateTransformationKind.TARGET_RANGE_MIDPOINT,
+        version="v1",
+        description=(
+            "Arithmetic mean of the BoJ's published 'Comprehensive Monetary "
+            "Easing' call rate target range (around 0% to 0.1%)."
+        ),
+    ),
+    valid_from=_ts(2010, 10, 5),
+    valid_to=_ts(2013, 4, 4),
+    provider_mappings=(
+        ProviderSeriesMapping(
+            provider="BOJ_TIME_SERIES_DATA_SEARCH",
+            provider_series_ids=(
+                "VERIFY_BOJ_CALL_RATE_UPPER_2010_2013",
+                "VERIFY_BOJ_CALL_RATE_LOWER_2010_2013",
+            ),
+            notes=(
+                "Unresolved (FX-42H.1): no specific Bank of Japan "
+                "Time-Series Data Search series codes are asserted here. "
+                "FX-43 must identify and verify both the upper and lower "
+                "bound series."
+            ),
+        ),
+    ),
+    notes=(
+        "FX-42H.1: split out from the preceding single-point definition "
+        "because the BoJ explicitly changed its target from a single "
+        "point (around 0.1%) to a range (around 0% to 0.1%) on October "
+        "5, 2010 under 'Comprehensive Monetary Easing' -- the registry "
+        "already represents published target ranges via "
+        "TARGET_RANGE_MIDPOINT for USD and JPY's 2024 transitional "
+        "range, so the same treatment applies here rather than silently "
+        "keeping this era under a single-point IDENTITY definition. Ends "
+        "April 4, 2013, when the BoJ adopted Quantitative and "
+        "Qualitative Monetary Easing (QQE), switching its main operating "
+        "target to the monetary base -- again a quantity target, not a "
+        "rate target (see the declared gap that follows). This "
+        "QQE-start date carries lower confidence than most other "
+        "boundaries in this registry and should be an early FX-43 "
+        "verification priority."
+    ),
+)
 
 _JPY_POLICY_RATE_BALANCE = PolicyRateDefinition(
     series=_JPY_SERIES,
@@ -429,7 +485,7 @@ _JPY_POLICY_RATE_BALANCE = PolicyRateDefinition(
         version="v1",
         description="BoJ-announced rate on the policy-rate tier of current account balances.",
     ),
-    valid_from=_ts(2016, 1, 29),
+    valid_from=_ts(2016, 2, 16),
     valid_to=_ts(2024, 3, 19),
     provider_mappings=(
         ProviderSeriesMapping(
@@ -446,14 +502,29 @@ _JPY_POLICY_RATE_BALANCE = PolicyRateDefinition(
         "A genuinely different operational instrument from the plain "
         "overnight call rate target, not just a lower rate level: "
         "'Quantitative and Qualitative Monetary Easing with a Negative "
-        "Interest Rate' (announced January 29, 2016) applies -0.10% to "
-        "only the 'policy-rate balance' tier of financial institutions' "
-        "current accounts at the BoJ (a three-tier structure, not a "
-        "single economy-wide rate). Yield Curve Control (YCC) was added "
-        "September 2016, targeting the 10-year JGB yield alongside this "
-        "short-term rate -- not itself represented here (out of scope: "
-        "this registry tracks the SHORT-TERM policy rate only). Ends "
-        "when the BoJ ended both NIRP and YCC on March 19, 2024."
+        "Interest Rate' applies -0.10% to only the 'policy-rate balance' "
+        "tier of financial institutions' current accounts at the BoJ (a "
+        "three-tier structure, not a single economy-wide rate). Yield "
+        "Curve Control (YCC) was added September 2016, targeting the "
+        "10-year JGB yield alongside this short-term rate -- not itself "
+        "represented here (out of scope: this registry tracks the "
+        "SHORT-TERM policy rate only). Ends when the BoJ ended both NIRP "
+        "and YCC on March 19, 2024. "
+        "FX-42H.1 correction: valid_from is February 16, 2016 -- the "
+        "date the -0.10% rate actually took EFFECT -- not January 29, "
+        "2016, when the BoJ ANNOUNCED the policy. released_at "
+        "(announcement/publication) can precede effective_at (when a "
+        "value takes legal/economic effect); FX-41's "
+        "`MacroObservationVintage` already carries both fields "
+        "separately for exactly this reason. FX-43 should therefore "
+        "expect, for the observation marking this transition, "
+        "released_at around January 29, 2016 and effective_at around "
+        "February 16, 2016 -- and must not collapse the two into a "
+        "single timestamp. The preceding QQE quantity-target gap is "
+        "extended through February 16, 2016 (not just to the January 29 "
+        "announcement) since the prior monetary-base-target framework "
+        "arguably still governed policy until the new rate actually took "
+        "effect."
     ),
 )
 
@@ -488,8 +559,9 @@ _JPY_CALL_RATE_RANGE_2024 = PolicyRateDefinition(
         "2024 end of NIRP/YCC: the BoJ guided the uncollateralized "
         "overnight call rate to 'around 0 to 0.1 percent' -- a range, "
         "not a single point, hence TARGET_RANGE_MIDPOINT like USD's "
-        "post-2008 target-range era. Ends July 31, 2024, when the BoJ "
-        "raised the target to a single point (around 0.25%)."
+        "post-2008 target-range era and JPY's own 2010-2013 range era. "
+        "Ends July 31, 2024, when the BoJ raised the target to a single "
+        "point (around 0.25%)."
     ),
 )
 
@@ -523,6 +595,36 @@ _JPY_CALL_RATE_ERA_CURRENT = PolicyRateDefinition(
         "change and does not require a new definition, matching how "
         "every other currency in this registry handles ordinary rate "
         "moves)."
+    ),
+)
+
+_JPY_GAPS: tuple[DeclaredPolicyRateGap, ...] = (
+    DeclaredPolicyRateGap(
+        currency="JPY",
+        start=_ts(2001, 3, 19),
+        end=_ts(2006, 3, 9),
+        reason=(
+            "Quantitative Easing Policy (QEP): the BoJ's operating target "
+            "was the outstanding balance of current accounts at the BoJ "
+            "(a quantity, denominated in yen), not a scalar short-term "
+            "interest rate -- no canonical POLICY_RATE definition can "
+            "represent this window without misrepresenting what was "
+            "actually being targeted."
+        ),
+    ),
+    DeclaredPolicyRateGap(
+        currency="JPY",
+        start=_ts(2013, 4, 4),
+        end=_ts(2016, 2, 16),
+        reason=(
+            "Quantitative and Qualitative Monetary Easing (QQE): the "
+            "BoJ's main operating target was the monetary base (again a "
+            "quantity, not a rate). Extended through February 16, 2016 "
+            "(the -0.10% policy-rate balance's EFFECTIVE date) rather "
+            "than stopping at January 29, 2016 (its announcement date) "
+            "-- see _JPY_POLICY_RATE_BALANCE's notes on released_at vs "
+            "effective_at."
+        ),
     ),
 )
 
@@ -593,15 +695,21 @@ POLICY_RATE_DEFINITIONS: tuple[PolicyRateDefinition, ...] = (
     _EUR_DEFINITION,
     _GBP_DEFINITION,
     _JPY_CALL_RATE_ERA_1,
-    _JPY_CALL_RATE_ERA_2,
+    _JPY_CALL_RATE_ERA_2A,
+    _JPY_CALL_RATE_ERA_2B,
     _JPY_POLICY_RATE_BALANCE,
     _JPY_CALL_RATE_RANGE_2024,
     _JPY_CALL_RATE_ERA_CURRENT,
     _CAD_DEFINITION,
 )
 
+DECLARED_GAPS: tuple[DeclaredPolicyRateGap, ...] = _JPY_GAPS
 
-def validate_registry(definitions: tuple[PolicyRateDefinition, ...]) -> None:
+
+def validate_registry(
+    definitions: tuple[PolicyRateDefinition, ...],
+    gaps: tuple[DeclaredPolicyRateGap, ...] = (),
+) -> None:
     """Registry-wide invariants that no single `PolicyRateDefinition`
     can check on its own -- run at import time below (fail fast on a
     malformed registry) and reusable directly in tests against
@@ -613,18 +721,26 @@ def validate_registry(definitions: tuple[PolicyRateDefinition, ...]) -> None:
         `series.key` string (FX-42H: a currency's definitions could
         otherwise share a key while silently disagreeing on economy,
         unit, category, or frequency);
-      - validity windows do not overlap.
+      - no declared gap overlaps a policy-rate definition of the same
+        currency (FX-42H.1);
+      - definitions do not overlap each other;
+      - any gap between two consecutive definitions is covered by
+        EXACTLY one declared gap with a matching `start`/`end` --
+        otherwise this is an UNDECLARED gap and validation fails
+        (FX-42H.1: replaces FX-42H's blanket gap tolerance, which could
+        not distinguish an intentional gap from an accidental one);
+      - declared gaps for the same currency do not overlap each other.
 
-    Deliberately does NOT require validity windows to be gap-free
-    (FX-42H): a currency can have intentional gaps where no comparable
-    canonical scalar exists for that period at all -- see JPY's
-    quantitative-easing eras below. `definition_as_of` naturally
-    returns `None` for an instant in such a gap; nothing else needs to
-    change for gaps to be safe.
+    `gaps` defaults to `()` -- a registry with no currency needing a
+    gap need not pass any.
     """
     by_currency: dict[str, list[PolicyRateDefinition]] = defaultdict(list)
     for definition in definitions:
         by_currency[definition.series.currency].append(definition)
+
+    gaps_by_currency: dict[str, list[DeclaredPolicyRateGap]] = defaultdict(list)
+    for gap in gaps:
+        gaps_by_currency[gap.currency].append(gap)
 
     for currency, currency_definitions in by_currency.items():
         distinct_series = {d.series for d in currency_definitions}
@@ -634,6 +750,22 @@ def validate_registry(definitions: tuple[PolicyRateDefinition, ...]) -> None:
                 f"MacroSeriesDefinition semantics, not merely the same key -- "
                 f"got {len(distinct_series)} distinct series definitions"
             )
+
+        currency_gaps = gaps_by_currency.get(currency, [])
+
+        for definition in currency_definitions:
+            definition_end = definition.valid_to.value if definition.valid_to else None
+            for gap in currency_gaps:
+                overlaps_definition = definition.valid_from.value < gap.end.value and (
+                    definition_end is None or definition_end > gap.start.value
+                )
+                if overlaps_definition:
+                    raise ValueError(
+                        f"{currency}: declared gap "
+                        f"{gap.start.value.isoformat()}..{gap.end.value.isoformat()} "
+                        f"overlaps a policy-rate definition starting "
+                        f"{definition.valid_from.value.isoformat()}"
+                    )
 
         ordered = sorted(currency_definitions, key=lambda d: d.valid_from.value)
         for earlier, later in pairwise(ordered):
@@ -649,13 +781,38 @@ def validate_registry(definitions: tuple[PolicyRateDefinition, ...]) -> None:
                     f"starting {earlier.valid_from.value.isoformat()} and "
                     f"{later.valid_from.value.isoformat()}"
                 )
+            if earlier.valid_to.value < later.valid_from.value:
+                matching = [
+                    gap
+                    for gap in currency_gaps
+                    if gap.start.value == earlier.valid_to.value
+                    and gap.end.value == later.valid_from.value
+                ]
+                if not matching:
+                    raise ValueError(
+                        f"{currency}: undeclared gap between the definition ending "
+                        f"{earlier.valid_to.value.isoformat()} and the definition "
+                        f"starting {later.valid_from.value.isoformat()} -- declare it "
+                        "explicitly via a DeclaredPolicyRateGap, or fix the boundary "
+                        "if this was unintentional"
+                    )
+
+        ordered_gaps = sorted(currency_gaps, key=lambda g: g.start.value)
+        for earlier_gap, later_gap in pairwise(ordered_gaps):
+            if earlier_gap.end.value > later_gap.start.value:
+                raise ValueError(
+                    f"{currency}: declared gaps overlap -- "
+                    f"{earlier_gap.start.value.isoformat()}..{earlier_gap.end.value.isoformat()} "
+                    f"and "
+                    f"{later_gap.start.value.isoformat()}..{later_gap.end.value.isoformat()}"
+                )
 
     missing = REQUIRED_CURRENCIES - set(by_currency)
     if missing:
         raise ValueError(f"registry is missing required currencies: {sorted(missing)}")
 
 
-validate_registry(POLICY_RATE_DEFINITIONS)  # fail fast at import time
+validate_registry(POLICY_RATE_DEFINITIONS, DECLARED_GAPS)  # fail fast at import time
 
 
 def definitions_for_currency(currency: str) -> tuple[PolicyRateDefinition, ...]:
@@ -669,8 +826,8 @@ def definition_as_of(currency: str, as_of: UtcTimestamp) -> PolicyRateDefinition
     """The single definition for `currency` whose validity window
     covers `as_of`, or `None` if `currency` is not in the registry,
     `as_of` precedes that currency's earliest `valid_from`, or `as_of`
-    falls within an intentional gap between two definitions (FX-42H
-    -- see JPY's quantitative-easing eras)."""
+    falls within a declared gap between two definitions (FX-42H.1 --
+    see JPY's quantity-target eras)."""
     for definition in definitions_for_currency(currency):
         if definition.covers(as_of):
             return definition

@@ -3,11 +3,13 @@ from decimal import Decimal
 
 import pytest
 
+from forex_agent.domain.declared_policy_rate_gap import DeclaredPolicyRateGap
 from forex_agent.domain.macro_category import MacroCategory
 from forex_agent.domain.macro_frequency import MacroFrequency
 from forex_agent.domain.macro_series_definition import MacroSeriesDefinition
 from forex_agent.domain.policy_rate_definition import PolicyRateDefinition
 from forex_agent.domain.policy_rate_registry import (
+    DECLARED_GAPS,
     POLICY_RATE_DEFINITIONS,
     REQUIRED_CURRENCIES,
     canonical_series_for_currency,
@@ -53,6 +55,12 @@ def _definition(
     )
 
 
+def _gap(
+    currency: str, start: UtcTimestamp, end: UtcTimestamp, reason: str = "test gap"
+) -> DeclaredPolicyRateGap:
+    return DeclaredPolicyRateGap(currency=currency, start=start, end=end, reason=reason)
+
+
 # ---------------------------------------------------------------------------
 # The real, module-level registry
 # ---------------------------------------------------------------------------
@@ -72,7 +80,7 @@ def test_each_currency_shares_one_canonical_series_object() -> None:
 
 
 def test_real_registry_passes_its_own_validation() -> None:
-    validate_registry(POLICY_RATE_DEFINITIONS)  # must not raise
+    validate_registry(POLICY_RATE_DEFINITIONS, DECLARED_GAPS)  # must not raise
 
 
 @pytest.mark.parametrize("currency", sorted(REQUIRED_CURRENCIES))
@@ -228,12 +236,13 @@ def test_cad_provider_mapping_uses_v39079() -> None:
 
 
 # ---------------------------------------------------------------------------
-# JPY: distinct operational-regime eras with intentional gaps
+# JPY: distinct operational-regime eras with explicitly declared gaps
 # ---------------------------------------------------------------------------
 
 
 def test_jpy_no_longer_claims_one_continuous_definition() -> None:
-    assert len(definitions_for_currency("JPY")) >= 5
+    # FX-42H.1: six eras now (the 2006-2013 era split at 2010-10-05).
+    assert len(definitions_for_currency("JPY")) >= 6
 
 
 def test_jpy_overnight_call_rate_target_era_one() -> None:
@@ -252,18 +261,63 @@ def test_jpy_returns_none_during_quantitative_easing_gap_2001_2006() -> None:
     assert definition_as_of("JPY", _ts(2006, 3, 8)) is None
 
 
-def test_jpy_overnight_call_rate_target_era_two() -> None:
+def test_jpy_overnight_call_rate_target_era_two_a() -> None:
     definition = definition_as_of("JPY", _ts(2006, 3, 9))
 
     assert definition is not None
     assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target"
+    assert definition.transformation.kind is RateTransformationKind.IDENTITY
+
+
+def test_jpy_2010_10_04_uses_identity_transformation() -> None:
+    # FX-42H.1: the last day of the single-point target era, immediately
+    # before the October 5, 2010 "Comprehensive Monetary Easing" switch.
+    definition = definition_as_of("JPY", _ts(2010, 10, 4))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target"
+    assert definition.transformation.kind is RateTransformationKind.IDENTITY
+
+
+def test_jpy_2010_10_05_uses_target_range_midpoint_transformation() -> None:
+    # FX-42H.1: the BoJ explicitly changed the target from a single point
+    # (~0.1%) to a range (~0-0.1%) on this date -- represented as a new
+    # definition using TARGET_RANGE_MIDPOINT, matching how the registry
+    # already represents published target ranges elsewhere.
+    definition = definition_as_of("JPY", _ts(2010, 10, 5))
+
+    assert definition is not None
+    assert definition.instrument_name == "Uncollateralized Overnight Call Rate Target Range"
+    assert definition.transformation.kind is RateTransformationKind.TARGET_RANGE_MIDPOINT
+
+
+def test_jpy_2010_2013_range_midpoint_of_zero_and_tenth_percent() -> None:
+    definition = definition_as_of("JPY", _ts(2011, 1, 1))
+    assert definition is not None
+
+    midpoint = definition.transformation.apply(Decimal("0.1"), Decimal("0.0"))
+
+    assert midpoint == Decimal("0.05")
 
 
 def test_jpy_returns_none_during_qqe_gap_2013_2016() -> None:
-    # A second intentional gap: 2013-2016 QQE targeted the monetary base.
+    # A second declared gap: 2013-2016 QQE targeted the monetary base.
     assert definition_as_of("JPY", _ts(2014, 6, 1)) is None
     assert definition_as_of("JPY", _ts(2013, 4, 4)) is None
     assert definition_as_of("JPY", _ts(2016, 1, 28)) is None
+
+
+def test_jpy_2016_02_15_returns_no_canonical_policy_rate_definition() -> None:
+    # FX-42H.1: the QQE gap now extends through the -0.10% policy-rate
+    # balance's EFFECTIVE date (Feb 16, 2016), not its Jan 29 announcement.
+    assert definition_as_of("JPY", _ts(2016, 2, 15)) is None
+
+
+def test_jpy_2016_02_16_returns_policy_rate_balance_definition() -> None:
+    definition = definition_as_of("JPY", _ts(2016, 2, 16))
+
+    assert definition is not None
+    assert "Policy-Rate Balance" in definition.instrument_name
 
 
 def test_jpy_policy_rate_balance_regime_2016_2024() -> None:
@@ -297,6 +351,15 @@ def test_jpy_single_point_target_resumes_july_2024() -> None:
 def test_jpy_all_eras_share_one_canonical_series_key() -> None:
     keys = {d.series.key for d in definitions_for_currency("JPY")}
     assert keys == {"JPY_POLICY_RATE"}
+
+
+def test_jpy_declared_gaps_have_currency_start_end_and_reason() -> None:
+    jpy_gaps = [g for g in DECLARED_GAPS if g.currency == "JPY"]
+    assert len(jpy_gaps) == 2
+    for gap in jpy_gaps:
+        assert gap.currency == "JPY"
+        assert gap.start.value < gap.end.value
+        assert gap.reason.strip() != ""
 
 
 # ---------------------------------------------------------------------------
@@ -342,19 +405,67 @@ def test_validate_registry_rejects_overlapping_windows() -> None:
         validate_registry(broken)
 
 
-def test_validate_registry_allows_intentional_gaps_between_windows() -> None:
-    # FX-42H: gaps are no longer rejected -- a currency can have a period
-    # with no comparable canonical scalar at all (see JPY). Combined with
-    # the real registry so the required-currency check doesn't mask this
-    # -- same pattern as test_validate_registry_accepts_well_formed_
-    # contiguous_windows below.
+def test_validate_registry_rejects_an_arbitrary_undeclared_one_day_gap() -> None:
+    # FX-42H.1: blanket gap tolerance is gone -- ANY undeclared gap, even a
+    # single day, must now fail validation.
+    series = _series("ZZZ_POLICY_RATE", "ZZZ")
+    broken = (
+        _definition(series, _ts(2000, 1, 1), _ts(2005, 1, 1)),
+        _definition(series, _ts(2005, 1, 2), None),  # one day undeclared
+    )
+
+    with pytest.raises(ValueError, match="undeclared gap"):
+        validate_registry(broken)
+
+
+def test_validate_registry_accepts_a_declared_gap_with_matching_boundaries() -> None:
     series = _series("ZZZ_POLICY_RATE", "ZZZ")
     with_gap = (
         _definition(series, _ts(2000, 1, 1), _ts(2005, 1, 1)),
         _definition(series, _ts(2010, 1, 1), None),
     )
+    gap = _gap("ZZZ", _ts(2005, 1, 1), _ts(2010, 1, 1))
 
-    validate_registry(POLICY_RATE_DEFINITIONS + with_gap)  # must not raise
+    # Combined with the real registry so the required-currency check
+    # doesn't mask this -- same pattern used elsewhere in this file.
+    validate_registry(POLICY_RATE_DEFINITIONS + with_gap, (*DECLARED_GAPS, gap))  # must not raise
+
+
+def test_validate_registry_rejects_a_declared_gap_with_mismatched_boundaries() -> None:
+    # A declared gap that does not exactly match the actual gap between
+    # consecutive definitions still leaves the real gap undeclared.
+    series = _series("ZZZ_POLICY_RATE", "ZZZ")
+    with_gap = (
+        _definition(series, _ts(2000, 1, 1), _ts(2005, 1, 1)),
+        _definition(series, _ts(2010, 1, 1), None),
+    )
+    mismatched_gap = _gap("ZZZ", _ts(2005, 1, 1), _ts(2009, 1, 1))  # ends too early
+
+    with pytest.raises(ValueError, match="undeclared gap"):
+        validate_registry(with_gap, (mismatched_gap,))
+
+
+def test_validate_registry_rejects_a_gap_overlapping_a_definition() -> None:
+    series = _series("ZZZ_POLICY_RATE", "ZZZ")
+    definitions = (_definition(series, _ts(2000, 1, 1), None),)
+    overlapping_gap = _gap("ZZZ", _ts(2005, 1, 1), _ts(2006, 1, 1))
+
+    with pytest.raises(ValueError, match="overlaps a policy-rate definition"):
+        validate_registry(definitions, (overlapping_gap,))
+
+
+def test_validate_registry_rejects_overlapping_declared_gaps() -> None:
+    # Isolated from the "undeclared gap" check: a single open-ended
+    # definition with two overlapping declared gaps entirely BEFORE it,
+    # so no pairwise inter-definition gap exists to confuse the failure
+    # reason -- only the gap/gap overlap check can fire here.
+    series = _series("ZZZ_POLICY_RATE", "ZZZ")
+    definitions = (_definition(series, _ts(2010, 1, 1), None),)
+    gap_one = _gap("ZZZ", _ts(2000, 1, 1), _ts(2006, 1, 1))
+    gap_two = _gap("ZZZ", _ts(2005, 1, 1), _ts(2010, 1, 1))  # overlaps gap_one
+
+    with pytest.raises(ValueError, match="declared gaps overlap"):
+        validate_registry(definitions, (gap_one, gap_two))
 
 
 def test_validate_registry_rejects_a_non_terminal_open_ended_definition() -> None:
@@ -387,12 +498,19 @@ def test_validate_registry_accepts_well_formed_contiguous_windows() -> None:
     # calling the same logic against a registry that also satisfies the
     # currency-coverage requirement.
     combined = POLICY_RATE_DEFINITIONS + ok
-    validate_registry(combined)  # must not raise
+    validate_registry(combined, DECLARED_GAPS)  # must not raise
 
 
-def test_validate_registry_accepts_the_real_registrys_intentional_jpy_gaps() -> None:
-    # The real registry itself relies on the gap-tolerance behavior above --
-    # confirm it directly rather than only via a synthetic ZZZ fixture.
+def test_validate_registry_accepts_each_real_declared_jpy_gap() -> None:
+    # The real registry itself relies on declared-gap tolerance -- confirm
+    # it directly (not just via a synthetic ZZZ fixture), and that each
+    # individual JPY gap is what makes the registry pass, not an accident
+    # of ordering: removing either declared gap must break validation.
     jpy_definitions = definitions_for_currency("JPY")
-    assert len(jpy_definitions) >= 5
-    validate_registry(POLICY_RATE_DEFINITIONS)  # must not raise
+    assert len(jpy_definitions) >= 6
+    validate_registry(POLICY_RATE_DEFINITIONS, DECLARED_GAPS)  # must not raise
+
+    for missing_gap in DECLARED_GAPS:
+        remaining = tuple(g for g in DECLARED_GAPS if g != missing_gap)
+        with pytest.raises(ValueError, match="undeclared gap"):
+            validate_registry(POLICY_RATE_DEFINITIONS, remaining)

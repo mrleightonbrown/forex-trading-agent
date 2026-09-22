@@ -98,7 +98,7 @@ Five invariants this data model exists to protect:
    rate-differential strategy, no fundamental score, no BUY/SELL decision
    logic. Just the data model and its point-in-time safety invariant.
 
-## Canonical policy-rate registry (FX-42; hardened FX-42H)
+## Canonical policy-rate registry (FX-42; hardened FX-42H, FX-42H.1)
 
 `domain/policy_rate_registry.py` defines, for USD/EUR/GBP/JPY/CAD, exactly
 one canonical policy-rate concept per currency — still no ingestion, no
@@ -130,10 +130,24 @@ the same `key` string, but fully identical semantics (economy, currency,
 category, unit, frequency), enforced by `validate_registry` at import
 time — so a future query against `MacroObservationRepository` never needs
 to know which era's instrument mechanics produced a given historical
-value. `validate_registry` rejects overlapping validity windows but
-deliberately ALLOWS gaps (FX-42H): `definition_as_of` returns `None` for
-an instant that falls in one, exactly representing "no comparable
-canonical scalar existed for this period" rather than fabricating a value.
+value. `validate_registry` rejects overlapping validity windows.
+
+Gaps between consecutive definitions must now be explicitly DECLARED
+(FX-42H.1): FX-42H's blanket tolerance for any gap could not distinguish
+an intentional one (the Bank of Japan's quantity-target eras) from an
+accidental one (a boundary typo, a forgotten definition). A
+`DeclaredPolicyRateGap` (`domain/declared_policy_rate_gap.py`) names a
+currency, a half-open `[start, end)` window, and a non-empty `reason`;
+`validate_registry` requires every gap between two consecutive
+definitions for a currency to be covered by EXACTLY one declared gap with
+matching boundaries, rejects a declared gap that overlaps an actual
+definition, and rejects declared gaps that overlap each other. An
+undeclared gap is now a validation error, not a silently accepted state.
+`definition_as_of` still returns `None` for an instant inside a declared
+gap, exactly representing "no comparable canonical scalar existed for
+this period" rather than fabricating a value — see JPY's two declared
+gaps (2001-2006 Quantitative Easing, 2013-2016 Quantitative and
+Qualitative Easing) in `policy_rate_registry.py`.
 
 This story is intentionally narrow: it defines semantics and provider
 mappings only. No rate history is downloaded, no pair differential is

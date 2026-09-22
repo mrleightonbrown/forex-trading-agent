@@ -15,7 +15,8 @@ class PolicyRateDefinition:
     Central banks do not express monetary policy identically, and the
     same institution's own practice can change over time (a target
     point becoming a target range; a facility rate gaining or losing
-    primacy; a currency union's founding). `PolicyRateDefinition`
+    primacy; a currency union's founding; an operating target changing
+    from a scalar rate to a quantity and back). `PolicyRateDefinition`
     exists to make each such definition's scope, instrument, and
     derivation fully explicit rather than silently splicing unlike
     concepts into one continuous-looking series: `valid_from`/
@@ -26,15 +27,25 @@ class PolicyRateDefinition:
     `series.key` -- see `policy_rate_registry` -- is how a genuine
     historical instrument change (e.g. the Federal Reserve's shift
     from a single target rate to a target range in December 2008) is
-    represented, instead of quietly reinterpreting history.
+    represented, instead of quietly reinterpreting history. When the
+    operating target itself stops being a scalar rate at all for a
+    period (e.g. the Bank of Japan's quantitative-easing eras, which
+    targeted a quantity, not a rate), that period is represented as a
+    `DeclaredPolicyRateGap` (FX-42H.1) instead of a `PolicyRateDefinition`
+    -- see `policy_rate_registry.validate_registry`.
 
     A single `PolicyRateDefinition` whose `valid_to` is `None` and
-    which stays in force for a currency's whole represented history
-    is equally valid, and is this story's choice for EUR/GBP/JPY/CAD:
-    those currencies' primary policy-rate concepts have not changed in
-    a way this registry judges to be a genuine semantic splice (see
-    each definition's own `notes` in `policy_rate_registry` for the
-    institutional history considered).
+    which stays in force for a currency's whole represented history is
+    equally valid, and is this story's choice for EUR/GBP/CAD: those
+    currencies' primary policy-rate concepts have not changed in a way
+    this registry judges to be a genuine semantic splice (see each
+    definition's own `notes` in `policy_rate_registry` for the
+    institutional history considered). USD and JPY instead need
+    multiple effective-dated `PolicyRateDefinition`s -- USD for its
+    2008 target-point-to-target-range switch, JPY for several genuine
+    operating-target changes (including two eras with no comparable
+    scalar rate target at all, represented as declared gaps -- see
+    `policy_rate_registry`'s JPY section for the full history).
 
     Answers, by construction, the six questions FX-42's spec requires
     a canonical definition to be able to answer -- see `summary()`.
