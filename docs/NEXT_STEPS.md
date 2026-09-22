@@ -812,21 +812,57 @@ timestamps, in `docs/DECISIONS.md`'s FX-43 entry.
 called "carry" anywhere in this codebase. No rate differential is
 computed, no strategy or decision logic follows this story.
 
+## FX-43H: policy-rate backfill hardening (complete)
+
+Hardens FX-43 before any rate-differential research reads this data.
+Half-open era boundaries (`[valid_from, valid_to)`) are now enforced
+against the provider fetch itself, not merely assumed from a
+provider's own behavior — proven with the story's own exact required
+scenario (two eras sharing a boundary date, both providers given a row
+on it, proven to belong only to the later era). Raw provider coverage
+(`earliest_raw_observation`/`latest_raw_observation`) is now tracked
+separately from change-point span, and `coverage_start`/`coverage_end`
+correctly reflect the former — a stable rate that stops changing but
+keeps being published daily now reports coverage extending to the
+present. `add_vintage` now returns `VintageWriteOutcome`
+(`INSERTED`/`ALREADY_PRESENT`), reported accurately by the backfill use
+case — confirmed live: real data cleared, hardened script run twice,
+first run 258 inserted/0 already-present, second run 0 inserted/258
+already-present, zero duplicate rows. `MacroObservationVintage` gained
+`released_at_is_verified`; every backfilled vintage is now explicitly
+marked `False`, and `MacroObservationRepository.
+replace_provisional_release_timing` is the new, explicit, safe
+replacement path a future story can use once a genuine announcement
+timestamp is established — narrowly scoped to timestamp metadata only,
+never the economic value, never represented as a revision. Duplicate
+raw observations of the same date now fail/report explicitly on a
+genuine value conflict rather than "last value wins". FRED
+documentation corrected: `DFEDTAR` does not cover "1954-present" — it
+is discontinued, ending 2008-12-15. Full details in
+`docs/DECISIONS.md`'s FX-43H entry.
+
+**Per this story's own explicit stop instruction**: no rate
+differential, no carry strategy, no parameter research, no JPY
+provider work, no invented release timestamps, and no decision logic
+follows this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including establishing genuine announcement
-timestamps (this story's own named "next review gate"), JPY provider
-mapping, the pre-2009 CAD gap, or any rate-differential/carry work.
+timestamps (still the next review gate, now with a safe replacement
+path ready for it), JPY provider mapping, the pre-2009 CAD gap, or any
+rate-differential/carry work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
-assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43 above
-are the explicitly-scoped exceptions (domain model, storage-integrity
-hardening, canonical registry/provider-mapping definitions, and now
-real policy-rate ingestion — still no strategy, no decision logic, no
-"carry" framing) and do not open the door to the rest of this phase.
-The same goes for the downstream epics not in this list at all
-(Decision Engine, Risk Engine, Paper Trading Execution, Performance
-Analytics, Shadow Trading) — none are part of the current phase.
+assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H
+above are the explicitly-scoped exceptions (domain model, storage-
+integrity hardening, canonical registry/provider-mapping definitions,
+real policy-rate ingestion, and now its own hardening — still no
+strategy, no decision logic, no "carry" framing) and do not open the
+door to the rest of this phase. The same goes for the downstream epics
+not in this list at all (Decision Engine, Risk Engine, Paper Trading
+Execution, Performance Analytics, Shadow Trading) — none are part of
+the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

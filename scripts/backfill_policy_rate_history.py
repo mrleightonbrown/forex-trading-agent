@@ -16,15 +16,23 @@ than being silently omitted.
 
 Idempotent: every vintage this script writes goes through
 `MacroObservationRepository.add_vintage`, which is a no-op for an exact
-duplicate (FX-41H) -- safe to re-run.
+duplicate (FX-41H) -- safe to re-run. FX-43H: era boundaries are
+half-open (`[valid_from, valid_to)`) and enforced against the provider
+fetch itself, so a re-run's window for an era with a later successor
+never re-requests that successor's own starting date.
 
 `released_at` for every ingested vintage is set to the date a
 provider's raw daily series shows a genuine value CHANGE -- an
 EFFECTIVE-DATE proxy, not a verified announcement/publication
-timestamp. No mapping is promoted to `PointInTimeSafety.
-POINT_IN_TIME_SAFE` as a result of running this script -- see
-`docs/DECISIONS.md`'s FX-43 entry for why establishing a genuine
-announcement timestamp is out of scope here.
+timestamp -- and every vintage is explicitly stored with
+`released_at_is_verified=False` (FX-43H) so nothing downstream can
+mistake it for a confirmed one. No mapping is promoted to
+`PointInTimeSafety.POINT_IN_TIME_SAFE` as a result of running this
+script -- see `docs/DECISIONS.md`'s FX-43/FX-43H entries for why
+establishing a genuine announcement timestamp is out of scope here, and
+for the explicit, safe replacement path
+(`MacroObservationRepository.replace_provisional_release_timing`) a
+future story can use once one is established.
 
 Run:
     uv run python scripts/backfill_policy_rate_history.py
@@ -85,8 +93,10 @@ KNOWN_GAPS = [
     "JPY: provider mapping remains entirely unresolved (FX-42H.1) -- not attempted in this run.",
     "All currencies: released_at is set to the date a provider's raw series shows a value "
     "change (an effective-date proxy), not a verified announcement/publication timestamp -- "
-    "no mapping is point-in-time-safe as a result of this run. See docs/DECISIONS.md's FX-43 "
-    "entry.",
+    "every vintage is stored with released_at_is_verified=False, and no mapping is "
+    "point-in-time-safe as a result of this run. See docs/DECISIONS.md's FX-43/FX-43H entries "
+    "for the explicit, safe replacement path a future story can use once a genuine "
+    "announcement timestamp is established.",
 ]
 
 
@@ -122,11 +132,17 @@ async def main() -> None:
                         print(f"  {era.instrument_name}: no provider configured -- skipped")
                     elif era.fetch_error is not None:
                         print(f"  {era.instrument_name}: FETCH FAILED -- {era.fetch_error}")
+                    elif era.data_integrity_error is not None:
+                        print(
+                            f"  {era.instrument_name}: DATA INTEGRITY ERROR -- "
+                            f"{era.data_integrity_error}"
+                        )
                     else:
                         print(
                             f"  {era.instrument_name} ({era.provider}): "
                             f"{era.change_points_found} change points, "
-                            f"{era.vintages_ingested} vintages ingested, "
+                            f"{era.vintages_inserted} inserted, "
+                            f"{era.vintages_already_present} already present, "
                             f"{len(era.skipped_dates)} dates skipped, "
                             f"{len(era.conflicts)} conflicts"
                         )
@@ -147,7 +163,8 @@ def _write_report(reports: dict[str, CurrencyBackfillReport], as_of: UtcTimestam
         "currencies": {
             currency: {
                 "series_key": report.series_key,
-                "total_vintages_ingested": report.total_vintages_ingested,
+                "total_vintages_inserted": report.total_vintages_inserted,
+                "total_vintages_already_present": report.total_vintages_already_present,
                 "coverage_start": _iso_or_none(report.coverage_start),
                 "coverage_end": _iso_or_none(report.coverage_end),
                 "eras": [_era_to_dict(era) for era in report.eras],
@@ -171,11 +188,15 @@ def _era_to_dict(era: EraBackfillReport) -> dict[str, Any]:
         "requested_start": era.requested_start.value.isoformat(),
         "requested_end": era.requested_end.value.isoformat(),
         "change_points_found": era.change_points_found,
-        "vintages_ingested": era.vintages_ingested,
+        "vintages_inserted": era.vintages_inserted,
+        "vintages_already_present": era.vintages_already_present,
         "skipped_dates": [ts.value.isoformat() for ts in era.skipped_dates],
         "conflicts": list(era.conflicts),
         "provider_configured": era.provider_configured,
         "fetch_error": era.fetch_error,
+        "data_integrity_error": era.data_integrity_error,
+        "earliest_raw_observation": _iso_or_none(era.earliest_raw_observation),
+        "latest_raw_observation": _iso_or_none(era.latest_raw_observation),
         "earliest_change_point": _iso_or_none(era.earliest_change_point),
         "latest_change_point": _iso_or_none(era.latest_change_point),
     }

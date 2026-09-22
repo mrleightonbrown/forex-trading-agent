@@ -216,6 +216,55 @@ data-quality report this story requires (coverage actually achieved, not
 merely requested; skipped dates; conflicts; unconfigured/failed eras;
 known gaps).
 
+## Policy-rate backfill hardening (FX-43H)
+
+Four gaps found running the FX-43 pipeline for real (see
+`docs/DECISIONS.md`'s FX-43H entry) were closed before any rate-
+differential research consumes this data:
+
+1. **Half-open era boundaries, enforced against the provider fetch
+   itself.** Registry validity is `[valid_from, valid_to)`, but provider
+   APIs are queried by inclusive calendar-date range. `BackfillPolicyRate
+   History._fetch_end` now clamps an era's requested end to `valid_to -
+   1 day` whenever the window would otherwise reach the next era's start
+   — never relying on a specific provider happening to stop publishing
+   the day before (confirmed as a real risk: FRED's `DFEDTAR` does, but
+   that is a fact about FRED, not a guarantee to lean on).
+2. **Raw provider coverage kept separate from change-point span.**
+   `EraBackfillReport` now carries `earliest_raw_observation`/`latest_raw
+   _observation` (the true span of data received) alongside `earliest_
+   change_point`/`latest_change_point` (the narrower span of genuine
+   rate changes) — `CurrencyBackfillReport.coverage_start`/`coverage_end`
+   aggregate from the RAW fields. A stable rate that stops changing but
+   keeps being published daily now correctly reports coverage extending
+   to the present, not to its last change.
+3. **`add_vintage` reports INSERTED vs ALREADY_PRESENT.**
+   `VintageWriteOutcome` (`application/ports/
+   macro_observation_repository.py`) replaces `add_vintage`'s `None`
+   return; `MacroVintageConflictError` is unchanged for genuine
+   conflicts. The backfill use case reports `vintages_inserted`/
+   `vintages_already_present` accurately instead of one undifferentiated
+   count.
+4. **Duplicate raw observations never resolved by "last value wins."**
+   `extract_change_points` now raises `ConflictingRawObservationError`
+   when one raw series reports two DIFFERENT values for the same date
+   (an identical repeat still collapses harmlessly); the use case
+   catches this and reports it as an explicit `data_integrity_error`.
+
+A fifth change addresses the release/effective-timestamp distinction
+directly: every vintage `BackfillPolicyRateHistory` writes is now
+explicitly marked `released_at_is_verified=False`
+(`MacroObservationVintage`, FX-43H) — making FX-43's effective-date-proxy
+limitation part of the stored data, not just prose documentation.
+`MacroObservationRepository` gained `replace_provisional_release_timing`,
+a narrowly-scoped exception to the "never UPDATE" rule: it corrects an
+existing PROVISIONAL row's `released_at`/`effective_at` in place
+(refusing if the row is already verified), without ever touching `value`
+or `revision_sequence` — a release-timing correction is never represented
+as an economic revision. No caller of it exists yet; FX-43H's job was to
+make replacement possible and safe, not to perform it (no verified
+announcement timestamp exists yet to replace anything with).
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

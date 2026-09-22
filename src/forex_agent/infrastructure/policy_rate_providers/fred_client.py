@@ -1,5 +1,5 @@
 """FRED (Federal Reserve Economic Data) adapter implementing
-`PolicyRateHistoryProvider` (FX-43).
+`PolicyRateHistoryProvider` (FX-43; corrected FX-43H).
 
 Uses FRED's public `fredgraph.csv` endpoint -- the same no-API-key CSV
 download FRED uses for its own graph embeds. Confirmed live against
@@ -10,12 +10,20 @@ this endpoint before writing this adapter:
 - A missing observation (a date FRED has no value for) is rendered as
   a literal `.` in the value column, not an absent row -- skipped, not
   treated as a change or fabricated as zero.
-- `DFEDTAR` (single target rate) covers 1954-07-01 onward in the raw
-  series; `DFEDTARU`/`DFEDTARL` (target range upper/lower bound) cover
-  2008-12-16 onward. This adapter fetches whatever range it is asked
-  for -- `policy_rate_registry`'s own `valid_from`/`valid_to`
-  boundaries are what actually restrict which portion gets ingested,
-  not this client.
+- `DFEDTAR` is FRED's DISCONTINUED single-target-rate series: its raw
+  data ends 2008-12-15 (the day before the FOMC switched to a target
+  range) -- it does NOT continue to the present, and FX-43H corrects
+  an earlier version of this docstring that wrongly implied it did.
+  Its own earliest raw rows reach back into the early 1980s, but FX-42H
+  already established that the pre-1994 portion is a RETROSPECTIVE
+  RECONSTRUCTION, not contemporaneously published data, and this
+  registry's `USD_POLICY_RATE` target-point era's own `valid_from`
+  (1994-02-04) is what actually restricts which portion gets ingested
+  -- this client fetches whatever range it is asked for and does not
+  itself decide what is or is not usable history.
+  `DFEDTARU`/`DFEDTARL` (target range upper/lower bound) are the LIVE,
+  still-updating series covering the target-range era, beginning
+  2008-12-16.
 """
 
 import csv

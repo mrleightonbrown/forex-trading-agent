@@ -1,12 +1,13 @@
 {
-  "generated_at": "2026-09-22T03:33:01+00:00",
-  "as_of": "2026-09-22T03:32:55+00:00",
+  "generated_at": "2026-09-22T04:07:57+00:00",
+  "as_of": "2026-09-22T04:07:53+00:00",
   "currencies": {
     "CAD": {
       "series_key": "CAD_POLICY_RATE",
-      "total_vintages_ingested": 33,
+      "total_vintages_inserted": 0,
+      "total_vintages_already_present": 33,
       "coverage_start": "2009-04-21T00:00:00+00:00",
-      "coverage_end": "2025-10-30T00:00:00+00:00",
+      "coverage_end": "2026-09-18T00:00:00+00:00",
       "eras": [
         {
           "instrument_name": "Overnight Rate Target",
@@ -15,13 +16,17 @@
             "V39079"
           ],
           "requested_start": "1999-02-01T00:00:00+00:00",
-          "requested_end": "2026-09-22T03:32:55+00:00",
+          "requested_end": "2026-09-22T04:07:53+00:00",
           "change_points_found": 33,
-          "vintages_ingested": 33,
+          "vintages_inserted": 0,
+          "vintages_already_present": 33,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": true,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": "2009-04-21T00:00:00+00:00",
+          "latest_raw_observation": "2026-09-18T00:00:00+00:00",
           "earliest_change_point": "2009-04-21T00:00:00+00:00",
           "latest_change_point": "2025-10-30T00:00:00+00:00"
         }
@@ -29,9 +34,10 @@
     },
     "EUR": {
       "series_key": "EUR_POLICY_RATE",
-      "total_vintages_ingested": 62,
+      "total_vintages_inserted": 0,
+      "total_vintages_already_present": 62,
       "coverage_start": "1999-01-01T00:00:00+00:00",
-      "coverage_end": "2026-09-16T00:00:00+00:00",
+      "coverage_end": "2026-09-22T00:00:00+00:00",
       "eras": [
         {
           "instrument_name": "Main Refinancing Operations Rate (minimum bid/fixed rate)",
@@ -40,13 +46,17 @@
             "FM.D.U2.EUR.4F.KR.MRR_RT.LEV"
           ],
           "requested_start": "1999-01-01T00:00:00+00:00",
-          "requested_end": "2026-09-22T03:32:55+00:00",
+          "requested_end": "2026-09-22T04:07:53+00:00",
           "change_points_found": 62,
-          "vintages_ingested": 62,
+          "vintages_inserted": 0,
+          "vintages_already_present": 62,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": true,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": "1999-01-01T00:00:00+00:00",
+          "latest_raw_observation": "2026-09-22T00:00:00+00:00",
           "earliest_change_point": "1999-01-01T00:00:00+00:00",
           "latest_change_point": "2026-09-16T00:00:00+00:00"
         }
@@ -54,9 +64,10 @@
     },
     "GBP": {
       "series_key": "GBP_POLICY_RATE",
-      "total_vintages_ingested": 71,
+      "total_vintages_inserted": 0,
+      "total_vintages_already_present": 71,
       "coverage_start": "1997-06-02T00:00:00+00:00",
-      "coverage_end": "2025-12-18T00:00:00+00:00",
+      "coverage_end": "2026-09-18T00:00:00+00:00",
       "eras": [
         {
           "instrument_name": "Bank Rate",
@@ -65,13 +76,17 @@
             "IUDBEDR"
           ],
           "requested_start": "1997-06-01T00:00:00+00:00",
-          "requested_end": "2026-09-22T03:32:55+00:00",
+          "requested_end": "2026-09-22T04:07:53+00:00",
           "change_points_found": 71,
-          "vintages_ingested": 71,
+          "vintages_inserted": 0,
+          "vintages_already_present": 71,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": true,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": "1997-06-02T00:00:00+00:00",
+          "latest_raw_observation": "2026-09-18T00:00:00+00:00",
           "earliest_change_point": "1997-06-02T00:00:00+00:00",
           "latest_change_point": "2025-12-18T00:00:00+00:00"
         }
@@ -79,7 +94,8 @@
     },
     "JPY": {
       "series_key": "JPY_POLICY_RATE",
-      "total_vintages_ingested": 0,
+      "total_vintages_inserted": 0,
+      "total_vintages_already_present": 0,
       "coverage_start": null,
       "coverage_end": null,
       "eras": [
@@ -90,13 +106,17 @@
             "VERIFY_BOJ_CALL_RATE_TARGET_1998_2001"
           ],
           "requested_start": "1998-04-01T00:00:00+00:00",
-          "requested_end": "2001-03-19T00:00:00+00:00",
+          "requested_end": "2001-03-18T00:00:00+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         },
@@ -107,13 +127,17 @@
             "VERIFY_BOJ_CALL_RATE_TARGET_2006_2010"
           ],
           "requested_start": "2006-03-09T00:00:00+00:00",
-          "requested_end": "2010-10-05T00:00:00+00:00",
+          "requested_end": "2010-10-04T00:00:00+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         },
@@ -125,13 +149,17 @@
             "VERIFY_BOJ_CALL_RATE_LOWER_2010_2013"
           ],
           "requested_start": "2010-10-05T00:00:00+00:00",
-          "requested_end": "2013-04-04T00:00:00+00:00",
+          "requested_end": "2013-04-03T00:00:00+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         },
@@ -142,13 +170,17 @@
             "VERIFY_BOJ_POLICY_RATE_BALANCE_2016_2024"
           ],
           "requested_start": "2016-02-16T00:00:00+00:00",
-          "requested_end": "2024-03-19T00:00:00+00:00",
+          "requested_end": "2024-03-18T00:00:00+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         },
@@ -160,13 +192,17 @@
             "VERIFY_BOJ_CALL_RATE_LOWER_2024"
           ],
           "requested_start": "2024-03-19T00:00:00+00:00",
-          "requested_end": "2024-07-31T00:00:00+00:00",
+          "requested_end": "2024-07-30T00:00:00+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         },
@@ -177,13 +213,17 @@
             "VERIFY_BOJ_CALL_RATE_TARGET_2024_PRESENT"
           ],
           "requested_start": "2024-07-31T00:00:00+00:00",
-          "requested_end": "2026-09-22T03:32:55+00:00",
+          "requested_end": "2026-09-22T04:07:53+00:00",
           "change_points_found": 0,
-          "vintages_ingested": 0,
+          "vintages_inserted": 0,
+          "vintages_already_present": 0,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": false,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": null,
+          "latest_raw_observation": null,
           "earliest_change_point": null,
           "latest_change_point": null
         }
@@ -191,9 +231,10 @@
     },
     "USD": {
       "series_key": "USD_POLICY_RATE",
-      "total_vintages_ingested": 92,
+      "total_vintages_inserted": 0,
+      "total_vintages_already_present": 92,
       "coverage_start": "1994-02-04T00:00:00+00:00",
-      "coverage_end": "2026-09-17T00:00:00+00:00",
+      "coverage_end": "2026-09-21T00:00:00+00:00",
       "eras": [
         {
           "instrument_name": "Federal Funds Target Rate (single target point)",
@@ -202,13 +243,17 @@
             "DFEDTAR"
           ],
           "requested_start": "1994-02-04T00:00:00+00:00",
-          "requested_end": "2008-12-16T00:00:00+00:00",
+          "requested_end": "2008-12-15T00:00:00+00:00",
           "change_points_found": 59,
-          "vintages_ingested": 59,
+          "vintages_inserted": 0,
+          "vintages_already_present": 59,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": true,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": "1994-02-04T00:00:00+00:00",
+          "latest_raw_observation": "2008-12-15T00:00:00+00:00",
           "earliest_change_point": "1994-02-04T00:00:00+00:00",
           "latest_change_point": "2008-10-29T00:00:00+00:00"
         },
@@ -220,13 +265,17 @@
             "DFEDTARL"
           ],
           "requested_start": "2008-12-16T00:00:00+00:00",
-          "requested_end": "2026-09-22T03:32:55+00:00",
+          "requested_end": "2026-09-22T04:07:53+00:00",
           "change_points_found": 33,
-          "vintages_ingested": 33,
+          "vintages_inserted": 0,
+          "vintages_already_present": 33,
           "skipped_dates": [],
           "conflicts": [],
           "provider_configured": true,
           "fetch_error": null,
+          "data_integrity_error": null,
+          "earliest_raw_observation": "2008-12-16T00:00:00+00:00",
+          "latest_raw_observation": "2026-09-21T00:00:00+00:00",
           "earliest_change_point": "2008-12-16T00:00:00+00:00",
           "latest_change_point": "2026-09-17T00:00:00+00:00"
         }
@@ -236,6 +285,6 @@
   "known_gaps": [
     "CAD: no daily target-rate source was found via the Bank of Canada Valet API for 1999-02-01 through 2009-04-20 (V39079 and four other candidate series all either start 2009-04-21 or measure a different concept) -- not backfilled in this run.",
     "JPY: provider mapping remains entirely unresolved (FX-42H.1) -- not attempted in this run.",
-    "All currencies: released_at is set to the date a provider's raw series shows a value change (an effective-date proxy), not a verified announcement/publication timestamp -- no mapping is point-in-time-safe as a result of this run. See docs/DECISIONS.md's FX-43 entry."
+    "All currencies: released_at is set to the date a provider's raw series shows a value change (an effective-date proxy), not a verified announcement/publication timestamp -- every vintage is stored with released_at_is_verified=False, and no mapping is point-in-time-safe as a result of this run. See docs/DECISIONS.md's FX-43/FX-43H entries for the explicit, safe replacement path a future story can use once a genuine announcement timestamp is established."
   ]
 }

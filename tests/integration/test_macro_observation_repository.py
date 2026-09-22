@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forex_agent.application.ports.macro_observation_repository import (
     MacroVintageConflictError,
+    VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -256,8 +257,11 @@ async def test_exact_duplicate_add_vintage_succeeds_without_duplicating(
     period = _ts(2024, 6, 1)
     vintage = _base_vintage(period)
 
-    await repo.add_vintage(vintage)
-    await repo.add_vintage(vintage)  # must not raise
+    first = await repo.add_vintage(vintage)
+    second = await repo.add_vintage(vintage)  # must not raise
+
+    assert first is VintageWriteOutcome.INSERTED
+    assert second is VintageWriteOutcome.ALREADY_PRESENT
 
     stored = (
         (
@@ -433,3 +437,98 @@ async def test_tie_break_by_revision_sequence_when_released_at_matches(
     assert latest is not None
     assert latest.value == Decimal("2.4")
     assert latest.revision_sequence == 1
+
+
+# ---------------------------------------------------------------------------
+# FX-43H: replace_provisional_release_timing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_corrects_in_place(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    proxy_released_at = period
+    provisional = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=proxy_released_at,
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=False,
+    )
+    await repo.add_vintage(provisional)
+
+    verified_released_at = _ts(2024, 5, 30)
+    verified_effective_at = period
+    await repo.replace_provisional_release_timing(
+        TEST_SERIES_KEY, period, 0, verified_released_at, verified_effective_at
+    )
+
+    corrected = await repo.observation_as_known_at(TEST_SERIES_KEY, period, verified_released_at)
+    assert corrected is not None
+    assert corrected.released_at == verified_released_at
+    assert corrected.effective_at == verified_effective_at
+    assert corrected.released_at_is_verified is True
+    assert corrected.value == Decimal("2.1")
+    assert corrected.revision_sequence == 0
+
+    # Exactly one row for this identity -- the old proxy timestamp is gone,
+    # not left as a second, still-visible row.
+    stored = (
+        (
+            await session.execute(
+                select(MacroObservationVintageRow).where(
+                    MacroObservationVintageRow.series_key == TEST_SERIES_KEY,
+                    MacroObservationVintageRow.observation_period == period.value,
+                    MacroObservationVintageRow.revision_sequence == 0,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(stored) == 1
+    assert stored[0].released_at == verified_released_at.value
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_missing_identity(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+
+    with pytest.raises(ValueError, match="no vintage exists"):
+        await repo.replace_provisional_release_timing(
+            TEST_SERIES_KEY, _ts(2024, 6, 1), 0, _ts(2024, 6, 1), None
+        )
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_already_verified_row(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    already_verified = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    await repo.add_vintage(already_verified)
+
+    with pytest.raises(ValueError, match="already released_at_is_verified=True"):
+        await repo.replace_provisional_release_timing(
+            TEST_SERIES_KEY, period, 0, _ts(2024, 6, 15), None
+        )
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 1))
+    assert result is not None
+    assert result.released_at == _ts(2024, 7, 1)

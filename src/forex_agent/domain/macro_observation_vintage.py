@@ -42,7 +42,10 @@ class MacroObservationVintage:
     in this domain type supports overwriting a previously-constructed
     vintage; immutability is enforced by `frozen=True` here, and by the
     repository/persistence layer never issuing an UPDATE against a
-    historical vintage row.
+    historical vintage row FOR THE ECONOMIC VALUE -- `released_at_is_
+    verified` (FX-43H) is a narrow, deliberate exception to that, and
+    only to that: see its own field doc below and `MacroObservation
+    Repository.replace_provisional_release_timing`.
 
     Fields:
         series_key: the `MacroSeriesDefinition.key` this vintage belongs
@@ -56,13 +59,36 @@ class MacroObservationVintage:
             observation_period, incrementing for each subsequent
             revision. Not required to be contiguous or provider-
             comparable -- only used to order vintages of the same
-            period relative to each other.
+            period relative to each other. Reserved EXCLUSIVELY for
+            genuine changes to the ECONOMIC VALUE -- a later
+            correction to `released_at`'s own precision (see
+            `released_at_is_verified`) is a different kind of fact and
+            must never be represented as a revision (FX-43H).
         source: free-form provenance label (e.g. "FRED", "ECB_SDW",
             "manual_backfill"). No provider-specific object -- a plain
             string, kept for audit/debugging, never branched on by
             domain logic.
         effective_at: optional; see above. `None` for the (large)
             majority of series where release and effect coincide.
+        released_at_is_verified: whether `released_at` (and
+            `effective_at`, where set) is a confirmed announcement/
+            effective timestamp, as opposed to a same-day proxy
+            derived from something else (e.g. FX-43's policy-rate
+            backfill, which sets `released_at` to the date a
+            provider's raw series shows a value CHANGE -- an
+            effective-date proxy, not a verified announcement
+            timestamp). Defaults to `True` (the ordinary case: a
+            vintage's timestamps are simply what they claim to be) so
+            existing callers are unaffected; a caller that knows its
+            `released_at` is only a best-available proxy must set this
+            `False` explicitly. This field exists so a future
+            correction to release timing can be represented and
+            applied safely (FX-43H) without conflating "we learned the
+            economic value was different" (a `revision_sequence` bump)
+            with "we learned exactly when this became knowable" (a
+            `released_at_is_verified` correction) -- see
+            `MacroObservationRepository.
+            replace_provisional_release_timing`.
     """
 
     series_key: str
@@ -72,6 +98,7 @@ class MacroObservationVintage:
     revision_sequence: int
     source: str
     effective_at: UtcTimestamp | None = None
+    released_at_is_verified: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.series_key, str) or not self.series_key.strip():
@@ -101,3 +128,8 @@ class MacroObservationVintage:
             )
         if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError(f"source must be a non-empty string, got {self.source!r}")
+        if not isinstance(self.released_at_is_verified, bool):
+            raise TypeError(
+                "released_at_is_verified must be a bool, "
+                f"got {type(self.released_at_is_verified).__name__}"
+            )

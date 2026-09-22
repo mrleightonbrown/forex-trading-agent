@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-22 (FX-43)_
+_Last updated: 2026-09-22 (FX-43H)_
 
 ## What exists
 
@@ -539,6 +539,51 @@ _Last updated: 2026-09-22 (FX-43)_
   registry; establishing genuine announcement timestamps is explicitly
   deferred as this story's own named "next review gate." Full details
   in `docs/DECISIONS.md`'s FX-43 entry.
+- **FX-43H: policy-rate backfill hardening (complete)**. Hardens FX-43
+  before any rate-differential research reads this data. (1) Registry
+  validity is `[valid_from, valid_to)`, but provider APIs are queried
+  by inclusive calendar-date range —
+  `BackfillPolicyRateHistory._fetch_end` now clamps an era's requested
+  end to `valid_to - 1 day` whenever the window would otherwise reach
+  the next era's start, rather than relying on a provider's own
+  behavior (e.g. FRED's `DFEDTAR` happening to stop the day before).
+  (2) `EraBackfillReport` now tracks `earliest_raw_observation`/
+  `latest_raw_observation` separately from `earliest_change_point`/
+  `latest_change_point`; `CurrencyBackfillReport.coverage_start`/
+  `coverage_end` aggregate from the RAW fields, so a stable rate that
+  stops changing but keeps being published daily correctly reports
+  coverage extending to the present, not to its last change. (3)
+  `VintageWriteOutcome` (`INSERTED`/`ALREADY_PRESENT`) replaces
+  `add_vintage`'s `None` return across the Protocol and both
+  implementations; `BackfillPolicyRateHistory` reports
+  `vintages_inserted`/`vintages_already_present` accurately —
+  confirmed against real Postgres: cleared data, first run
+  inserted=258/already_present=0, second run inserted=0/
+  already_present=258, zero duplicate rows. (4)
+  `MacroObservationVintage` gained `released_at_is_verified: bool =
+  True`; every backfilled vintage is now explicitly stored with
+  `released_at_is_verified=False`. `MacroObservationRepository` gained
+  `replace_provisional_release_timing` — the one deliberate,
+  narrowly-scoped UPDATE in the SQL repository, correcting only
+  `released_at`/`effective_at`/`released_at_is_verified` on an
+  existing PROVISIONAL row (never `value` or `revision_sequence` — a
+  release-timing correction is never a revision), refusing if the row
+  is already verified. No caller exists yet — this story's job was to
+  make replacement possible and safe, not to perform it. New migration
+  `5707ecb39242`. (5) `extract_change_points` now raises the new
+  `ConflictingRawObservationError` when one raw series reports two
+  DIFFERENT values for the same date (an identical repeat still
+  collapses harmlessly); the use case reports this as an explicit
+  `data_integrity_error`, never "last value wins". (6) Corrected FRED
+  documentation that wrongly said `DFEDTAR` "covers 1954-present" — it
+  is FRED's DISCONTINUED single-target-rate series, ending 2008-12-15.
+  New tests include the story's own exact half-open-boundary scenario
+  (era A's `valid_to` and era B's `valid_from` both 2008-12-16, both
+  providers given a row on that date, proven to belong only to era B).
+  Regression-proof discipline applied to the boundary clamp and the
+  raw-vs-change-point coverage aggregation (each reverted, confirmed
+  to fail its dedicated test, restored). 962 tests pass (full suite,
+  up from 942). Full details in `docs/DECISIONS.md`'s FX-43H entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

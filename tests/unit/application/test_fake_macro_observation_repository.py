@@ -17,6 +17,7 @@ import pytest
 from forex_agent.application.ports.macro_observation_repository import (
     MacroObservationRepository,
     MacroVintageConflictError,
+    VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -254,9 +255,11 @@ async def test_exact_duplicate_add_vintage_succeeds_without_duplicating() -> Non
     period = _ts(2024, 6, 1)
     vintage = _base_vintage(period)
 
-    await fake.add_vintage(vintage)
-    await fake.add_vintage(vintage)  # must not raise
+    first = await fake.add_vintage(vintage)
+    second = await fake.add_vintage(vintage)  # must not raise
 
+    assert first is VintageWriteOutcome.INSERTED
+    assert second is VintageWriteOutcome.ALREADY_PRESENT
     assert len(fake._vintages) == 1
 
 
@@ -413,3 +416,117 @@ async def test_tie_break_by_revision_sequence_when_released_at_matches() -> None
     assert latest is not None
     assert latest.value == Decimal("2.4")
     assert latest.revision_sequence == 1
+
+
+# ---------------------------------------------------------------------------
+# FX-43H: replace_provisional_release_timing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_corrects_in_place() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    proxy_released_at = period  # FX-43's own convention: proxy == observation_period
+    provisional = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=proxy_released_at,
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=False,
+    )
+    await fake.add_vintage(provisional)
+
+    verified_released_at = _ts(2024, 5, 30)  # the real announcement preceded the proxy date
+    verified_effective_at = period
+    await fake.replace_provisional_release_timing(
+        SERIES_KEY, period, 0, verified_released_at, verified_effective_at
+    )
+
+    corrected = await fake.observation_as_known_at(SERIES_KEY, period, verified_released_at)
+    assert corrected is not None
+    assert corrected.released_at == verified_released_at
+    assert corrected.effective_at == verified_effective_at
+    assert corrected.released_at_is_verified is True
+    assert corrected.value == Decimal("2.1")  # the economic value never changed
+    assert corrected.revision_sequence == 0  # never treated as a revision
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_leaves_no_second_visible_row() -> None:
+    # The story's own critical property: a corrected release timestamp
+    # must not coexist with an earlier proxy row a historical as-of query
+    # could accidentally see.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    proxy_released_at = _ts(2024, 7, 1)
+    provisional = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=proxy_released_at,
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=False,
+    )
+    await fake.add_vintage(provisional)
+
+    verified_released_at = _ts(2024, 6, 15)  # earlier than the proxy
+    await fake.replace_provisional_release_timing(SERIES_KEY, period, 0, verified_released_at, None)
+
+    # A query at the OLD proxy's released_at must now see the CORRECTED
+    # timestamp reasoning, not a stale second row -- there is only ever
+    # one row for this identity.
+    result = await fake.observation_as_known_at(SERIES_KEY, period, proxy_released_at)
+    assert result is not None
+    assert result.released_at == verified_released_at  # not the old proxy value
+    assert len(fake._vintages) == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_missing_identity() -> None:
+    fake = FakeMacroObservationRepository()
+
+    with pytest.raises(ValueError, match="no vintage exists"):
+        await fake.replace_provisional_release_timing(
+            SERIES_KEY, _ts(2024, 6, 1), 0, _ts(2024, 6, 1), None
+        )
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_already_verified_row() -> None:
+    # FX-43H fail-closed guarantee: this method must never silently
+    # rewrite an already-verified timestamp.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    already_verified = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    await fake.add_vintage(already_verified)
+
+    with pytest.raises(ValueError, match="already released_at_is_verified=True"):
+        await fake.replace_provisional_release_timing(SERIES_KEY, period, 0, _ts(2024, 6, 15), None)
+
+    # Untouched.
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 1))
+    assert result is not None
+    assert result.released_at == _ts(2024, 7, 1)
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_has_no_value_parameter() -> None:
+    # Structural guarantee, not just a runtime check: the method signature
+    # itself has no way to pass a different economic value -- a genuine
+    # value correction can only go through add_vintage as a new revision.
+    import inspect
+
+    signature = inspect.signature(FakeMacroObservationRepository.replace_provisional_release_timing)
+    assert "value" not in signature.parameters

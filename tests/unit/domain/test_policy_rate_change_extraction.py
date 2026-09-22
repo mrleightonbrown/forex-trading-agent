@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from forex_agent.domain.policy_rate_change_extraction import (
+    ConflictingRawObservationError,
     ExtractedPolicyRateChange,
     extract_change_points,
 )
@@ -69,14 +70,15 @@ def test_single_series_detects_each_genuine_change() -> None:
     )
 
 
-def test_out_of_order_and_duplicate_input_is_sorted_and_deduplicated() -> None:
+def test_out_of_order_and_duplicate_input_is_sorted_and_collapsed() -> None:
     # A provider adapter should never hand this function unsorted or
     # duplicate rows, but the function does not trust that blindly --
-    # last occurrence per date wins, and dates are processed in order.
+    # an identical-value duplicate collapses harmlessly (FX-43H), and
+    # dates are processed in sorted order regardless of input order.
     series = (
         (_ts(2020, 1, 3), Decimal("2.00")),
         (_ts(2020, 1, 1), Decimal("1.75")),
-        (_ts(2020, 1, 1), Decimal("1.75")),  # duplicate, same value
+        (_ts(2020, 1, 1), Decimal("1.75")),  # duplicate, same value -- harmless
     )
 
     result = extract_change_points((series,), _IDENTITY)
@@ -85,6 +87,37 @@ def test_out_of_order_and_duplicate_input_is_sorted_and_deduplicated() -> None:
         ExtractedPolicyRateChange(_ts(2020, 1, 1), Decimal("1.75")),
         ExtractedPolicyRateChange(_ts(2020, 1, 3), Decimal("2.00")),
     )
+
+
+def test_conflicting_duplicate_raw_values_on_one_date_raises() -> None:
+    # FX-43H data-integrity rule: never "last value wins" -- two different
+    # values for the same date within one raw series is a genuine
+    # data-integrity error, not something to silently resolve.
+    series = (
+        (_ts(2020, 1, 1), Decimal("1.75")),
+        (_ts(2020, 1, 1), Decimal("2.00")),  # same date, DIFFERENT value
+    )
+
+    with pytest.raises(ConflictingRawObservationError) as excinfo:
+        extract_change_points((series,), _IDENTITY)
+
+    assert excinfo.value.date == _ts(2020, 1, 1)
+    assert {excinfo.value.first_value, excinfo.value.second_value} == {
+        Decimal("1.75"),
+        Decimal("2.00"),
+    }
+
+
+def test_conflicting_duplicate_raw_values_regardless_of_input_order() -> None:
+    # Order-independence: the conflict is detected whichever value
+    # appears first in the raw (unsorted) input.
+    series = (
+        (_ts(2020, 1, 1), Decimal("2.00")),
+        (_ts(2020, 1, 1), Decimal("1.75")),
+    )
+
+    with pytest.raises(ConflictingRawObservationError):
+        extract_change_points((series,), _IDENTITY)
 
 
 def test_two_series_range_midpoint_detects_change_in_either_bound() -> None:

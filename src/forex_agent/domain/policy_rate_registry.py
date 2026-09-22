@@ -1,5 +1,5 @@
 """Canonical, provider-independent policy-rate registry (FX-42; hardened
-FX-42H, FX-42H.1, FX-43).
+FX-42H, FX-42H.1, FX-43, FX-43H).
 
 Defines semantics and provider mappings for the five currencies in the
 research universe (USD, EUR, GBP, JPY, CAD). This module itself still
@@ -38,6 +38,24 @@ reasoning):
     timestamp -- establishing the latter is explicitly out of scope
     for FX-43 and is the next review gate. No mapping is promoted to
     `PointInTimeSafety.POINT_IN_TIME_SAFE` as a result of this story.
+
+FX-43H hardening summary (see `docs/DECISIONS.md`'s FX-43H entry for
+the full reasoning):
+  - Corrected this module's own USD/DFEDTAR provider-mapping note,
+    which wrongly said DFEDTAR "covers 1954-07-01 through the
+    present" -- DFEDTAR is FRED's DISCONTINUED single-target-rate
+    series; its raw data ends 2008-12-15. See
+    `infrastructure.policy_rate_providers.fred_client`'s own
+    (similarly corrected) module docstring.
+  - `BackfillPolicyRateHistory`'s era boundaries are now enforced as
+    genuinely half-open against the provider fetch itself, not merely
+    assumed from a provider's own behavior (e.g. DFEDTAR happening to
+    stop the day before its era's `valid_to`).
+  - Every backfilled vintage is now explicitly stored with
+    `released_at_is_verified=False`; `MacroObservationRepository`
+    gained `replace_provisional_release_timing`, the explicit, safe
+    path a future story can use once a genuine announcement timestamp
+    is established for any of these provisional rows.
 
 FX-42H hardening summary (see `docs/DECISIONS.md`'s FX-42H entry for
 the full reasoning):
@@ -141,15 +159,22 @@ _USD_TARGET_POINT = PolicyRateDefinition(
             provider_series_ids=("DFEDTAR",),
             verified=True,
             notes=(
-                "FX-43: confirmed live against FRED's public "
-                "`fredgraph.csv` endpoint (no API key) -- the series "
-                "exists, covers 1954-07-01 through the present, and "
-                "returns Decimal-parseable daily values with a `.` "
-                "marker for genuinely missing observations. `verified` "
-                "covers the IDENTIFIER only, not point-in-time safety: "
-                "this is still an effective-date daily series, not a "
-                "verified announcement-timestamp series -- see "
-                "`docs/DECISIONS.md`'s FX-43 entry."
+                "FX-43H correction: DFEDTAR is FRED's DISCONTINUED "
+                "single-target-rate series -- confirmed live against "
+                "FRED's public `fredgraph.csv` endpoint (no API key), "
+                "its raw data ends 2008-12-15 (the day before the FOMC "
+                "switched to a target range), NOT 'through the "
+                "present' as an earlier version of this note wrongly "
+                "said. Its raw history reaches back into the early "
+                "1980s, but only this definition's own valid_from "
+                "(1994-02-04) onward is treated as usable -- see this "
+                "definition's own notes for why. Returns "
+                "Decimal-parseable daily values with a `.` marker for "
+                "genuinely missing observations. `verified` covers the "
+                "IDENTIFIER only, not point-in-time safety: this is "
+                "still an effective-date daily series, not a verified "
+                "announcement-timestamp series -- see "
+                "`docs/DECISIONS.md`'s FX-43/FX-43H entries."
             ),
         ),
     ),

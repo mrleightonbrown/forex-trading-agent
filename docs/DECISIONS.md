@@ -5453,3 +5453,179 @@ historical facts as described above.
 Per this story's own explicit instruction: this data is not called
 "carry" anywhere in this codebase. No rate differential is computed.
 No strategy, scoring, or decision logic follows this story.
+
+## 2026-09-22 — FX-43H: policy-rate backfill hardening
+
+**Scope**: harden FX-43 before any rate-differential research reads
+this data. Seven required items, all addressed; no ingestion of new
+currencies/series, no rate differential, no carry strategy, no
+parameter research, no JPY provider work, no invented release
+timestamps, no decision logic.
+
+**1. Half-open policy-rate eras now genuinely enforced.** Registry
+validity is `[valid_from, valid_to)`, but `PolicyRateHistoryProvider`'s
+own contract queries providers by INCLUSIVE calendar-date range.
+FX-43's original window computation could, for an era with a defined
+`valid_to`, request the provider for `end=valid_to` itself -- wrongly,
+since `valid_to`'s date belongs to the NEXT era. This never surfaced
+in practice only because FRED's `DFEDTAR` happens to stop publishing
+the day before USD's target-point-to-target-range boundary (2008-12-16)
+-- a fact about FRED, not a guarantee. `BackfillPolicyRateHistory.
+_fetch_end` now clamps the requested end to `valid_to - 1 day`
+whenever the window would otherwise reach or pass `valid_to`.
+`test_half_open_era_boundary_is_enforced_against_the_provider_fetch`
+reproduces the story's own exact required scenario: era A's `valid_to`
+and era B's `valid_from` are the same date D (USD's real 2008-12-16
+boundary), a FAKE provider is given a row on D for BOTH eras
+(deliberately contrary to real FRED behavior), and the test proves D
+belongs only to era B, with era A's own `requested_end` never reaching
+D at all. Regression-tested by reverting the clamp and confirming the
+test fails with `requested_end == D` instead of `< D`.
+
+**2. Raw provider coverage separated from change-point span.**
+`EraBackfillReport` gained `earliest_raw_observation`/`latest_raw_
+observation` (the true span of raw data a provider returned, computed
+from every raw `(date, value)` pair fetched, regardless of whether any
+of it represented a rate change) alongside the existing `earliest_
+change_point`/`latest_change_point` (the narrower span of genuine
+changes). `CurrencyBackfillReport.coverage_start`/`coverage_end` now
+aggregate from the RAW fields, not the change-point fields --
+correcting FX-43's own choice, which (ironically, given FX-43's own
+`docs/DECISIONS.md` entry already documents catching a SIMILAR
+requested-vs-actual conflation for CAD) still conflated "the newest
+data received" with "the newest rate change", understating coverage
+for any currency whose rate has been stable for a stretch before the
+report's `as_of`.
+`test_coverage_end_reflects_raw_data_not_last_change_point`
+constructs exactly this scenario (a change on 2010-02-01, then stable,
+still-published data through 2010-06-01) and proves `coverage_end` is
+2010-06-01, not 2010-02-01. Regression-tested by reverting `coverage_
+start`/`coverage_end` to aggregate from the change-point fields and
+confirming the test fails.
+
+**3. `add_vintage` reports INSERTED vs ALREADY_PRESENT accurately.**
+`VintageWriteOutcome` (`application/ports/
+macro_observation_repository.py`) -- `INSERTED`/`ALREADY_PRESENT` --
+replaces `add_vintage`'s previous `None` return across the Protocol,
+`SqlAlchemyMacroObservationRepository`, and `FakeMacroObservationRepository`.
+`MacroVintageConflictError` is unchanged for genuine same-identity/
+different-payload conflicts. `BackfillPolicyRateHistory` now reports
+`vintages_inserted`/`vintages_already_present` per era (and
+`total_vintages_inserted`/`total_vintages_already_present` per
+currency) instead of one undifferentiated `vintages_ingested` count.
+Confirmed against the real pipeline: the real Postgres data was
+cleared and the hardened backfill script run twice -- first run
+`inserted=258` total across USD/EUR/GBP/CAD, `already_present=0`;
+second run `inserted=0`, `already_present=258`; a direct SQL query
+confirmed zero duplicate `(series_key, observation_period,
+revision_sequence)` rows both times.
+
+**4. The release/effective distinction is now explicit in the data
+model, not just in prose.** `MacroObservationVintage` gained
+`released_at_is_verified: bool = True` (defaulting to the ordinary
+case -- unaffected for every pre-existing caller).
+`BackfillPolicyRateHistory` now explicitly constructs every vintage
+with `released_at_is_verified=False`, making FX-43's effective-date-
+proxy limitation part of the stored fact, not something a reader has
+to already know from documentation. `MacroObservationRepository`
+gained `replace_provisional_release_timing(series_key,
+observation_period, revision_sequence, verified_released_at,
+verified_effective_at)` -- the explicit, safe replacement path this
+story was asked to design and implement (not use): it corrects an
+existing PROVISIONAL row's `released_at`/`effective_at` in place,
+marking it verified, WITHOUT a `value` parameter at all (structurally
+impossible to also change the economic value through this method --
+`test_replace_provisional_release_timing_has_no_value_parameter`
+asserts this directly via `inspect.signature`) and WITHOUT touching
+`revision_sequence` -- a release-timing correction is never
+represented as a revision, per this story's own explicit instruction.
+Fails closed: raises if no vintage exists at the identity, and raises
+if the existing row is already `released_at_is_verified=True` (only a
+still-provisional row may be replaced this way, so this method can
+never be used to silently rewrite an already-verified timestamp).
+Implemented as the ONE deliberate, narrowly-scoped UPDATE in
+`SqlAlchemyMacroObservationRepository` -- every other write remains
+`INSERT ... ON CONFLICT DO NOTHING`, and this one UPDATE only ever
+touches `released_at`/`effective_at`/`released_at_is_verified`,
+guaranteeing "a corrected release timestamp must not coexist with an
+earlier proxy row a historical as-of query could accidentally see":
+there is only ever one row at that identity, so a query at any as-of
+time sees either the old proxy (before correction) or the new verified
+timestamp (after) -- never both. No caller of this method exists yet;
+this story's job was to make replacement possible and safe, not to
+perform it -- no verified announcement timestamp exists yet to replace
+anything with, and none is invented here. New Alembic migration
+(`5707ecb39242`) adds the backing column, `server_default='true'`
+(unaffected for any pre-existing row's default). The 258 rows FX-43
+had already written were cleared and the hardened backfill script
+re-run so every row correctly carries `released_at_is_verified=False`
+-- confirmed via direct SQL query (`SUM(CASE WHEN released_at_is_
+verified THEN 1 ELSE 0 END) = 0` for every series).
+
+**5. Duplicate raw observations: identical values collapse, conflicting
+values fail -- never "last value wins".** `extract_change_points`
+(`domain/policy_rate_change_extraction.py`) now raises the new
+`ConflictingRawObservationError` when one raw series reports two
+DIFFERENT values for the same date; an identical repeat still
+collapses harmlessly (unchanged). `BackfillPolicyRateHistory` catches
+this and reports it as an explicit `data_integrity_error` on the era,
+writing zero vintages for that era rather than guessing. The existing
+no-forward-fill rule (a date missing from one series in a multi-series
+transformation is skipped and reported, never paired with a fabricated
+counterpart) is unchanged.
+`test_conflicting_duplicate_raw_values_on_one_date_raises` and
+`test_conflicting_raw_values_are_reported_as_data_integrity_error`
+cover the domain and use-case levels respectively.
+
+**6. FRED documentation corrected: DFEDTAR does not cover
+"1954-present".** `infrastructure.policy_rate_providers.fred_client`'s
+module docstring and the registry's own USD provider-mapping note both
+previously said DFEDTAR "covers 1954-07-01 through the present" (or
+"onward") -- wrong. DFEDTAR is FRED's DISCONTINUED single-target-rate
+series; its raw data ends 2008-12-15, the day before the FOMC switched
+to a target range. Both docstrings now say so explicitly, and
+cross-reference FX-42H's already-established finding that the
+pre-1994 portion is a retrospective reconstruction, not
+contemporaneously published data -- this registry's own `valid_from`
+(1994-02-04), not DFEDTAR's raw availability, is what actually bounds
+the usable history. `DFEDTARU`/`DFEDTARL` are correctly documented as
+the LIVE series covering the target-range era from 2008-12-16 onward.
+
+**Regression-proof discipline applied**: the half-open boundary clamp
+and the raw-vs-change-point coverage aggregation were each deliberately
+reverted in turn, confirmed to fail their respective dedicated tests
+(the boundary test failing with `requested_end == boundary` instead of
+`< boundary`; the coverage test failing with `coverage_end` equal to
+the change-point date instead of the later raw-observation date), then
+restored. `extract_change_points`'s duplicate-conflict detection and
+`add_vintage`'s INSERTED/ALREADY_PRESENT/conflict paths were exercised
+directly by their own new dedicated tests (unit, integration, and a
+live double-run against real Postgres) rather than by breaking and
+restoring the passing implementation a second time, since the FX-43H
+live re-run itself already served as an end-to-end confirmation
+(cleared real data, re-ran the hardened script twice, confirmed
+`inserted`/`already_present` counts and zero duplicate rows directly
+via SQL).
+
+**Verification**: `pytest` (962 passed, full suite -- net new/changed
+tests across `domain.policy_rate_change_extraction`,
+`domain.macro_observation_vintage`,
+`application.ports.macro_observation_repository`'s two concrete
+implementations, and `BackfillPolicyRateHistory`; zero changes to any
+existing strategy, backtest, or unrelated candle-data code), `ruff`,
+`mypy --strict`, `pre-commit run --all-files`. Three transient live-
+OANDA-practice-API test failures were observed across repeated runs
+(Cloudflare 504 gateway timeouts, a different live-candle test each
+time) -- confirmed unrelated to this story (no policy-rate/macro code
+touches that path) and transient (each passed on immediate retry; a
+fully clean 962-passed run was also obtained). The real Postgres
+policy-rate data was cleared and the hardened backfill script re-run
+twice live against the real FRED/ECB/BoE/BoC APIs, confirming: (a)
+zero duplicate rows, (b) every row `released_at_is_verified=False`,
+(c) the real USD boundary date (2008-12-16) has exactly one row,
+owned by the target-range era, at the correct midpoint value (0.125).
+
+Per this story's own explicit stop instruction: no rate differential,
+no carry strategy, no parameter research, no JPY provider work, no
+invented release timestamps, and no decision logic follows this
+story.

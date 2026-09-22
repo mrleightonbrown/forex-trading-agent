@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Protocol
 
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
@@ -35,9 +36,31 @@ class MacroVintageConflictError(Exception):
         )
 
 
+class VintageWriteOutcome(Enum):
+    """What `add_vintage` actually did (FX-43H).
+
+    Both outcomes are SUCCESSFUL, non-error results -- `add_vintage`
+    remains idempotent for an exact retry either way. The distinction
+    exists so a caller doing bulk/repeated writes (e.g. a backfill
+    that may be re-run) can report an accurate `vintages_inserted` vs
+    `vintages_already_present` split instead of only knowing "the call
+    didn't raise." `MacroVintageConflictError` remains the separate,
+    genuinely-exceptional outcome for a same-identity/different-payload
+    write -- this enum only distinguishes between the two NON-error
+    cases.
+    """
+
+    INSERTED = "INSERTED"
+    """A new row was written -- this identity did not exist before."""
+
+    ALREADY_PRESENT = "ALREADY_PRESENT"
+    """This exact vintage (identity AND payload) already existed;
+    nothing was written."""
+
+
 class MacroObservationRepository(Protocol):
     """Port for storing and point-in-time-querying `MacroObservationVintage`
-    records (FX-41; hardened FX-41H).
+    records (FX-41; hardened FX-41H, FX-43H).
 
     The defining invariant of both read methods: a query at timestamp T
     must never return a vintage whose `released_at` is after T. Neither
@@ -63,19 +86,71 @@ class MacroObservationRepository(Protocol):
     future policy-rate registry/ingestion stories, not here.
     """
 
-    async def add_vintage(self, vintage: MacroObservationVintage) -> None:
+    async def add_vintage(self, vintage: MacroObservationVintage) -> VintageWriteOutcome:
         """Persist a new vintage. Never mutates or replaces an existing
-        one -- a revision is a new vintage with a later `released_at`
-        and higher `revision_sequence` for the same
-        (series_key, observation_period).
+        one's ECONOMIC VALUE -- a revision is a new vintage with a later
+        `released_at` and higher `revision_sequence` for the same
+        (series_key, observation_period). See
+        `replace_provisional_release_timing` for the one, narrowly
+        scoped exception that DOES mutate an existing row -- release-
+        timing metadata only, never `value`.
 
         Idempotent for an exact retry: calling this again with a
         vintage identical in every field to one already stored is a
-        no-op, not an error. Raises `MacroVintageConflictError` (FX-41H)
-        if a vintage with the same `(series_key, observation_period,
-        revision_sequence)` identity already exists with a *different*
-        `value`, `released_at`, `effective_at`, or `source` -- the
-        already-stored vintage is left completely unchanged either way.
+        no-op, returning `VintageWriteOutcome.ALREADY_PRESENT` rather
+        than raising. Returns `VintageWriteOutcome.INSERTED` when a new
+        row was actually written. Raises `MacroVintageConflictError`
+        (FX-41H) if a vintage with the same `(series_key,
+        observation_period, revision_sequence)` identity already exists
+        with a *different* `value`, `released_at`, `effective_at`,
+        `source`, or `released_at_is_verified` -- the already-stored
+        vintage is left completely unchanged in every case.
+        """
+        ...
+
+    async def replace_provisional_release_timing(
+        self,
+        series_key: str,
+        observation_period: UtcTimestamp,
+        revision_sequence: int,
+        verified_released_at: UtcTimestamp,
+        verified_effective_at: UtcTimestamp | None,
+    ) -> None:
+        """Corrects an existing PROVISIONAL vintage's `released_at`/
+        `effective_at` in place, marking it `released_at_is_verified=
+        True` -- WITHOUT touching its `value` or `revision_sequence`
+        (FX-43H).
+
+        This is the explicit, safe replacement path FX-43's effective-
+        date-proxy rows (`released_at_is_verified=False`) are meant to
+        go through once a future story establishes genuine announcement
+        timestamps for them. It exists specifically so that correction
+        does NOT require either of two wrong alternatives: (a)
+        representing the correction as a new revision -- `revision_
+        sequence` is reserved for genuine ECONOMIC VALUE changes, and a
+        timestamp-precision correction is not one; or (b) inserting a
+        second vintage at the same identity, which the unique
+        constraint already forbids and which would in any case leave
+        the old provisional `released_at` sitting in storage where a
+        historical as-of query could still return it before the
+        correction takes effect.
+
+        Fails closed:
+          - raises `ValueError` if no vintage exists at this identity;
+          - raises `ValueError` if the existing vintage is already
+            `released_at_is_verified=True` -- only a still-provisional
+            row may be replaced this way, precisely so a caller cannot
+            use this method to silently rewrite an already-verified
+            timestamp;
+          - callers must not pass a different `value` here -- this
+            method has no `value` parameter at all, structurally
+            preventing that. A genuine value correction must go through
+            `add_vintage` as a new revision instead.
+
+        No caller of this method exists yet -- FX-43H's job is to make
+        this replacement possible and safe, not to perform it; no
+        verified announcement timestamp exists yet to replace anything
+        with (`docs/DECISIONS.md`'s FX-43H entry).
         """
         ...
 

@@ -1,4 +1,5 @@
-"""Pure change-point extraction for policy-rate backfill (FX-43).
+"""Pure change-point extraction for policy-rate backfill (FX-43; hardened
+FX-43H).
 
 The core anti-interpolation guarantee for this story lives here, not in
 any infrastructure adapter: `extract_change_points` NEVER fabricates a
@@ -17,6 +18,9 @@ Pure, no I/O -- a provider adapter's job is only to turn its own HTTP
 response into `(UtcTimestamp, Decimal)` pairs; this function turns
 those pairs into what `MacroObservationVintage` needs, independent of
 any specific provider.
+
+FX-43H: a duplicate date within one raw series is no longer silently
+resolved by "last value wins" -- see `ConflictingRawObservationError`.
 """
 
 from dataclasses import dataclass
@@ -25,6 +29,33 @@ from decimal import Decimal
 
 from forex_agent.domain.rate_transformation import RateTransformation
 from forex_agent.domain.timestamps import UtcTimestamp
+
+
+class ConflictingRawObservationError(ValueError):
+    """Raised when one raw provider series reports two DIFFERENT values
+    for the same date (FX-43H).
+
+    A provider re-publishing the same date with the same value is
+    normal (harmless duplication -- e.g. a re-fetched or overlapping
+    request window) and collapses silently, same as any other repeated
+    day. Two different values claiming the same date is a genuine
+    data-integrity problem -- possibly a provider data error, a
+    request that straddled a revision to the provider's own published
+    history, or a bug in how a caller assembled `raw_series`. This
+    function never resolves that by picking one (a same-day "last
+    value wins" would be exactly the kind of silent, unauditable
+    decision `extract_change_points` exists to avoid making about
+    dates entirely).
+    """
+
+    def __init__(self, date: UtcTimestamp, first_value: Decimal, second_value: Decimal) -> None:
+        self.date = date
+        self.first_value = first_value
+        self.second_value = second_value
+        super().__init__(
+            f"conflicting raw observations for {date.value.date().isoformat()}: "
+            f"{first_value!r} vs {second_value!r}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +93,14 @@ def extract_change_points(
     order `transformation.apply` expects them (matching
     `ProviderSeriesMapping.provider_series_ids`'s own ordering
     convention -- e.g. (upper, lower) for `TARGET_RANGE_MIDPOINT`).
-    Each inner series need not be pre-sorted or pre-deduplicated by the
-    caller; this function sorts and, for a date appearing more than
-    once within one series, keeps the LAST occurrence (a provider
-    adapter should never produce duplicates, but this function does not
-    trust that blindly).
+    Each inner series need not be pre-sorted by the caller; this
+    function sorts. Two entries for the same date WITHIN one series
+    must agree on value -- an identical repeat collapses harmlessly (a
+    provider re-publishing the same fact twice is not an error); two
+    DIFFERENT values for the same date raise
+    `ConflictingRawObservationError` (FX-43H) rather than silently
+    picking one ("last value wins" is exactly the kind of unaudited
+    decision this function exists to avoid).
 
     A date only produces a canonical value if EVERY raw series has an
     entry for it -- a date present in the upper-bound series but not
@@ -81,6 +115,9 @@ def extract_change_points(
     for series in raw_series:
         one_series: dict[datetime, Decimal] = {}
         for timestamp, value in series:
+            existing_value = one_series.get(timestamp.value)
+            if existing_value is not None and existing_value != value:
+                raise ConflictingRawObservationError(timestamp, existing_value, value)
             one_series[timestamp.value] = value
         series_by_date.append(one_series)
         all_dates.update(one_series.keys())

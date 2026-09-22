@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forex_agent.infrastructure.db.base import Base
@@ -13,11 +13,16 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     A revision is INSERTED as a new row with a later `released_at` and a
     higher `revision_sequence` -- this table has no application code
-    path that UPDATEs `value`, `released_at`, or `revision_sequence` on
-    an existing row. `created_at` (from `TimestampMixin`) records when
-    this codebase first stored the row -- separate from `released_at`,
-    which is the market-knowledge timestamp the point-in-time queries
-    actually filter on.
+    path that UPDATEs `value` or `revision_sequence` on an existing row.
+    `created_at` (from `TimestampMixin`) records when this codebase
+    first stored the row -- separate from `released_at`, which is the
+    market-knowledge timestamp the point-in-time queries actually
+    filter on. FX-43H's `replace_provisional_release_timing` is the ONE
+    narrowly-scoped exception: it UPDATEs `released_at`/`effective_at`/
+    `released_at_is_verified` on an existing row, but ONLY when that row
+    is still marked provisional AND the incoming correction's `value`
+    matches exactly -- a genuine economic-value change never goes
+    through it, only ever through a new revision row.
 
     `(series_key, observation_period, revision_sequence)` is unique --
     it is a vintage's natural identity, and the constraint makes
@@ -52,3 +57,11 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revision_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String, nullable=False)
+    # FX-43H: True (default) means released_at/effective_at are confirmed
+    # timestamps; False marks a provisional proxy (e.g. FX-43's backfill,
+    # which uses an effective-date proxy for released_at). The ONE column
+    # a narrowly-scoped UPDATE is ever issued against -- see
+    # SqlAlchemyMacroObservationRepository.replace_provisional_release_timing.
+    released_at_is_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )

@@ -106,3 +106,25 @@ def test_vintage_is_immutable() -> None:
 
     with pytest.raises(AttributeError):
         vintage.value = Decimal("9.9")  # type: ignore[misc]
+
+
+def test_released_at_is_verified_defaults_to_true() -> None:
+    # FX-43H: the ordinary case -- a vintage's timestamps are simply what
+    # they claim to be -- must not require every existing caller to
+    # change.
+    vintage = _vintage()
+
+    assert vintage.released_at_is_verified is True
+
+
+def test_released_at_is_verified_can_be_set_false() -> None:
+    # FX-43's own use case: released_at is an effective-date proxy, not a
+    # confirmed announcement timestamp.
+    vintage = _vintage(released_at_is_verified=False)
+
+    assert vintage.released_at_is_verified is False
+
+
+def test_rejects_non_bool_released_at_is_verified() -> None:
+    with pytest.raises(TypeError, match="released_at_is_verified"):
+        _vintage(released_at_is_verified="yes")  # type: ignore[arg-type]
