@@ -129,3 +129,24 @@ def test_released_at_is_verified_can_be_explicitly_true() -> None:
 def test_rejects_non_bool_released_at_is_verified() -> None:
     with pytest.raises(TypeError, match="released_at_is_verified"):
         _vintage(released_at_is_verified="yes")  # type: ignore[arg-type]
+
+
+def test_released_at_is_conservative_bound_defaults_to_false() -> None:
+    # FX-44: fails closed the same way released_at_is_verified does -- a
+    # newly constructed vintage claims no conservative-bound status
+    # either, unless explicitly given one.
+    vintage = _vintage()
+
+    assert vintage.released_at_is_conservative_bound is False
+
+
+def test_released_at_is_conservative_bound_can_be_explicitly_true() -> None:
+    vintage = _vintage(released_at_is_conservative_bound=True)
+
+    assert vintage.released_at_is_conservative_bound is True
+    assert vintage.released_at_is_verified is False  # unaffected, independent flag
+
+
+def test_rejects_non_bool_released_at_is_conservative_bound() -> None:
+    with pytest.raises(TypeError, match="released_at_is_conservative_bound"):
+        _vintage(released_at_is_conservative_bound="yes")  # type: ignore[arg-type]

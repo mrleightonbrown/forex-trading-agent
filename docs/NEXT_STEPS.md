@@ -875,22 +875,57 @@ verified announcement timestamps, no rate differential, no carry
 research, no JPY work, no release-time sourcing, no strategy changes
 follow this story.
 
+## FX-44: point-in-time policy-rate release verification (complete)
+
+The first real use of FX-43H/FX-43H.1's replacement mechanism: real
+primary-source research into USD/EUR/GBP/CAD central-bank
+release-timing conventions (Federal Reserve, ECB, Bank of England,
+Bank of Canada — JPY stays out of scope), applied only where
+genuinely defensible. Of the 258 real change points FX-43 backfilled:
+USD 30 exact/54 conservative/8 unresolved (of 92); EUR 44/0/18 (of
+62); GBP 65/0/6 (of 71); CAD 0/30/3 (of 33) — zero conflicts, and a
+second live run reproduced identical figures with zero newly
+classified (idempotent, confirmed live). New `ReleaseTimingConfidence`
+(`EXACT` vs a deliberately late, safe-but-inexact `CONSERVATIVE_SAFE_
+BOUND`) and the new `released_at_is_conservative_bound` field keep the
+two outcomes structurally distinct — `released_at_is_verified=True` is
+never overloaded to mean "we guessed a safely late time". EUR's real
+announcement-before-effective-date split is modeled explicitly
+(`released_at` before `effective_at`, both DST-correct). No
+`ProviderSeriesMapping` is promoted to `POINT_IN_TIME_SAFE` for any
+currency — every currency still has unresolved change points across
+its full history; interval-specific safety is represented explicitly
+instead, in `research_results/fx44/
+policy_rate_release_verification.json`. New `domain.research_
+readiness.require_research_ready_interval` is the mandatory pre-flight
+check a future FX-45 must call — fails closed on a single provisional
+observation anywhere in the selected interval. Full details in
+`docs/DECISIONS.md`'s FX-44 entry.
+
+**Per this story's own explicit stop instruction**: no pair-rate
+differential, no carry strategy, no technical-signal filtering, no
+performance research, no JPY provider ingestion, no COT, no
+macro-event surprises, no news, no decision logic follows this story
+— the differential experiment (FX-45) does not start automatically.
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including establishing genuine announcement
-timestamps (still the next review gate, now with both a safe
-replacement path AND a fail-closed, race-safe implementation of it
-ready for it), JPY provider mapping, the pre-2009 CAD gap, or any
-rate-differential/carry work.
+new here or elsewhere — including FX-45's pair-rate differential
+experiment (now with `require_research_ready_interval` as its
+mandatory pre-flight gate), the 18 still-provisional pre-2006 EUR
+change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
+unresolved, JPY provider mapping, the pre-2009 CAD gap, or any
+carry-strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1 above are the explicitly-scoped exceptions (domain
-model, storage-integrity hardening, canonical registry/provider-mapping
-definitions, real policy-rate ingestion, and now two rounds of its own
-hardening — still no strategy, no decision logic, no "carry" framing)
-and do not open the door to the rest of this phase. The same goes for
-the downstream epics not in this list at all (Decision Engine, Risk
+FX-43H/FX-43H.1/FX-44 above are the explicitly-scoped exceptions
+(domain model, storage-integrity hardening, canonical registry/
+provider-mapping definitions, real policy-rate ingestion, two rounds
+of its own hardening, and now genuine release-timing verification —
+still no strategy, no decision logic, no "carry" framing) and do not
+open the door to the rest of this phase. The same goes for the
+downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow
 Trading) — none are part of the current phase.
 

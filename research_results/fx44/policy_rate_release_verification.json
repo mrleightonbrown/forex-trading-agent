@@ -1,0 +1,218 @@
+{
+  "story": "FX-44",
+  "generated_at": "2026-09-22T05:45:29+00:00",
+  "method": "Per-currency, per-change-point release timing is resolved by domain.policy_rate_release_timing_registry: a hand-researched, cited set of documented central-bank release-time conventions (EXACT confidence) and, where the exact minute is not confidently citable but a same-day/business-hours convention is confirmed, a deliberately conservative end-of-day bound guaranteed no earlier than the true release (CONSERVATIVE_SAFE_BOUND confidence). Known irregular/inter-meeting/emergency-action dates, and eras whose announcement/effective-date relationship was not confidently established, are excluded from both and remain fully provisional. No timestamp in this report is inferred merely from the daily rate series' change-point date.",
+  "currencies": {
+    "USD": {
+      "series_key": "USD_POLICY_RATE",
+      "total_change_points": 92,
+      "exact_verified": 30,
+      "conservative_safe": 54,
+      "unresolved_provisional": 8,
+      "conflicting": 0,
+      "earliest_research_safe_date": "1994-02-04T00:00:00+00:00",
+      "latest_research_safe_date": "2026-09-17T00:00:00+00:00",
+      "unresolved_dates": [
+        {
+          "observation_period": "1998-10-15T00:00:00+00:00",
+          "reason": "Inter-meeting cut (between the Sep 29 and Nov 17, 1998 meetings, LTCM/Russia crisis response) -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2001-01-03T00:00:00+00:00",
+          "reason": "Inter-meeting cut, announced by conference call -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2001-04-18T00:00:00+00:00",
+          "reason": "Inter-meeting cut, announced by conference call -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2001-09-17T00:00:00+00:00",
+          "reason": "Inter-meeting cut on the day US markets reopened after the September 11 attacks -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2008-01-22T00:00:00+00:00",
+          "reason": "Inter-meeting 75bp emergency cut, announced by conference call -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2008-10-08T00:00:00+00:00",
+          "reason": "Globally coordinated inter-meeting cut (with the ECB, BoE, and other central banks) -- not a regular meeting-day announcement."
+        },
+        {
+          "observation_period": "2020-03-04T00:00:00+00:00",
+          "reason": "COVID-19 emergency inter-meeting cut -- stored date is a proxy (effective-date artifact); true announcement date/time not established here."
+        },
+        {
+          "observation_period": "2020-03-16T00:00:00+00:00",
+          "reason": "COVID-19 emergency inter-meeting cut (announced Sunday, March 15, 2020) -- stored date is a next-business-day proxy, not the true announcement date."
+        }
+      ],
+      "conflicting_dates": [],
+      "sources": [
+        "https://www.federalreserve.gov/fomc/19940204default.htm ; https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm"
+      ]
+    },
+    "EUR": {
+      "series_key": "EUR_POLICY_RATE",
+      "total_change_points": 62,
+      "exact_verified": 44,
+      "conservative_safe": 0,
+      "unresolved_provisional": 18,
+      "conflicting": 0,
+      "earliest_research_safe_date": "2006-03-08T00:00:00+00:00",
+      "latest_research_safe_date": "2026-09-16T00:00:00+00:00",
+      "unresolved_dates": [
+        {
+          "observation_period": "1999-01-01T00:00:00+00:00",
+          "reason": "The Euro/ECB's own inception rate, fixed in advance of the currency's 1 January 1999 launch -- not a Governing Council announcement event in the normal sense."
+        },
+        {
+          "observation_period": "1999-04-09T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "1999-11-05T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-02-04T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-03-17T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-04-28T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-06-09T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-09-01T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2000-10-06T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2001-05-11T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2001-08-31T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2001-09-18T00:00:00+00:00",
+          "reason": "Globally coordinated response in the days after the September 11 attacks -- not a regular Governing Council decision."
+        },
+        {
+          "observation_period": "2001-11-09T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2002-12-06T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2003-03-07T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2003-06-06T00:00:00+00:00",
+          "reason": "before the confirmed 2006-03-08 Wednesday-effective-date pattern -- this story does not extend the six-day announcement/effective offset to the ECB's earlier operational regime"
+        },
+        {
+          "observation_period": "2005-12-06T00:00:00+00:00",
+          "reason": "A Tuesday, breaking both the earlier (Friday) and later (Wednesday) effective-date patterns -- an apparent transition-period exception, not independently investigated in this story."
+        },
+        {
+          "observation_period": "2006-06-15T00:00:00+00:00",
+          "reason": "A Thursday, breaking the 2006-03-08-onward Wednesday effective-date pattern this story otherwise relies on -- not independently investigated."
+        }
+      ],
+      "conflicting_dates": [],
+      "sources": [
+        "https://investinglive.com/centralbank/ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/",
+        "https://x.com/ecb/status/1550012703548137472 ; https://investinglive.com/centralbank/ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/"
+      ]
+    },
+    "GBP": {
+      "series_key": "GBP_POLICY_RATE",
+      "total_change_points": 71,
+      "exact_verified": 65,
+      "conservative_safe": 0,
+      "unresolved_provisional": 6,
+      "conflicting": 0,
+      "earliest_research_safe_date": "1997-07-10T00:00:00+00:00",
+      "latest_research_safe_date": "2025-12-18T00:00:00+00:00",
+      "unresolved_dates": [
+        {
+          "observation_period": "1997-06-02T00:00:00+00:00",
+          "reason": "Predates the MPC's first meeting (5-6 June 1997) -- a transitional, pre-independence decision, not a regular MPC Thursday announcement."
+        },
+        {
+          "observation_period": "1997-06-06T00:00:00+00:00",
+          "reason": "The MPC's first-ever decision (5-6 June 1997 meeting) -- a Friday, not the MPC's standard Thursday pattern; not independently re-verified here."
+        },
+        {
+          "observation_period": "1999-09-08T00:00:00+00:00",
+          "reason": "A Wednesday, breaking the MPC's standard Thursday pattern -- not independently investigated in this story."
+        },
+        {
+          "observation_period": "2001-09-18T00:00:00+00:00",
+          "reason": "Globally coordinated response in the days after the September 11 attacks -- not a regular Thursday MPC announcement."
+        },
+        {
+          "observation_period": "2008-10-08T00:00:00+00:00",
+          "reason": "Globally coordinated inter-meeting cut (with the Fed, ECB, and other central banks) -- not a regular Thursday MPC announcement."
+        },
+        {
+          "observation_period": "2020-03-11T00:00:00+00:00",
+          "reason": "COVID-19 unscheduled emergency cut -- not a regular Thursday MPC announcement."
+        }
+      ],
+      "conflicting_dates": [],
+      "sources": [
+        "https://www.bankofengland.co.uk/monetary-policy/the-interest-rate-bank-rate"
+      ]
+    },
+    "CAD": {
+      "series_key": "CAD_POLICY_RATE",
+      "total_change_points": 33,
+      "exact_verified": 0,
+      "conservative_safe": 30,
+      "unresolved_provisional": 3,
+      "conflicting": 0,
+      "earliest_research_safe_date": "2009-04-21T00:00:00+00:00",
+      "latest_research_safe_date": "2025-10-30T00:00:00+00:00",
+      "unresolved_dates": [
+        {
+          "observation_period": "2020-03-04T00:00:00+00:00",
+          "reason": "COVID-19 emergency action period (March 2020) -- not confidently distinguished here from the two unscheduled cuts below; excluded for consistency."
+        },
+        {
+          "observation_period": "2020-03-16T00:00:00+00:00",
+          "reason": "COVID-19 unscheduled emergency cut -- stored date is a proxy (likely next-business-day after a Friday, March 13, 2020 announcement); true announcement date/time not established here."
+        },
+        {
+          "observation_period": "2020-03-27T00:00:00+00:00",
+          "reason": "COVID-19 unscheduled emergency cut -- not a regular fixed announcement date."
+        }
+      ],
+      "conflicting_dates": [],
+      "sources": [
+        "https://www.bankofcanada.ca/2000/10/release-dates-bank-rate-actions/ ; https://www.canada.ca/en/news/archive/2011/10/bank-canada-interest-rate-announcement.html"
+      ]
+    }
+  },
+  "provider_mapping_promotion": {
+    "any_mapping_promoted_to_point_in_time_safe": false,
+    "reason": "FX-44 section 7: a ProviderSeriesMapping may be promoted to POINT_IN_TIME_SAFE only if the ENTIRE research interval it will be applied to satisfies point-in-time requirements -- not merely because some observations within it are verified. No currency above has zero unresolved_provisional change points across its full stored history, so no mapping is promoted here. Interval-specific safety is represented explicitly instead, per currency, via earliest_research_safe_date/latest_research_safe_date/unresolved_dates above -- a future research use case must select its own interval and pass the vintages it actually intends to use through domain.research_readiness.require_research_ready_interval, which fails closed on any single still-provisional observation regardless of this report."
+  },
+  "jpy_out_of_scope": true
+}

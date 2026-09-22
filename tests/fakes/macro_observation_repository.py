@@ -17,6 +17,7 @@ from forex_agent.application.ports.macro_observation_repository import (
     VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
+from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
@@ -43,14 +44,15 @@ class FakeMacroObservationRepository:
         series_key: str,
         observation_period: UtcTimestamp,
         revision_sequence: int,
-        verified_released_at: UtcTimestamp,
-        verified_effective_at: UtcTimestamp | None,
+        released_at: UtcTimestamp,
+        effective_at: UtcTimestamp | None,
+        confidence: ReleaseTimingConfidence,
     ) -> None:
-        # FX-43H.1: no `await` appears between the check and the write
-        # below, so nothing can interleave between them under Python's
-        # single-threaded cooperative asyncio scheduling -- this check-
-        # then-set is already as atomic as the real repository's single
-        # conditional UPDATE, without needing a lock.
+        # FX-43H.1/FX-44: no `await` appears between the check and the
+        # write below, so nothing can interleave between them under
+        # Python's single-threaded cooperative asyncio scheduling -- this
+        # check-then-set is already as atomic as the real repository's
+        # single conditional UPDATE, without needing a lock.
         key = (series_key, observation_period.value, revision_sequence)
         existing = self._vintages.get(key)
         if existing is None:
@@ -59,20 +61,30 @@ class FakeMacroObservationRepository:
                 f"observation_period={observation_period.value.isoformat()!r}, "
                 f"revision_sequence={revision_sequence})"
             )
-        if existing.released_at_is_verified:
+        if existing.released_at_is_verified or existing.released_at_is_conservative_bound:
+            existing_classification = (
+                "released_at_is_verified=True"
+                if existing.released_at_is_verified
+                else "released_at_is_conservative_bound=True"
+            )
             raise ValueError(
                 f"vintage identity (series_key={series_key!r}, "
                 f"observation_period={observation_period.value.isoformat()!r}, "
                 f"revision_sequence={revision_sequence}) is already "
-                "released_at_is_verified=True -- refusing to replace an already-verified "
+                f"{existing_classification} -- refusing to replace an already-classified "
                 "release timing"
             )
+        is_exact = confidence is ReleaseTimingConfidence.EXACT
         self._vintages[key] = dataclasses.replace(
             existing,
-            released_at=verified_released_at,
-            effective_at=verified_effective_at,
-            released_at_is_verified=True,
+            released_at=released_at,
+            effective_at=effective_at,
+            released_at_is_verified=is_exact,
+            released_at_is_conservative_bound=not is_exact,
         )
+
+    async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
+        return tuple(v for v in self._vintages.values() if v.series_key == series_key)
 
     async def latest_available_as_of(
         self, series_key: str, as_of: UtcTimestamp

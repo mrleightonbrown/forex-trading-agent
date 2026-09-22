@@ -5736,3 +5736,222 @@ Per this story's own explicit stop instruction: no providers, no
 verified announcement timestamps, no rate differential, no carry
 research, no JPY work, no release-time sourcing, no strategy changes
 follow this story.
+
+## 2026-09-22 — FX-44: point-in-time policy-rate release verification
+
+FX-43/FX-43H established real policy-rate change points with
+provisional, effective-date-proxy timing; FX-43H.1 made the
+replacement mechanism fail-closed and atomic. This story is the first
+to actually USE that mechanism: real primary-source research into
+USD/EUR/GBP/CAD central-bank release-timing conventions, applied only
+where genuinely defensible, leaving everything else provisional. JPY
+stays out of scope throughout, per the story's own instruction.
+
+**Research method.** Federal Reserve, ECB, Bank of England, and Bank
+of Canada release-timing conventions were researched live (WebSearch/
+WebFetch against each institution's own site plus corroborating
+secondary sources), then checked for self-consistency against the 258
+real change-point dates already in Postgres (e.g. computing the
+weekday of every stored EUR/GBP/CAD date to confirm or refute an
+assumed institutional pattern before relying on it -- see
+`domain.policy_rate_release_timing_registry`'s own per-currency
+research notes and citations for the full reasoning). This caught a
+real mistake before it shipped: an initial assumption that the Fed's
+"2:15pm ET" figure was a stable pre-2013 convention turned out, on
+closer reading of the same sources, to describe only the 2011-2012
+press-conference-meeting schedule specifically (non-press-conference
+statements in that window were released at 12:30pm ET instead) --
+i.e. the exact minute is genuinely evidenced as UNSTABLE pre-2013, not
+merely unconfirmed. That finding is why USD's pre-2013 era uses a
+conservative bound rather than an exact claim (below).
+
+**1. `ReleaseTimingRule`/`ReleaseTimingConfidence`
+(`domain.release_timing_rule`, new).** A pure, cited data type: an
+institution, a local time-of-day, an IANA timezone, a validity window,
+and a citation, with `confidence` distinguishing `EXACT` (a
+specific, documented institutional convention -- from a primary
+source or multiple mutually-consistent secondary sources) from
+`CONSERVATIVE_SAFE_BOUND` (the exact minute is not confidently
+citable, but a same-day/business-hours convention is confirmed, so a
+deliberately late bound -- e.g. end of the announcement day, local
+time -- is used instead; guaranteed no earlier than the true release,
+never claimed as the exact moment). `resolve()` uses `zoneinfo` (the
+stdlib's own historical IANA database) to convert a local date/rule
+into an exact UTC instant with the CORRECT historical DST offset for
+that specific date -- this module hand-codes zero DST transition
+dates itself.
+
+**2. `domain.policy_rate_release_timing_registry` (new)** -- the
+hand-researched, cited rule set itself, one resolver per currency:
+  - **USD (Federal Reserve)**: `EXACT`, 14:00 America/New_York, for
+    regularly scheduled meetings from 2013-03-19 onward (the Fed's own
+    March 13, 2013 press release) -- 30 of USD's 92 change points (all
+    fall in the 2015-12-16-onward stretch, since the 2008-2015 ZIRP
+    period has no change points to disambiguate against the rule
+    change). `CONSERVATIVE_SAFE_BOUND`, end-of-day America/New_York,
+    for 1994-02-04 through 2013-03-19 -- 54 change points; the exact
+    minute is same-day/afternoon but not confidently citable as stable
+    across this span (see the research-method note above). 8 known
+    inter-meeting/emergency dates (1998-10-15, 2001-01-03, 2001-04-18,
+    2001-09-17, 2008-01-22, 2008-10-08, 2020-03-04, 2020-03-16) are
+    explicitly excluded and remain provisional.
+  - **GBP (Bank of England)**: `EXACT`, 12:00 Europe/London, for every
+    regular Thursday MPC decision (65 of 71) -- every source found
+    describes this consistently, with no contradicting evidence across
+    the MPC's history, unlike the Fed case. 6 known irregular dates
+    (the pre-MPC 1997-06-02 transition, the MPC's own first, Friday,
+    decision on 1997-06-06, a stray 1999-09-08 Wednesday, and the
+    2001-09-18/2008-10-08/2020-03-11 coordinated/emergency actions)
+    remain provisional.
+  - **CAD (Bank of Canada)**: `CONSERVATIVE_SAFE_BOUND`, end-of-day
+    America/Toronto, for 30 of 33 change points -- the exact
+    9:00am-vs-9:45am ET transition date within our 2009-2025 data
+    range was not established, and it is not established whether the
+    raw provider's stored date is the announcement date itself or a
+    next-business-day proxy; end-of-day is safe under either
+    uncertainty. The 3 March 2020 COVID emergency dates remain
+    provisional.
+  - **EUR (European Central Bank)**: `EXACT`, 13:45 Europe/Brussels
+    (pre-2022-07-21) or 14:15 Europe/Brussels (from 2022-07-21, the
+    ECB's own announced change), for 44 of 62 change points. This is
+    also the one currency with a genuine, DOCUMENTED
+    announcement-before-effective-date split (FX-44 section 4): the
+    stored proxy date is confirmed (every single one from 2006-03-08
+    onward is a Wednesday -- checked computationally against all 45
+    real dates, not assumed) to be the EFFECTIVE date -- "the first
+    main refinancing operation following the Governing Council
+    decision" per the ECB's own published methodology -- six days
+    after the Thursday decision. `released_at` is therefore set to the
+    Thursday decision date/time, STRICTLY BEFORE the unchanged
+    `effective_at` (the original stored proxy). 18 change points
+    remain provisional: the 1999-01-01 Euro-launch inception rate (no
+    ordinary announcement event), the pre-2006-03-08 era (a genuinely
+    different, less-established operational regime the ECB's own page
+    describes separately), and two pattern-breaking anomalies
+    (2005-12-06, 2006-06-15) plus the 2001-09-18 coordinated action,
+    none independently investigated further in this story.
+
+**3. `MacroObservationVintage.released_at_is_conservative_bound: bool
+= False` (new field, mirroring `released_at_is_verified`'s own
+fail-closed default from FX-43H.1)** -- distinguishes a deliberately
+conservative timestamp from an exactly verified one, so
+`released_at_is_verified=True` is never overloaded to mean "we guessed
+a safely late time" (the story's own explicit prohibition). New
+migration `aee1fa641be6` adds the column, defaulting `False` for every
+existing and future row.
+
+**4. `replace_provisional_release_timing` extended, not replaced**
+(`confidence: ReleaseTimingConfidence` parameter added; `verified_
+released_at`/`verified_effective_at` renamed to `released_at`/
+`effective_at` since they are no longer necessarily "verified"). The
+atomic UPDATE's WHERE predicate now requires BOTH `released_at_is_
+verified = false` AND `released_at_is_conservative_bound = false` --
+a still-fully-provisional row -- before either outcome can be written;
+a row already classified either way is protected from a second write,
+confirmed for both outcomes by dedicated tests (see below) and by
+regression-proof discipline (the conservative-bound predicate clause
+was deliberately dropped, confirmed the new symmetric test failed by
+silently overwriting an already-conservative row, then restored).
+`list_all_for_series` (new port method) enumerates every stored
+vintage for a series -- an administrative/batch read, deliberately NOT
+point-in-time filtered, that the new use case needs and no existing
+method provided.
+
+**5. `VerifyPolicyRateReleaseTiming`
+(`application.use_cases.verify_policy_rate_release_timing`, new)** --
+the first real caller of `replace_provisional_release_timing`. For
+each stored change point: resolves via the registry; if unresolved,
+reports it and leaves the row untouched; if resolved and the row is
+still fully provisional, replaces through the repository; if resolved
+and the row is ALREADY classified, compares against what the registry
+resolves to NOW -- identical timing is reported as a no-op
+(`newly_applied=False`, not an error, satisfying the story's
+idempotency requirement), a genuine mismatch is reported as
+`CONFLICTING` and left untouched (this can only arise if the registry
+itself changes between runs). `scripts/verify_policy_rate_release_
+timing.py` runs this for USD/EUR/GBP/CAD against real Postgres and
+writes `research_results/fx44/policy_rate_release_verification.json`.
+
+**6. `domain.research_readiness` (new)** -- FX-44 section 8's critical
+invariant as code: `require_research_ready_interval` raises
+`ResearchIntervalNotReadyError` if ANY vintage in the caller's
+selected `[start, end)` interval is neither `released_at_is_verified`
+nor `released_at_is_conservative_bound` -- a single provisional
+observation fails the WHOLE interval, no partial pass, no percentage
+threshold. This is the mandatory pre-flight check a future FX-45 must
+call before running against any selected interval.
+
+**7. Provider-mapping promotion: deliberately NOT touched.** No
+`ProviderSeriesMapping.point_in_time_safety`/`verified` field is
+flipped for any currency -- every currency still has unresolved
+change points across its full stored history, and FX-44 section 7 is
+explicit that promotion requires the ENTIRE research interval to
+qualify, not merely some observations within it. Interval-specific
+safety is represented explicitly instead: the JSON report's
+`provider_mapping_promotion` block states this reasoning directly and
+machine-readably, and a future research use case is expected to call
+`require_research_ready_interval` against its own specific selected
+interval rather than rely on a blanket mapping-level flag.
+
+**Live run against real Postgres** (258 existing change points, all
+from FX-43's real backfill): USD 30 exact / 54 conservative / 8
+unresolved; EUR 44 exact / 0 conservative / 18 unresolved; GBP 65
+exact / 0 conservative / 6 unresolved; CAD 0 exact / 30 conservative /
+3 unresolved. Zero conflicts. A second run reproduced identical
+figures with 0 newly-classified (full idempotency confirmed live, not
+just in tests). Spot-checked directly via SQL: the EUR 2022-07-27 row
+now reads `released_at=2022-07-21T12:15:00Z`,
+`effective_at=2022-07-27T00:00:00Z` (announcement strictly before
+effective, both correctly converted for DST -- CEST in July);
+known-irregular USD 2008-01-22 remains fully untouched
+(`released_at_is_verified=false`, `released_at_is_conservative_bound=
+false`, original proxy `released_at` unchanged).
+
+**Regression-proof discipline applied to every new safety-relevant
+mechanism**, each deliberately broken, confirmed to fail its dedicated
+test for the right reason, then restored: the domain-default fail-
+closed test (new field), the DST-sensitive UTC conversion (both
+`ReleaseTimingRule.resolve()` tests failed correctly when DST handling
+was stubbed out to a bare UTC reinterpretation), the research-
+readiness fail-closed gate (all three relevant tests failed correctly
+when the offender-detection list was hardcoded empty), the new
+conservative-bound atomic-UPDATE predicate (the new symmetric
+already-conservative test failed correctly, and specifically by
+silently succeeding at an overwrite it should have refused), and the
+use case's idempotency match-check (both the unit and integration
+rerun tests failed correctly, reporting `CONFLICTING` instead of a
+clean no-op, when the match check was stubbed to always report a
+mismatch).
+
+**Tests**: `test_release_timing_rule.py` (exact intraday UTC
+conversion, DST sensitivity for two different institutions/timezones,
+validity-window half-open semantics, validation); `test_policy_rate_
+release_timing_registry.py` (per-currency exact/conservative/
+unresolved cases, the EUR announcement-before-effective-date case, JPY
+and unsupported currencies raise); `test_macro_observation_vintage.py`
+(new field default/explicit/type-validation, extending FX-43H.1's
+pattern); `test_research_readiness.py` (all-safe passes, mixed range
+rejected, a single provisional observation fails closed even alone,
+provisional vintages OUTSIDE the interval don't block it, the
+half-open interval boundary); `test_verify_policy_rate_release_
+timing.py` (unit, fake-repository-based, and integration, live-
+Postgres-based, covering: newly-exact classification, newly-
+conservative classification, unresolved stays provisional, rerun
+idempotency, the EUR announcement-before-effective case end-to-end
+through the repository, mixed-outcome report aggregation, and a
+future timestamp never visible before its corrected release time);
+two new symmetric `replace_provisional_release_timing` tests (fake and
+integration) proving an already-CONSERVATIVE row is protected from
+overwriting, not just an already-VERIFIED one.
+
+**Verification**: `pytest` (1023 passed, full suite, up from 967),
+`ruff`, `ruff format`, `mypy --strict`, `pre-commit run --all-files`.
+Live-verified against real Postgres as described above, including a
+second idempotent run.
+
+Per this story's own explicit stop instruction: no pair-rate
+differential, no carry strategy, no technical-signal filtering, no
+performance research, no JPY provider ingestion, no COT, no
+macro-event surprises, no news, no decision logic follows this story
+-- and the differential experiment (FX-45) does not start
+automatically.

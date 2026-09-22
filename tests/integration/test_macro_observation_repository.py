@@ -22,6 +22,7 @@ from forex_agent.application.ports.macro_observation_repository import (
     VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
+from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.macro_observation_repository import (
     SqlAlchemyMacroObservationRepository,
@@ -466,7 +467,12 @@ async def test_replace_provisional_release_timing_corrects_in_place(
     verified_released_at = _ts(2024, 5, 30)
     verified_effective_at = period
     await repo.replace_provisional_release_timing(
-        TEST_SERIES_KEY, period, 0, verified_released_at, verified_effective_at
+        TEST_SERIES_KEY,
+        period,
+        0,
+        verified_released_at,
+        verified_effective_at,
+        ReleaseTimingConfidence.EXACT,
     )
 
     corrected = await repo.observation_as_known_at(TEST_SERIES_KEY, period, verified_released_at)
@@ -474,6 +480,7 @@ async def test_replace_provisional_release_timing_corrects_in_place(
     assert corrected.released_at == verified_released_at
     assert corrected.effective_at == verified_effective_at
     assert corrected.released_at_is_verified is True
+    assert corrected.released_at_is_conservative_bound is False
     assert corrected.value == Decimal("2.1")
     assert corrected.revision_sequence == 0
 
@@ -504,7 +511,12 @@ async def test_replace_provisional_release_timing_rejects_missing_identity(
 
     with pytest.raises(ValueError, match="no vintage exists"):
         await repo.replace_provisional_release_timing(
-            TEST_SERIES_KEY, _ts(2024, 6, 1), 0, _ts(2024, 6, 1), None
+            TEST_SERIES_KEY,
+            _ts(2024, 6, 1),
+            0,
+            _ts(2024, 6, 1),
+            None,
+            ReleaseTimingConfidence.EXACT,
         )
 
 
@@ -527,12 +539,45 @@ async def test_replace_provisional_release_timing_rejects_already_verified_row(
 
     with pytest.raises(ValueError, match="already released_at_is_verified=True"):
         await repo.replace_provisional_release_timing(
-            TEST_SERIES_KEY, period, 0, _ts(2024, 6, 15), None
+            TEST_SERIES_KEY, period, 0, _ts(2024, 6, 15), None, ReleaseTimingConfidence.EXACT
         )
 
     result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 1))
     assert result is not None
     assert result.released_at == _ts(2024, 7, 1)
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_already_conservative_row(
+    session: AsyncSession,
+) -> None:
+    # FX-44: the symmetric fail-closed guarantee for the OTHER outcome
+    # flag -- a conservative-safe-bound row must never be silently
+    # rewritten either, not just an exact-verified one. Exercises the
+    # real atomic UPDATE's `released_at_is_conservative_bound = false`
+    # predicate specifically.
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    already_conservative = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_conservative_bound=True,
+    )
+    await repo.add_vintage(already_conservative)
+
+    with pytest.raises(ValueError, match="already released_at_is_conservative_bound=True"):
+        await repo.replace_provisional_release_timing(
+            TEST_SERIES_KEY, period, 0, _ts(2024, 6, 15), None, ReleaseTimingConfidence.EXACT
+        )
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2024, 7, 1))
+    assert result is not None
+    assert result.released_at == _ts(2024, 7, 1)
+    assert result.released_at_is_conservative_bound is True
 
 
 @pytest.mark.asyncio
@@ -572,7 +617,12 @@ async def test_concurrent_replace_provisional_release_timing_only_one_wins(
             race_repo = SqlAlchemyMacroObservationRepository(race_session)
             try:
                 await race_repo.replace_provisional_release_timing(
-                    TEST_SERIES_KEY, period, 0, candidate_released_at, None
+                    TEST_SERIES_KEY,
+                    period,
+                    0,
+                    candidate_released_at,
+                    None,
+                    ReleaseTimingConfidence.EXACT,
                 )
             except ValueError as exc:
                 return str(exc)

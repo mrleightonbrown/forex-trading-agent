@@ -92,6 +92,25 @@ class MacroObservationVintage:
             `released_at_is_verified` correction) -- see
             `MacroObservationRepository.
             replace_provisional_release_timing`.
+        released_at_is_conservative_bound: whether `released_at` is a
+            DELIBERATELY conservative bound -- not the exact confirmed
+            announcement moment, but a timestamp researched and chosen
+            to be guaranteed no earlier than the true (unknown-exact)
+            release (FX-44 section 3). Defaults to `False`. Mutually
+            exclusive in PRACTICE with `released_at_is_verified` (a
+            timestamp is either exactly confirmed, or a safe stand-in
+            for an unconfirmed one, never claimed as both), though
+            nothing in this type enforces that -- the fail-closed
+            atomic-UPDATE predicate in `replace_provisional_release_
+            timing` is what actually prevents a row from being written
+            through both paths. Exists specifically so a genuinely
+            conservative, research-safe timestamp is never confused
+            with an exact one: `released_at_is_verified=True` must
+            never be used to mean "we guessed a safely late time" --
+            see `domain.research_readiness.is_research_safe`, which
+            treats EITHER flag as sufficient for point-in-time research
+            use, while keeping the two provenance claims distinct in
+            storage and in every report.
     """
 
     series_key: str
@@ -102,6 +121,7 @@ class MacroObservationVintage:
     source: str
     effective_at: UtcTimestamp | None = None
     released_at_is_verified: bool = False
+    released_at_is_conservative_bound: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.series_key, str) or not self.series_key.strip():
@@ -135,4 +155,9 @@ class MacroObservationVintage:
             raise TypeError(
                 "released_at_is_verified must be a bool, "
                 f"got {type(self.released_at_is_verified).__name__}"
+            )
+        if not isinstance(self.released_at_is_conservative_bound, bool):
+            raise TypeError(
+                "released_at_is_conservative_bound must be a bool, "
+                f"got {type(self.released_at_is_conservative_bound).__name__}"
             )

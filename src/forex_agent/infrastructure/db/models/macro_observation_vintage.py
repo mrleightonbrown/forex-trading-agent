@@ -63,9 +63,19 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # proxy (e.g. FX-43's backfill, which uses an effective-date proxy
     # for released_at); True means released_at/effective_at are confirmed
     # timestamps, and must be set explicitly by a caller that actually
-    # has them. The ONE column a narrowly-scoped, atomic UPDATE is ever
-    # issued against -- see
+    # has them. One of two columns a narrowly-scoped, atomic UPDATE is
+    # ever issued against -- see
     # SqlAlchemyMacroObservationRepository.replace_provisional_release_timing.
     released_at_is_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    # FX-44: the other, narrower alternative outcome of that same atomic
+    # UPDATE -- True marks released_at as a deliberately conservative,
+    # research-safe bound (not the exact confirmed moment) rather than
+    # an exact verified timestamp. Never both this and released_at_is_
+    # verified True at once in practice (see the domain field's own
+    # docstring); defaults False (provisional, same as released_at_is_
+    # verified) so an unclassified row makes no timing claim at all.
+    released_at_is_conservative_bound: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )

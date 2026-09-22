@@ -20,6 +20,7 @@ from forex_agent.application.ports.macro_observation_repository import (
     VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
+from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 from tests.fakes.macro_observation_repository import FakeMacroObservationRepository
 
@@ -442,7 +443,12 @@ async def test_replace_provisional_release_timing_corrects_in_place() -> None:
     verified_released_at = _ts(2024, 5, 30)  # the real announcement preceded the proxy date
     verified_effective_at = period
     await fake.replace_provisional_release_timing(
-        SERIES_KEY, period, 0, verified_released_at, verified_effective_at
+        SERIES_KEY,
+        period,
+        0,
+        verified_released_at,
+        verified_effective_at,
+        ReleaseTimingConfidence.EXACT,
     )
 
     corrected = await fake.observation_as_known_at(SERIES_KEY, period, verified_released_at)
@@ -450,6 +456,7 @@ async def test_replace_provisional_release_timing_corrects_in_place() -> None:
     assert corrected.released_at == verified_released_at
     assert corrected.effective_at == verified_effective_at
     assert corrected.released_at_is_verified is True
+    assert corrected.released_at_is_conservative_bound is False
     assert corrected.value == Decimal("2.1")  # the economic value never changed
     assert corrected.revision_sequence == 0  # never treated as a revision
 
@@ -474,7 +481,9 @@ async def test_replace_provisional_release_timing_leaves_no_second_visible_row()
     await fake.add_vintage(provisional)
 
     verified_released_at = _ts(2024, 6, 15)  # earlier than the proxy
-    await fake.replace_provisional_release_timing(SERIES_KEY, period, 0, verified_released_at, None)
+    await fake.replace_provisional_release_timing(
+        SERIES_KEY, period, 0, verified_released_at, None, ReleaseTimingConfidence.EXACT
+    )
 
     # A query at the OLD proxy's released_at must now see the CORRECTED
     # timestamp reasoning, not a stale second row -- there is only ever
@@ -491,7 +500,7 @@ async def test_replace_provisional_release_timing_rejects_missing_identity() -> 
 
     with pytest.raises(ValueError, match="no vintage exists"):
         await fake.replace_provisional_release_timing(
-            SERIES_KEY, _ts(2024, 6, 1), 0, _ts(2024, 6, 1), None
+            SERIES_KEY, _ts(2024, 6, 1), 0, _ts(2024, 6, 1), None, ReleaseTimingConfidence.EXACT
         )
 
 
@@ -513,7 +522,33 @@ async def test_replace_provisional_release_timing_rejects_already_verified_row()
     await fake.add_vintage(already_verified)
 
     with pytest.raises(ValueError, match="already released_at_is_verified=True"):
-        await fake.replace_provisional_release_timing(SERIES_KEY, period, 0, _ts(2024, 6, 15), None)
+        await fake.replace_provisional_release_timing(
+            SERIES_KEY, period, 0, _ts(2024, 6, 15), None, ReleaseTimingConfidence.EXACT
+        )
+
+
+@pytest.mark.asyncio
+async def test_replace_provisional_release_timing_rejects_already_conservative_row() -> None:
+    # FX-44: the symmetric fail-closed guarantee for the OTHER outcome
+    # flag -- a conservative-safe-bound row must never be silently
+    # rewritten either, not just an exact-verified one.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2024, 6, 1)
+    already_conservative = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("2.1"),
+        released_at=_ts(2024, 7, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_conservative_bound=True,
+    )
+    await fake.add_vintage(already_conservative)
+
+    with pytest.raises(ValueError, match="already released_at_is_conservative_bound=True"):
+        await fake.replace_provisional_release_timing(
+            SERIES_KEY, period, 0, _ts(2024, 6, 15), None, ReleaseTimingConfidence.EXACT
+        )
 
     # Untouched.
     result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2024, 7, 1))

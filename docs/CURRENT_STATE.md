@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-22 (FX-43H.1)_
+_Last updated: 2026-09-22 (FX-44)_
 
 ## What exists
 
@@ -619,6 +619,63 @@ _Last updated: 2026-09-22 (FX-43H.1)_
   failed with both racing attempts reporting success), then restored.
   967 tests pass (full suite, up from 962). Full details in
   `docs/DECISIONS.md`'s FX-43H.1 entry.
+- **FX-44: point-in-time policy-rate release verification (complete)**.
+  The first real use of FX-43H/FX-43H.1's replacement mechanism —
+  cited, researched release-timing rules applied to USD/EUR/GBP/CAD's
+  258 real change points (JPY stays out of scope). New
+  `domain.release_timing_rule.ReleaseTimingRule` (institution, local
+  time-of-day, IANA timezone, validity window, citation, and a
+  `ReleaseTimingConfidence` of `EXACT` or `CONSERVATIVE_SAFE_BOUND` —
+  a deliberately late, safe-but-inexact bound, used only where the
+  exact minute isn't confidently citable) converts a local date to an
+  exact UTC instant via `zoneinfo` (correct historical DST offset per
+  date, zero hand-coded transition dates). New
+  `domain.policy_rate_release_timing_registry` applies these rules
+  currency-by-currency, ONLY to change points confirmed to be regular
+  scheduled decisions — known irregular/inter-meeting/emergency dates
+  and under-researched eras are explicitly left `UnresolvedTiming`,
+  never guessed. EUR's registry entry models a genuine, documented
+  announcement-before-effective-date split (confirmed computationally:
+  every relevant stored EUR date is a Wednesday, matching the ECB's
+  own "first operation following the decision" methodology) —
+  `released_at` moves to the earlier Thursday decision date/time,
+  `effective_at` keeps the later, original stored date. New
+  `MacroObservationVintage.released_at_is_conservative_bound: bool =
+  False` field (migration `aee1fa641be6`) keeps the conservative
+  outcome structurally distinct from `released_at_is_verified=True` —
+  never overloaded to mean "we guessed a safely late time".
+  `replace_provisional_release_timing`'s atomic UPDATE predicate now
+  requires BOTH outcome flags `False` before either can be written,
+  and takes a `confidence` parameter deciding which one gets set. New
+  `application.use_cases.verify_policy_rate_release_timing.
+  VerifyPolicyRateReleaseTiming` — the first real caller of `replace_
+  provisional_release_timing` — resolves each stored change point via
+  the registry, replaces a still-provisional row, leaves an unresolved
+  one untouched, and for an ALREADY-classified row compares against
+  what the registry resolves to now (identical timing → no-op,
+  mismatch → explicit `CONFLICTING`, never silently overwritten);
+  idempotent by construction. New `domain.research_readiness.
+  require_research_ready_interval` — FX-44's critical invariant as
+  code and the mandatory FX-45 pre-flight check — fails closed if ANY
+  vintage in a selected interval is neither verified nor
+  conservative-bound safe; a single provisional observation fails the
+  whole interval. No `ProviderSeriesMapping` is promoted to
+  `POINT_IN_TIME_SAFE` for any currency (none has zero unresolved
+  change points across its full history); interval-specific safety is
+  represented explicitly instead, in `research_results/fx44/
+  policy_rate_release_verification.json`
+  (`scripts/verify_policy_rate_release_timing.py`). Live run against
+  real Postgres: USD 30 exact/54 conservative/8 unresolved (of 92);
+  EUR 44/0/18 (of 62); GBP 65/0/6 (of 71); CAD 0/30/3 (of 33); zero
+  conflicts; a second run reproduced identical figures with zero
+  newly-classified (idempotency confirmed live). Regression-proof
+  discipline applied to every new safety-relevant mechanism (domain
+  default, DST-sensitive UTC conversion, research-readiness fail-
+  closed gate, the new conservative-bound atomic-UPDATE predicate, and
+  the use case's idempotency match-check) — each deliberately broken,
+  confirmed to fail its dedicated test for the right reason, then
+  restored. 1023 tests pass (full suite, up from 967). Full details in
+  `docs/DECISIONS.md`'s FX-44 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

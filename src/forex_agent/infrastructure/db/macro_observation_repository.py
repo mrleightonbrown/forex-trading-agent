@@ -1,5 +1,5 @@
 """SQLAlchemy implementation of `MacroObservationRepository` (FX-41;
-hardened FX-41H, FX-43H).
+hardened FX-41H, FX-43H, FX-43H.1, FX-44).
 
 Enforces the point-in-time invariant ("a query at T cannot return a
 vintage whose released_at is after T") entirely through the `WHERE
@@ -20,6 +20,7 @@ from forex_agent.application.ports.macro_observation_repository import (
     VintageWriteOutcome,
 )
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
+from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.macro_observation_vintage import (
     MacroObservationVintageRow,
@@ -69,23 +70,26 @@ class SqlAlchemyMacroObservationRepository:
         series_key: str,
         observation_period: UtcTimestamp,
         revision_sequence: int,
-        verified_released_at: UtcTimestamp,
-        verified_effective_at: UtcTimestamp | None,
+        released_at: UtcTimestamp,
+        effective_at: UtcTimestamp | None,
+        confidence: ReleaseTimingConfidence,
     ) -> None:
         # The ONE UPDATE in this class -- see the class docstring and the
         # port's own docstring for why this is safe: value/revision_sequence
-        # are never touched. FX-43H.1: this is a single atomic conditional
-        # UPDATE, not a SELECT-then-UPDATE -- `released_at_is_verified =
-        # false` is part of the UPDATE's own WHERE clause, so the
-        # provisional-row check and the write happen in one statement, and
-        # `RETURNING id` is how we learn whether it actually applied.
+        # are never touched. FX-43H.1/FX-44: this is a single atomic
+        # conditional UPDATE, not a SELECT-then-UPDATE -- both outcome flags
+        # being False is part of the UPDATE's own WHERE clause, so the
+        # still-fully-provisional check and the write happen in one
+        # statement, and `RETURNING id` is how we learn whether it actually
+        # applied.
         #
         # Under Postgres's default READ COMMITTED isolation this is race-
         # safe: if two sessions race this same UPDATE against the same
         # identity, the second to reach the row blocks on the first's row
         # lock, then -- once the first commits -- re-evaluates its own
-        # WHERE clause against the now-committed (already verified) row and
-        # correctly matches zero rows, rather than blindly overwriting.
+        # WHERE clause against the now-committed (already classified) row
+        # and correctly matches zero rows, rather than blindly overwriting.
+        is_exact = confidence is ReleaseTimingConfidence.EXACT
         stmt = (
             update(MacroObservationVintageRow)
             .where(
@@ -93,13 +97,13 @@ class SqlAlchemyMacroObservationRepository:
                 MacroObservationVintageRow.observation_period == observation_period.value,
                 MacroObservationVintageRow.revision_sequence == revision_sequence,
                 MacroObservationVintageRow.released_at_is_verified.is_(False),
+                MacroObservationVintageRow.released_at_is_conservative_bound.is_(False),
             )
             .values(
-                released_at=verified_released_at.value,
-                effective_at=(
-                    None if verified_effective_at is None else verified_effective_at.value
-                ),
-                released_at_is_verified=True,
+                released_at=released_at.value,
+                effective_at=(None if effective_at is None else effective_at.value),
+                released_at_is_verified=is_exact,
+                released_at_is_conservative_bound=not is_exact,
             )
             .returning(MacroObservationVintageRow.id)
         )
@@ -111,21 +115,34 @@ class SqlAlchemyMacroObservationRepository:
         # The UPDATE above matched zero rows -- it, not this lookup,
         # already decided nothing was written. Everything from here down is
         # diagnostic only: it exists solely to tell "identity doesn't
-        # exist" apart from "identity exists but is already verified" in
+        # exist" apart from "identity exists but is already classified" in
         # the raised error, and cannot itself cause (or prevent) a write.
         # `_select_one` itself raises the missing-identity error if the row
         # doesn't exist at all; reaching the line below means it exists and
-        # -- since the UPDATE's own WHERE already ruled out False -- is
-        # already verified.
-        await self._select_one(series_key, observation_period, revision_sequence)
+        # -- since the UPDATE's own WHERE already ruled out both flags
+        # False -- already has one of the two outcome flags set.
+        existing_row = await self._select_one(series_key, observation_period, revision_sequence)
         await self._session.commit()
+        existing_classification = (
+            "released_at_is_verified=True"
+            if existing_row.released_at_is_verified
+            else "released_at_is_conservative_bound=True"
+        )
         raise ValueError(
             f"vintage identity (series_key={series_key!r}, "
             f"observation_period={observation_period.value.isoformat()!r}, "
             f"revision_sequence={revision_sequence}) is already "
-            "released_at_is_verified=True -- refusing to replace an already-verified "
+            f"{existing_classification} -- refusing to replace an already-classified "
             "release timing"
         )
+
+    async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
+        stmt = select(MacroObservationVintageRow).where(
+            MacroObservationVintageRow.series_key == series_key
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()  # read-only -- closes out the transaction
+        return tuple(_to_domain(row) for row in rows)
 
     async def _select_one(
         self, series_key: str, observation_period: UtcTimestamp, revision_sequence: int
@@ -194,6 +211,7 @@ def _to_domain(row: MacroObservationVintageRow) -> MacroObservationVintage:
         source=row.source,
         effective_at=None if row.effective_at is None else UtcTimestamp(row.effective_at),
         released_at_is_verified=row.released_at_is_verified,
+        released_at_is_conservative_bound=row.released_at_is_conservative_bound,
     )
 
 
@@ -207,4 +225,5 @@ def _row_values(vintage: MacroObservationVintage) -> dict[str, object]:
         "revision_sequence": vintage.revision_sequence,
         "source": vintage.source,
         "released_at_is_verified": vintage.released_at_is_verified,
+        "released_at_is_conservative_bound": vintage.released_at_is_conservative_bound,
     }

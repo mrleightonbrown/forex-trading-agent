@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Protocol
 
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
+from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
@@ -113,56 +114,84 @@ class MacroObservationRepository(Protocol):
         series_key: str,
         observation_period: UtcTimestamp,
         revision_sequence: int,
-        verified_released_at: UtcTimestamp,
-        verified_effective_at: UtcTimestamp | None,
+        released_at: UtcTimestamp,
+        effective_at: UtcTimestamp | None,
+        confidence: ReleaseTimingConfidence,
     ) -> None:
         """Corrects an existing PROVISIONAL vintage's `released_at`/
-        `effective_at` in place, marking it `released_at_is_verified=
-        True` -- WITHOUT touching its `value` or `revision_sequence`
-        (FX-43H).
+        `effective_at` in place -- WITHOUT touching its `value` or
+        `revision_sequence` (FX-43H).
 
-        Atomic (FX-43H.1): an implementation must perform this as a
-        single atomic conditional write whose predicate includes
-        `released_at_is_verified = false` -- the provisional-row check
-        and the write are one operation, not a separate read followed
-        by an unconditional write. Two concurrent callers racing this
-        method against the same identity must never both succeed: at
-        most one write applies, and every other caller observes the
-        already-verified failure below. `SqlAlchemyMacroObservationRepository`
-        implements this via `UPDATE ... WHERE released_at_is_verified =
-        false ... RETURNING id`, relying on the database to serialize
-        concurrent attempts against the same row.
+        `confidence` (FX-44) determines which of the two mutually-
+        exclusive-in-practice outcome flags gets set:
+          - `ReleaseTimingConfidence.EXACT` sets `released_at_is_
+            verified=True`;
+          - `ReleaseTimingConfidence.CONSERVATIVE_SAFE_BOUND` sets
+            `released_at_is_conservative_bound=True` instead --
+            `released_at_is_verified` is NEVER set True for this case.
+            FX-44 section 3 is explicit: "do not overload released_at_
+            is_verified=True to mean we guessed a safely late time."
+
+        Atomic (FX-43H.1, extended FX-44): an implementation must
+        perform this as a single atomic conditional write whose
+        predicate includes BOTH `released_at_is_verified = false` AND
+        `released_at_is_conservative_bound = false` -- the
+        still-fully-provisional check and the write are one operation,
+        not a separate read followed by an unconditional write. Two
+        concurrent callers racing this method against the same
+        identity must never both succeed: at most one write applies,
+        and every other caller observes the already-classified failure
+        below. `SqlAlchemyMacroObservationRepository` implements this
+        via `UPDATE ... WHERE released_at_is_verified = false AND
+        released_at_is_conservative_bound = false ... RETURNING id`,
+        relying on the database to serialize concurrent attempts
+        against the same row.
 
         This is the explicit, safe replacement path FX-43's effective-
-        date-proxy rows (`released_at_is_verified=False`) are meant to
-        go through once a future story establishes genuine announcement
-        timestamps for them. It exists specifically so that correction
-        does NOT require either of two wrong alternatives: (a)
-        representing the correction as a new revision -- `revision_
-        sequence` is reserved for genuine ECONOMIC VALUE changes, and a
-        timestamp-precision correction is not one; or (b) inserting a
-        second vintage at the same identity, which the unique
-        constraint already forbids and which would in any case leave
-        the old provisional `released_at` sitting in storage where a
-        historical as-of query could still return it before the
-        correction takes effect.
+        date-proxy rows (`released_at_is_verified=False`,
+        `released_at_is_conservative_bound=False`) are meant to go
+        through once genuine release-timing evidence -- exact or
+        conservative -- has been established for them (FX-44). It
+        exists specifically so that correction does NOT require either
+        of two wrong alternatives: (a) representing the correction as a
+        new revision -- `revision_sequence` is reserved for genuine
+        ECONOMIC VALUE changes, and a timestamp-precision correction is
+        not one; or (b) inserting a second vintage at the same
+        identity, which the unique constraint already forbids and which
+        would in any case leave the old provisional `released_at`
+        sitting in storage where a historical as-of query could still
+        return it before the correction takes effect.
 
         Fails closed:
           - raises `ValueError` if no vintage exists at this identity;
-          - raises `ValueError` if the existing vintage is already
-            `released_at_is_verified=True` -- only a still-provisional
+          - raises `ValueError` if the existing vintage already has
+            EITHER outcome flag set -- only a still-fully-provisional
             row may be replaced this way, precisely so a caller cannot
-            use this method to silently rewrite an already-verified
-            timestamp;
+            use this method to silently rewrite an already-classified
+            timestamp (exact OR conservative);
           - callers must not pass a different `value` here -- this
             method has no `value` parameter at all, structurally
             preventing that. A genuine value correction must go through
             `add_vintage` as a new revision instead.
 
-        No caller of this method exists yet -- FX-43H's job is to make
-        this replacement possible and safe, not to perform it; no
-        verified announcement timestamp exists yet to replace anything
-        with (`docs/DECISIONS.md`'s FX-43H entry).
+        `VerifyPolicyRateReleaseTiming` (FX-44) is this method's first
+        real caller -- see `docs/DECISIONS.md`'s FX-44 entry.
+        """
+        ...
+
+    async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
+        """Every stored vintage for `series_key`, in no particular
+        guaranteed order (FX-44).
+
+        Deliberately NOT point-in-time filtered -- unlike `latest_
+        available_as_of`/`observation_as_known_at`, this is an
+        administrative/batch read for a verification or reporting
+        process that needs to examine every vintage's OWN `released_at_
+        is_verified`/`released_at_is_conservative_bound` state, not a
+        query answering "what did the market know as of instant X."
+        `VerifyPolicyRateReleaseTiming` uses this to enumerate the
+        change points FX-43 backfilled so it can attempt to resolve
+        each one's timing.
         """
         ...
 

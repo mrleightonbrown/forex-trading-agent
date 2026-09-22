@@ -295,6 +295,84 @@ Two remaining gaps in FX-43H's own `released_at_is_verified`/
    verified" for the error message; it never decides whether a write
    happens.
 
+## Point-in-time policy-rate release verification (FX-44)
+
+The first real use of FX-43H/FX-43H.1's replacement mechanism: cited,
+researched release-timing rules applied to USD/EUR/GBP/CAD's real
+change points (see `docs/DECISIONS.md`'s FX-44 entry for the full
+per-currency research). JPY stays out of scope.
+
+`domain.release_timing_rule.ReleaseTimingRule` is a pure, cited data
+type -- institution, local time-of-day, IANA timezone, validity
+window, citation -- with a `ReleaseTimingConfidence`:
+
+- `EXACT`: a specific, documented institutional convention. Produces a
+  genuinely defensible timestamp; safe to claim `released_at_is_
+  verified=True`.
+- `CONSERVATIVE_SAFE_BOUND`: the exact minute is not confidently
+  citable, but a same-day/business-hours convention is confirmed, so a
+  deliberately LATE bound (e.g. end of the announcement day, local
+  time) is used instead -- guaranteed no earlier than the true
+  release, and therefore safe for point-in-time research, but never
+  claimed as the exact moment.
+
+`ReleaseTimingRule.resolve()` uses `zoneinfo` (the stdlib's own
+historical IANA timezone database) to convert a local date into an
+exact UTC instant with the correct historical DST offset for that
+specific date -- this module hand-codes zero DST transition dates
+itself, and a rule expressed once therefore converts correctly across
+every year it covers.
+
+`domain.policy_rate_release_timing_registry.resolve_release_timing`
+is the per-currency dispatch: it applies the researched rules ONLY to
+change points confirmed to be regular, scheduled decisions, and
+returns an explicit `UnresolvedTiming` (with a reason) for every known
+irregular/inter-meeting/emergency date or under-researched era, rather
+than ever inferring an exact timestamp merely from the daily rate
+series. EUR is the one currency with a genuine, documented
+announcement-before-effective-date split: its stored proxy date is the
+EFFECTIVE date (confirmed computationally -- every relevant stored
+date is a Wednesday, matching the ECB's own published "first
+operation following the decision" methodology), so `released_at` is
+set to the earlier Thursday decision date/time while `effective_at`
+keeps the later, original stored date.
+
+`MacroObservationVintage.released_at_is_conservative_bound: bool =
+False` (new field, migration `aee1fa641be6`) is the conservative
+counterpart to `released_at_is_verified` -- FX-44 is explicit that
+`released_at_is_verified=True` must never be overloaded to mean "we
+guessed a safely late time." `replace_provisional_release_timing`'s
+atomic UPDATE predicate was extended to require BOTH outcome flags
+`False` (a still-fully-provisional row) before either can be written,
+and it now takes a `confidence: ReleaseTimingConfidence` parameter
+deciding which flag gets set.
+
+`application.use_cases.verify_policy_rate_release_timing.
+VerifyPolicyRateReleaseTiming` is the first real caller of `replace_
+provisional_release_timing`: for each of a currency's stored change
+points, it resolves via the registry and either replaces a still-
+provisional row, leaves an unresolved one untouched, or -- for a row
+ALREADY classified -- compares against what the registry resolves to
+NOW and reports a clean no-op (identical timing) or an explicit
+`CONFLICTING` outcome (a mismatch) without ever overwriting. Idempotent
+by construction: re-running finds nothing left to write for anything
+it already classified.
+
+`domain.research_readiness.require_research_ready_interval` is FX-44's
+critical invariant as code, and the mandatory pre-flight check a
+future FX-45 must call: it raises if ANY vintage in the caller's
+selected interval is neither `released_at_is_verified` nor
+`released_at_is_conservative_bound` -- a single provisional observation
+fails the whole interval, no partial pass.
+
+No `ProviderSeriesMapping.point_in_time_safety`/`verified` field is
+promoted for any currency -- every currency still has unresolved
+change points across its full stored history, and promotion requires
+the entire research interval to qualify, not merely some observations
+within it. `research_results/fx44/policy_rate_release_verification.
+json` (written by `scripts/verify_policy_rate_release_timing.py`)
+represents interval-specific safety explicitly instead, per currency.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
