@@ -149,12 +149,72 @@ this period" rather than fabricating a value — see JPY's two declared
 gaps (2001-2006 Quantitative Easing, 2013-2016 Quantitative and
 Qualitative Easing) in `policy_rate_registry.py`.
 
-This story is intentionally narrow: it defines semantics and provider
-mappings only. No rate history is downloaded, no pair differential is
-computed, no carry strategy exists, and every `ProviderSeriesMapping` in
-the registry is `verified=False` — see the module's own docstring and
-`docs/DECISIONS.md` for what FX-43 (ingestion) still needs to confirm
-before any of this data reaches a `MacroObservationRepository`.
+FX-42/FX-42H/FX-42H.1 were intentionally narrow: semantics and provider
+mappings only, no rate history downloaded. FX-43 (below) is the ingestion
+story that changed that.
+
+## Policy-rate history backfill (FX-43)
+
+`application/use_cases/backfill_policy_rate_history.py`
+(`BackfillPolicyRateHistory`) is the first use case in this codebase that
+ingests real external fundamental data. It composes already-established
+machinery rather than inventing new architecture:
+
+```
+policy_rate_registry.definitions_for_currency(currency)
+        v
+PolicyRateHistoryProvider.fetch_daily_series(...)   (one per raw series)
+        v
+domain.policy_rate_change_extraction.extract_change_points(...)
+        v
+MacroObservationVintage(...) per genuine change point
+        v
+MacroObservationRepository.add_vintage(...)          (FX-41H idempotent)
+```
+
+`PolicyRateHistoryProvider` (`application/ports/
+policy_rate_history_provider.py`) is a minimal port: one provider-specific
+series ID and a date range in, raw `(date, Decimal)` pairs out — no
+canonicalization, no transformation, no `MacroObservationVintage`
+construction. Four concrete implementations
+(`infrastructure/policy_rate_providers/`) talk to FRED, the ECB Data
+Portal, the Bank of England database, and the Bank of Canada Valet API —
+all four confirmed live, no API key needed for any of them.
+
+`domain/policy_rate_change_extraction.py` (`extract_change_points`) is
+this story's anti-interpolation guarantee, kept as a pure, provider-
+independent function: a provider's raw daily series typically repeats the
+same value every day it stayed in effect (a step function published
+daily, not evidence of daily decision-making). This function reduces that
+down to genuine policy CHANGES only — one `MacroObservationVintage` per
+date the canonical value actually moved, never a fabricated one for a
+date it wasn't given (a date present in one input series but not another,
+needed only for `TARGET_RANGE_MIDPOINT`, is skipped and reported, never
+paired with a guessed value).
+
+Idempotent by construction: every vintage goes through
+`MacroObservationRepository.add_vintage`, whose FX-41H conflict handling
+already makes an exact-duplicate re-run a no-op — this story adds no new
+idempotency mechanism, it relies on the existing one. Confirmed live: the
+real backfill script was run twice against the real APIs and a real
+Postgres, with identical counts and zero conflicts both times.
+
+`released_at` for every ingested vintage is set to the date a provider's
+raw series shows a genuine value change — an EFFECTIVE-DATE proxy, not a
+verified announcement/publication timestamp. This is a known, explicitly
+documented limitation, not an oversight: no `ProviderSeriesMapping` is
+promoted to `PointInTimeSafety.POINT_IN_TIME_SAFE` as a result of this
+story, and `require_research_usable_mapping` continues to fail closed for
+every mapping in the registry — see `docs/DECISIONS.md`'s FX-43 entry for
+the full reasoning and what a future story establishing genuine
+announcement timestamps would need to do.
+
+`scripts/backfill_policy_rate_history.py` wires this together against a
+live Postgres and the four real providers, writing
+`reports/policy_rate_backfill_report.json` — the explicit, per-currency
+data-quality report this story requires (coverage actually achieved, not
+merely requested; skipped dates; conflicts; unconfigured/failed eras;
+known gaps).
 
 ## Current state
 

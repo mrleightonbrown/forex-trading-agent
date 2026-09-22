@@ -17,7 +17,10 @@ from forex_agent.domain.policy_rate_registry import (
     definitions_for_currency,
     validate_registry,
 )
-from forex_agent.domain.provider_series_mapping import ProviderSeriesMapping
+from forex_agent.domain.provider_series_mapping import (
+    ProviderSeriesMapping,
+    require_research_usable_mapping,
+)
 from forex_agent.domain.rate_transformation import RateTransformation, RateTransformationKind
 from forex_agent.domain.timestamps import UtcTimestamp
 
@@ -104,13 +107,43 @@ def test_every_definition_has_at_least_one_provider_mapping(currency: str) -> No
 
 @pytest.mark.parametrize("currency", sorted(REQUIRED_CURRENCIES))
 def test_no_mapping_in_the_registry_is_research_usable_yet(currency: str) -> None:
-    # FX-42H: do not mark any mapping POINT_IN_TIME_SAFE merely because
-    # the value series exists -- every mapping in this story's registry
-    # must still be unverified/unknown, fail closed by construction.
+    # FX-43: identifier verification (`verified`) is independent of
+    # point-in-time safety -- do not mark any mapping POINT_IN_TIME_SAFE
+    # merely because the value series exists and was confirmed live.
+    # point_in_time_safety must still be UNKNOWN for every mapping in
+    # every currency, fail closed by construction, regardless of
+    # `verified`.
     for definition in definitions_for_currency(currency):
         for mapping in definition.provider_mappings:
-            assert mapping.verified is False
             assert mapping.point_in_time_safety.value == "UNKNOWN"
+
+
+@pytest.mark.parametrize("currency", ["USD", "EUR", "GBP", "CAD"])
+def test_non_jpy_provider_mappings_are_verified_after_fx43(currency: str) -> None:
+    # FX-43 confirmed these four currencies' provider identifiers live.
+    for definition in definitions_for_currency(currency):
+        for mapping in definition.provider_mappings:
+            assert mapping.verified is True
+
+
+def test_jpy_provider_mappings_remain_unverified() -> None:
+    # JPY's provider mapping was explicitly not attempted in FX-43 --
+    # unchanged from FX-42H.1.
+    for definition in definitions_for_currency("JPY"):
+        for mapping in definition.provider_mappings:
+            assert mapping.verified is False
+
+
+@pytest.mark.parametrize("currency", sorted(REQUIRED_CURRENCIES))
+def test_no_mapping_is_research_usable_even_after_fx43_verification(currency: str) -> None:
+    # The fail-closed guarantee that matters most: verifying an
+    # identifier is not the same as establishing point-in-time safety.
+    # require_research_usable_mapping must still reject every mapping in
+    # the registry, including the ones FX-43 just verified.
+    for definition in definitions_for_currency(currency):
+        for mapping in definition.provider_mappings:
+            with pytest.raises(ValueError, match="not research-usable"):
+                require_research_usable_mapping(mapping)
 
 
 # ---------------------------------------------------------------------------

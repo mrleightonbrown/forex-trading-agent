@@ -1,17 +1,43 @@
 """Canonical, provider-independent policy-rate registry (FX-42; hardened
-FX-42H, FX-42H.1).
+FX-42H, FX-42H.1, FX-43).
 
 Defines semantics and provider mappings for the five currencies in the
-research universe (USD, EUR, GBP, JPY, CAD). Deliberately does not
-ingest, fetch, or store any actual rate history -- see each
-`PolicyRateDefinition`'s docstring and `docs/DECISIONS.md`'s FX-42/
-FX-42H/FX-42H.1 entries for what is and is not in scope.
+research universe (USD, EUR, GBP, JPY, CAD). This module itself still
+does not ingest, fetch, or store any actual rate history -- that is
+`application.use_cases.backfill_policy_rate_history` (FX-43) -- see
+each `PolicyRateDefinition`'s docstring and `docs/DECISIONS.md`'s
+FX-42/FX-42H/FX-42H.1/FX-43 entries for what is and is not in scope.
 
 Every date below is this story's good-faith research into each
-institution's operational history, not a value confirmed against a
-live provider -- see `ProviderSeriesMapping.verified` (always `False`
-here) and each definition's own `notes`. FX-43 must confirm dates and
-provider identifiers before relying on them for ingestion.
+institution's operational history, not necessarily a value confirmed
+against a live provider -- see each `ProviderSeriesMapping.verified`
+and definition's own `notes`. FX-43 (see its summary below) confirmed
+every non-JPY provider identifier live and marked those mappings
+`verified=True`; `point_in_time_safety` remains `UNKNOWN` for all of
+them regardless -- identifier correctness and point-in-time safety are
+independent questions (see `require_research_usable_mapping`).
+
+FX-43 summary (see `docs/DECISIONS.md`'s FX-43 entry for the full
+reasoning):
+  - USD (FRED), EUR (ECB Data Portal), and GBP (BoE database) provider
+    identifiers are all confirmed live and marked `verified=True`.
+    EUR's `MRR_RT` key is confirmed to track the ECB's headline MRO
+    rate continuously across its 2000-2008 variable-rate-tender
+    period, unlike `MRR_FR` ("fixed rate" only), which has no rows at
+    all during that period.
+  - CAD's `V39079` is confirmed correct but only covers 2009-04-21
+    onward -- materially later than this definition's 1999-02-01
+    valid_from. No earlier daily target-rate source was found via the
+    Bank of Canada Valet API after checking four candidate series;
+    this gap is documented, not backfilled or invented.
+  - JPY's provider mapping remains entirely unresolved, unchanged from
+    FX-42H.1 -- not attempted in FX-43.
+  - `released_at` for every backfilled vintage is set equal to the
+    date a provider's raw series shows a genuine value CHANGE (an
+    effective-date proxy), not a verified announcement/publication
+    timestamp -- establishing the latter is explicitly out of scope
+    for FX-43 and is the next review gate. No mapping is promoted to
+    `PointInTimeSafety.POINT_IN_TIME_SAFE` as a result of this story.
 
 FX-42H hardening summary (see `docs/DECISIONS.md`'s FX-42H entry for
 the full reasoning):
@@ -113,12 +139,17 @@ _USD_TARGET_POINT = PolicyRateDefinition(
         ProviderSeriesMapping(
             provider="FRED",
             provider_series_ids=("DFEDTAR",),
+            verified=True,
             notes=(
-                "FRED's discontinued daily federal funds target rate series "
-                "(single target point, pre-December-2008). Commonly cited "
-                "FRED series ID; exact availability/start date should be "
-                "confirmed against the live FRED API before FX-43 "
-                "ingestion."
+                "FX-43: confirmed live against FRED's public "
+                "`fredgraph.csv` endpoint (no API key) -- the series "
+                "exists, covers 1954-07-01 through the present, and "
+                "returns Decimal-parseable daily values with a `.` "
+                "marker for genuinely missing observations. `verified` "
+                "covers the IDENTIFIER only, not point-in-time safety: "
+                "this is still an effective-date daily series, not a "
+                "verified announcement-timestamp series -- see "
+                "`docs/DECISIONS.md`'s FX-43 entry."
             ),
         ),
     ),
@@ -161,12 +192,16 @@ _USD_TARGET_RANGE = PolicyRateDefinition(
         ProviderSeriesMapping(
             provider="FRED",
             provider_series_ids=("DFEDTARU", "DFEDTARL"),
+            verified=True,
             notes=(
-                "FRED's federal funds target range upper/lower bound "
-                "series (order matches RateTransformation.apply's "
-                "expected (upper, lower) argument order). Commonly cited "
-                "FRED series IDs; require confirmation against the live "
-                "FRED API before FX-43 ingestion."
+                "FX-43: confirmed live against FRED's public "
+                "`fredgraph.csv` endpoint (order matches "
+                "RateTransformation.apply's expected (upper, lower) "
+                "argument order) -- both series exist, cover "
+                "2008-12-16 through the present, and align on every "
+                "date checked. `verified` covers the IDENTIFIERS only, "
+                "not point-in-time safety -- see `docs/DECISIONS.md`'s "
+                "FX-43 entry."
             ),
         ),
     ),
@@ -218,13 +253,24 @@ _EUR_DEFINITION = PolicyRateDefinition(
         ProviderSeriesMapping(
             provider="ECB_SDW",
             provider_series_ids=("FM.D.U2.EUR.4F.KR.MRR_RT.LEV",),
+            verified=True,
             notes=(
-                "ECB Data Portal / Statistical Data Warehouse series key "
-                "for the MRO minimum-bid/fixed rate, per FX-42H's explicit "
-                "instruction -- use this key unless primary-source "
-                "verification shows a better continuous choice. Exact key "
-                "string is NOT confirmed against the live ECB Data Portal "
-                "in this story -- FX-43 must verify before ingestion."
+                "FX-43: confirmed live against the ECB Data Portal's "
+                "current SDMX REST API at `data-api.ecb.europa.eu` -- "
+                "FX-42H's documented host, `sdw-wsrest.ecb.europa.eu`, "
+                "is unreachable and has been superseded. The series KEY "
+                "itself, `MRR_RT` ('Minimum bid rate/fixed rate'), is "
+                "confirmed correct and was NOT changed: it tracks the "
+                "ECB's headline MRO rate continuously across the "
+                "2000-2008 variable-rate-tender period (confirmed via "
+                "a live value change from 2.00% to 2.25% on 2005-12-06, "
+                "matching the well-documented first hike after the "
+                "ECB's 2003-2005 pause), unlike `MRR_FR` ('...fixed "
+                "rate' only), which has NO rows at all during that "
+                "period -- `MRR_FR` would have been a genuine data gap "
+                "disguised as a clean series. `verified` covers the "
+                "IDENTIFIER only, not point-in-time safety -- see "
+                "`docs/DECISIONS.md`'s FX-43 entry."
             ),
         ),
     ),
@@ -282,11 +328,15 @@ _GBP_DEFINITION = PolicyRateDefinition(
         ProviderSeriesMapping(
             provider="BOE_DATABASE",
             provider_series_ids=("IUDBEDR",),
+            verified=True,
             notes=(
-                "Bank of England Interactive Statistical Database series "
-                "code for Bank Rate -- a confirmed candidate ID per FX-42H "
-                "(kept unchanged from FX-42). Still NOT confirmed against "
-                "the live BoE database in this story -- FX-43 must verify."
+                "FX-43: confirmed live against the Bank of England's "
+                "IADB CSV endpoint (no API key) -- the series exists "
+                "and covers at least 1990-01-02 through the present, "
+                "well before this definition's 1997-06-01 valid_from. "
+                "`verified` covers the IDENTIFIER only, not "
+                "point-in-time safety -- see `docs/DECISIONS.md`'s "
+                "FX-43 entry."
             ),
         ),
     ),
@@ -665,11 +715,30 @@ _CAD_DEFINITION = PolicyRateDefinition(
         ProviderSeriesMapping(
             provider="BOC_VALET",
             provider_series_ids=("V39079",),
+            verified=True,
             notes=(
-                "Bank of Canada Valet API series code for the overnight "
-                "rate target, per FX-42H's explicit instruction -- "
-                "replaces FX-42's placeholder. Still subject to FX-43's "
-                "live API verification before ingestion."
+                "FX-43: confirmed live against the Bank of Canada Valet "
+                "API (no API key) -- V39079 ('Target for the overnight "
+                "rate (business daily)') exists and is correctly "
+                "labeled. IMPORTANT COVERAGE GAP: its own live data "
+                "only starts 2009-04-21, materially later than this "
+                "definition's 1999-02-01 valid_from. Checked four other "
+                "candidate series for earlier history via this same "
+                "API (V122514 'Overnight rate' -- a market/achieved "
+                "rate, not the announced target, e.g. 5.5057% rather "
+                "than a round target level; STATIC_ATABLE_V39079 'end "
+                "of month'; BR.CDN 'Bank Rate'; B114039 "
+                "'STATIC_TARGETRATE') -- all four either measure the "
+                "wrong concept or also only start 2009-04-21. No "
+                "1999-02-01..2009-04-20 daily target-rate source was "
+                "found via the Bank of Canada Valet API in this story. "
+                "Per this story's own instruction to stop and document "
+                "rather than invent timestamps: this gap is NOT backfilled "
+                "in FX-43 and is NOT silently filled -- see "
+                "`docs/DECISIONS.md`'s FX-43 entry and the backfill "
+                "script's own data-quality report. `verified` covers "
+                "the identifier's correctness from 2009-04-21 onward "
+                "only, not point-in-time safety."
             ),
         ),
     ),
@@ -684,7 +753,13 @@ _CAD_DEFINITION = PolicyRateDefinition(
         "than retained as a separate earlier era -- if a future story "
         "confirms the pre-1999 framework's exact instrument via BoC "
         "primary sources, it should be added as its own explicitly "
-        "distinct definition, not backdated into this one."
+        "distinct definition, not backdated into this one. FX-43: the "
+        "provider mapping's own live data does not reach back to this "
+        "valid_from at all (see the mapping's own notes) -- the "
+        "definition's stated validity window is a claim about the "
+        "Bank of Canada's operational history, independent of what any "
+        "one provider currently exposes; it is not evidence that data "
+        "for the full window has been, or can yet be, backfilled."
     ),
 )
 

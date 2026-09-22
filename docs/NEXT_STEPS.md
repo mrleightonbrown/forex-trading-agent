@@ -782,19 +782,50 @@ one continuous definition was also corrected. Full details in
 verification, ingestion, rate differential, strategy, parameter
 research, or trading follows this story.
 
-No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-43 ingestion, named directly by
-FX-42's own Definition of Done as the natural next step.
+## FX-43: first real external fundamental data — policy-rate backfill
+(complete)
 
-Do not start fundamentals data ingestion (FRED/central-bank/commercial
-provider adapters), news intelligence, AI decision-making, or live
-trading — out of scope until explicitly assigned per CLAUDE.md. FX-41/
-FX-41H/FX-42/FX-42H/FX-42H.1 above are the explicitly-scoped exceptions
-(domain model, storage-integrity hardening, and canonical registry/
-provider-mapping definitions plus their corrections — still no provider
-actually called, no strategy) and do not open the door to the rest of
-this phase. The same goes for the downstream epics not in this list at
-all (Decision Engine, Risk Engine, Paper Trading Execution, Performance
+The first use case and infrastructure in this codebase that ingest
+real, external fundamental data. Backfills real policy-rate history
+for USD (FRED), EUR (ECB Data Portal), GBP (Bank of England), and CAD
+(Bank of Canada, but only from 2009-04-21 — no earlier source was
+found and this gap is explicitly documented, not backfilled) into real
+`MacroObservationVintage` rows, via a new pure anti-interpolation
+algorithm (`extract_change_points` — one observation per genuine
+policy-rate change, never a fabricated daily series) and the existing,
+unmodified FX-41H idempotent `MacroObservationRepository.add_vintage`.
+JPY is not attempted (still unresolved). 258 real vintages now in
+Postgres, spot-checked against known historical facts and proven to
+answer as-of queries correctly across a real historical transition
+(USD's December 2008 near-zero-rate cut). `released_at` is an
+effective-date proxy, not a verified announcement timestamp — no
+mapping is promoted to point-in-time-safe; establishing genuine
+announcement timestamps remains the explicit next review gate. Live
+verification found and fixed two real bugs (an ECB request-path
+double-prefix, and a coverage report showing the requested window
+instead of actual data) and one live blocker (the Bank of England's
+WAF rejecting httpx's default User-Agent). Full details, including
+exactly what a future story would need to establish genuine release
+timestamps, in `docs/DECISIONS.md`'s FX-43 entry.
+
+**Per this story's own explicit instruction**: this data is never
+called "carry" anywhere in this codebase. No rate differential is
+computed, no strategy or decision logic follows this story.
+
+No further work has been requested; check in before starting anything
+new here or elsewhere — including establishing genuine announcement
+timestamps (this story's own named "next review gate"), JPY provider
+mapping, the pre-2009 CAD gap, or any rate-differential/carry work.
+
+Do not start news intelligence, AI decision-making, rate-differential/
+carry strategies, or live trading — out of scope until explicitly
+assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43 above
+are the explicitly-scoped exceptions (domain model, storage-integrity
+hardening, canonical registry/provider-mapping definitions, and now
+real policy-rate ingestion — still no strategy, no decision logic, no
+"carry" framing) and do not open the door to the rest of this phase.
+The same goes for the downstream epics not in this list at all
+(Decision Engine, Risk Engine, Paper Trading Execution, Performance
 Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per

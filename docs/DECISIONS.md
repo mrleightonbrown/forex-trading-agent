@@ -5276,3 +5276,180 @@ FX-41/FX-41H macro-observation code), `ruff`, `mypy --strict`,
 Per this story's own explicit stop instruction: no provider verification,
 ingestion, rate differential, strategy, parameter research, or trading
 follows this story.
+
+## 2026-09-22 — FX-43: first real external fundamental data (policy-rate
+backfill)
+
+**Numbering note**: this story's own request referred to "the FX-40
+point-in-time model + FX-41 registry" -- the requester's own original
+pre-renumbering shorthand from the very first story in this arc. This
+codebase's actual numbering (established at that time and used
+consistently since) is FX-41 (point-in-time model) and FX-42/FX-42H/
+FX-42H.1 (registry). This story is recorded as **FX-43**, matching what
+every prior entry in this arc already committed to calling the
+ingestion story that follows the registry (`docs/DECISIONS.md`'s FX-42/
+FX-42H/FX-42H.1 entries and `docs/NEXT_STEPS.md` all already say
+"FX-43 ingestion").
+
+**Scope**: the first use case and infrastructure in this codebase that
+ingest real, external fundamental data -- backfilling policy-rate
+history for USD, EUR, GBP, and CAD from real public provider APIs into
+`MacroObservationVintage` rows via the existing, unmodified FX-41/
+FX-41H `MacroObservationRepository`. JPY is not attempted (its provider
+mapping remains unresolved, per FX-42H.1's own explicit scope
+boundary). No pair differential, no carry framing (this data is never
+called "carry" anywhere in this story, per its own explicit
+instruction), no strategy, no decision logic, no parameter research.
+
+**Architecture**: `domain/policy_rate_change_extraction.py`
+(`extract_change_points`, pure, no I/O) + `application/ports/
+policy_rate_history_provider.py` (`PolicyRateHistoryProvider`, a
+minimal fetch-only port) + `application/use_cases/
+backfill_policy_rate_history.py` (`BackfillPolicyRateHistory`,
+orchestration) + four infrastructure adapters under `infrastructure/
+policy_rate_providers/` (FRED, ECB Data Portal, Bank of England, Bank
+of Canada) + `scripts/backfill_policy_rate_history.py` (the one-off
+operational script that actually runs it). See `docs/ARCHITECTURE.md`'s
+FX-43 section for the full pipeline diagram.
+
+**No synthetic interpolation, concretely enforced**: `extract_change_
+points` is the one place this guarantee lives. A provider's raw daily
+series (all four confirmed to publish this way) repeats the same value
+every day it stayed in effect; this function reduces that to one
+observation per date the canonical value genuinely changed, and for a
+`TARGET_RANGE_MIDPOINT` era, a date present in the upper-bound series
+but missing from the lower-bound series (or vice versa) is recorded as
+`skipped_dates`, never paired with a guessed counterpart. 8 dedicated
+unit tests, plus a regression check: the "date must be present in
+every raw series" guard was deliberately replaced with a forward-fill
+(exactly the synthetic interpolation this function must never do),
+confirmed two tests failed with fabricated values, then restored.
+
+**Idempotent backfill, confirmed live, not just in a fake**: every
+vintage goes through `MacroObservationRepository.add_vintage`, relying
+entirely on FX-41H's existing conflict handling -- this story adds no
+new idempotency mechanism. `scripts/backfill_policy_rate_history.py`
+was run twice in sequence against the real APIs and a real Postgres:
+identical change-point counts, identical vintages-ingested counts,
+zero conflicts, both times. A direct SQL query after both runs
+confirmed zero duplicate `(series_key, observation_period,
+revision_sequence)` rows.
+
+**Live provider verification -- real findings, not assumptions**:
+
+- **USD (FRED)**: `DFEDTAR`/`DFEDTARU`/`DFEDTARL` confirmed correct via
+  FRED's public `fredgraph.csv` endpoint (no API key). Marked
+  `verified=True` in the registry.
+- **EUR (ECB Data Portal)**: FX-42H's documented host
+  (`sdw-wsrest.ecb.europa.eu`) is unreachable -- superseded by
+  `data-api.ecb.europa.eu`. The series KEY itself, `MRR_RT`, is
+  confirmed CORRECT (FX-42H's original choice, not a guess that needed
+  correcting): it tracks the ECB's headline MRO rate continuously
+  across the 2000-2008 variable-rate-tender period (confirmed via a
+  live value change from 2.00% to 2.25% on 2005-12-06, matching the
+  well-documented first hike after the ECB's 2003-2005 pause), unlike
+  `MRR_FR` ("...fixed rate" only), which has NO rows at all during
+  that period. Marked `verified=True`.
+- **GBP (Bank of England)**: `IUDBEDR` confirmed correct. A genuine bug
+  was found and fixed along the way: the BoE's WAF returns HTTP 403 for
+  httpx's own default `User-Agent` string, even though an otherwise-
+  identical request succeeds with any other string (reproduced by
+  changing only that header) -- `BoePolicyRateHistoryProvider` now
+  sends a descriptive, honest `User-Agent`
+  (`forex-agent-research/1.0 (+github URL)`), not a spoofed browser
+  string. Marked `verified=True`.
+- **CAD (Bank of Canada)**: `V39079` confirmed correct but with a
+  genuine coverage gap: its own live data only starts 2009-04-21,
+  materially later than the registry's documented 1999-02-01
+  `valid_from`. Checked four other candidate series
+  (`V122514` "Overnight rate" -- a market/achieved rate, not the
+  announced target; `STATIC_ATABLE_V39079`; `BR.CDN`; `B114039`) --
+  all either measure the wrong concept or also only start 2009-04-21.
+  Per this story's own instruction to stop and document rather than
+  invent, **1999-02-01 through 2009-04-20 is NOT backfilled** and is
+  explicitly listed in the data-quality report's `known_gaps`. Marked
+  `verified=True` for the 2009-04-21-onward portion its live data
+  actually covers.
+
+**A real infrastructure bug was found and fixed via the live run,
+not code review**: the ECB client originally built its request path as
+`/service/data/FM/{provider_series_id}`, but the registry stores the
+FULL key including the "FM." dataflow prefix (as ECB itself cites it,
+and as the response's own `KEY` column echoes it back) --
+`FM.D.U2.EUR.4F.KR.MRR_RT.LEV`. Passed through unmodified, this
+produced `/service/data/FM/FM.D.U2...`, which the live API correctly
+rejects with HTTP 400 (a doubled dataflow segment). The bug did not
+surface in the mocked-transport unit test, because that test's own
+canned `provider_series_id` input didn't reflect the registry's real
+(prefixed) value -- fixed both the client (`removeprefix("FM.")`
+before building the path) and the test (now passes the real prefixed
+key and asserts the resulting path has the prefix stripped exactly
+once). A reminder that a unit test's fidelity to real input shapes
+matters as much as the code under test; caught only because this story
+insisted on running the real pipeline end-to-end rather than trusting
+mocked coverage alone.
+
+**Coverage reporting reflects actual data, not the requested window --
+a second bug found via the live run**: `CurrencyBackfillReport.
+coverage_start`/`coverage_end` originally reported the WINDOW A
+BACKFILL ASKED a provider for, not what it actually got back. Running
+the real CAD backfill exposed this concretely: the report claimed
+coverage starting 1999-02-01 (the requested/registry `valid_from`)
+while the actual earliest ingested vintage was 2009-04-21 -- exactly
+the gap `known_gaps` was supposed to be flagging, silently
+contradicted by the summary field sitting right next to it.
+`EraBackfillReport` now carries `earliest_change_point`/
+`latest_change_point` (the true span of change points actually found),
+and `CurrencyBackfillReport.coverage_start`/`coverage_end` aggregate
+from those instead of the requested window.
+`test_coverage_reflects_actual_data_not_the_requested_window`
+reproduces the exact scenario (a provider whose real data starts later
+than the requested window) and was confirmed to fail against the
+original (reverted) implementation before being restored.
+
+**Real data now in Postgres**: 258 `MacroObservationVintage` rows
+across USD (92: 59 target-point + 33 target-range change points), EUR
+(62), GBP (71), CAD (33). Spot-checked against well-known historical
+facts: USD's 2008-12-16 vintage is exactly `0.125` (the midpoint of the
+FOMC's newly announced 0%-0.25% target range, computed by
+`TARGET_RANGE_MIDPOINT` on real FRED data); a `latest_available_as_of`
+query at 2008-12-15 correctly returns `1.0000` (the prior level, in
+effect since October 29, 2008) while the same query at 2008-12-16
+returns `0.125` -- an as-of query working correctly across a genuine
+historical policy transition, on real ingested data, through the
+unmodified FX-41 repository. GBP's earliest vintage (1997-06-06,
+`6.5`) matches the Monetary Policy Committee's first-ever rate decision
+after gaining operational independence.
+
+**The point-in-time-safety gap this story does NOT close, by design**:
+`released_at` is set equal to `observation_period` (the date a
+provider's raw series shows a value change) for every ingested
+vintage -- an EFFECTIVE-DATE proxy. This is knowably NOT the same as
+when the market actually learned of a decision: central banks
+routinely announce a rate decision (e.g. an FOMC statement release,
+conventionally around 2:00 p.m. ET) some time before it takes effect.
+Establishing genuine announcement/publication timestamps, distinct
+from effective dates, was explicitly out of scope for this story and
+is exactly the "next review gate" its own instructions named. No
+`ProviderSeriesMapping.point_in_time_safety` is changed by this story
+-- every mapping remains `UNKNOWN`, and `require_research_usable_
+mapping` continues to reject every mapping in the registry
+unconditionally, including the ones just marked `verified=True`.
+Daily effective-date observations are explicitly NOT sufficient
+grounds for `POINT_IN_TIME_SAFE`, matching FX-42H's own stated
+principle -- this story's real ingestion changes nothing about that
+invariant.
+
+**Verification**: `pytest` (945 passed, full suite -- new tests for the
+change-extraction algorithm, the use case (using the REAL registry
+with fake provider data, matching how `AggregateCandles` et al. call
+domain functions directly), and all four provider clients via
+`httpx.MockTransport`, matching the existing OANDA adapter precedent),
+`ruff`, `mypy --strict`, `pre-commit run --all-files`. The real
+backfill script was additionally run twice, live, against the real
+APIs and a real Postgres, with results spot-checked against known
+historical facts as described above.
+
+Per this story's own explicit instruction: this data is not called
+"carry" anywhere in this codebase. No rate differential is computed.
+No strategy, scoring, or decision logic follows this story.

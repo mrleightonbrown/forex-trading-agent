@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-21 (FX-42H.1)_
+_Last updated: 2026-09-22 (FX-43)_
 
 ## What exists
 
@@ -490,6 +490,55 @@ _Last updated: 2026-09-21 (FX-42H.1)_
   2016-02-16 boundary (each reverted in turn) — every case confirmed to
   fail the relevant test(s) before being restored. Full details in
   `docs/DECISIONS.md`'s FX-42H.1 entry.
+- **FX-43: first real external fundamental data — policy-rate backfill
+  (complete)**. The first use case/infrastructure in this codebase
+  that ingest real external fundamental data. `domain/
+  policy_rate_change_extraction.py` (new): `extract_change_points`,
+  pure — reduces a provider's raw daily series (which repeats the same
+  value every day it stayed in effect) down to genuine change points
+  only, one `MacroObservationVintage` per date the canonical value
+  actually moved; a date missing from one input series (needed only
+  for `TARGET_RANGE_MIDPOINT`) is skipped and reported, never
+  fabricated. `application/ports/policy_rate_history_provider.py`
+  (new): `PolicyRateHistoryProvider`, a minimal fetch-only port.
+  `application/use_cases/backfill_policy_rate_history.py` (new):
+  `BackfillPolicyRateHistory` — orchestrates registry → provider →
+  change extraction → `MacroObservationRepository.add_vintage`
+  (FX-41H's existing idempotent conflict handling, no new mechanism
+  added); produces a `CurrencyBackfillReport`/`EraBackfillReport` with
+  per-era change-point/vintage/skipped-date/conflict counts, actual
+  (not merely requested) coverage span, and explicit
+  `unconfigured_eras`/`fetch_error` reporting rather than silent
+  skips. `infrastructure/policy_rate_providers/` (new): four adapters
+  — FRED, ECB Data Portal, Bank of England, Bank of Canada — all
+  confirmed live against their real public APIs (no API key needed for
+  any of them). `scripts/backfill_policy_rate_history.py` (new): runs
+  the real backfill against live Postgres, writes
+  `reports/policy_rate_backfill_report.json`.
+  Live verification found and fixed two real bugs: the ECB client
+  double-prefixed the dataflow ID in its request path (the registry's
+  key already includes "FM."), and the coverage report originally
+  showed the requested window rather than the actual data span
+  (exposed by CAD's genuine coverage gap). Also found and fixed: the
+  Bank of England's WAF blocks httpx's default `User-Agent`. USD
+  (FRED)/EUR (ECB, `MRR_RT` confirmed correct)/GBP (BoE)/CAD (BoC, but
+  only from 2009-04-21 — 1999-02-01 through 2009-04-20 has no daily
+  target-rate source available and is explicitly NOT backfilled) are
+  all marked `verified=True`; JPY is not attempted (still unresolved,
+  per FX-42H.1). 258 real `MacroObservationVintage` rows now in
+  Postgres (USD 92, EUR 62, GBP 71, CAD 33), spot-checked against known
+  historical facts (e.g. USD's Dec 16 2008 vintage is exactly `0.125`,
+  the FOMC's 0-0.25% target range midpoint) and proven to answer
+  as-of queries correctly across a real historical transition. The
+  backfill script was run twice live with identical results and zero
+  conflicts, confirming idempotency against real data, not just fakes.
+  `released_at` is set to each vintage's effective date (a proxy, not
+  a verified announcement timestamp) — no `ProviderSeriesMapping` is
+  promoted to `PointInTimeSafety.POINT_IN_TIME_SAFE`, and
+  `require_research_usable_mapping` still rejects every mapping in the
+  registry; establishing genuine announcement timestamps is explicitly
+  deferred as this story's own named "next review gate." Full details
+  in `docs/DECISIONS.md`'s FX-43 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -895,27 +944,23 @@ _Last updated: 2026-09-21 (FX-42H.1)_
   concurrency protection makes this safe to build later, but nothing
   currently triggers `BackfillCandles` other than the one-off
   `scripts/build_research_dataset.py` run.
-- Any fundamental/macro data ingestion, provider adapter, economic
-  calendar, carry or rate-differential strategy, fundamental score, or
-  fundamentals-driven decision logic — FX-41 built only the
-  provider-independent domain model and its point-in-time safety
-  invariant; nothing populates a real `MacroSeriesDefinition`/
-  `MacroObservationVintage` from FRED, a central bank, or any other
-  source yet. FX-41H hardened the storage-level integrity of vintages
-  already in the repository (conflict detection, deterministic
-  tie-breaking) but deliberately did not build any provider mapping.
-  FX-42 built that provider mapping's SHAPE (`ProviderSeriesMapping`
-  inside `PolicyRateDefinition`) and populated it with researched-but-
-  unverified candidate providers/identifiers for USD/EUR/GBP/JPY/CAD;
-  FX-42H corrected several of FX-42's factual boundaries (see above) and
-  made `ProviderSeriesMapping` the SOLE place point-in-time safety is
-  tracked at all. None of this fetches, stores, or verifies anything:
-  every mapping is `PointInTimeSafety.UNKNOWN` and `verified=False`, no
-  `MacroObservationVintage` exists for any policy-rate series, and no
-  mapping passes `require_research_usable_mapping`. Turning a
-  `PolicyRateDefinition`'s provider mapping into real, verified,
-  persisted `MacroObservationVintage` rows is explicit future work for
-  an ingestion story (FX-43), not sketched here.
+- Any CPI/GDP/employment or other non-policy-rate fundamental data,
+  economic calendar, carry or rate-differential strategy, fundamental
+  score, or fundamentals-driven decision logic. FX-43 (above) DOES now
+  ingest real policy-rate history for USD/EUR/GBP/CAD into real
+  `MacroObservationVintage` rows via real provider APIs — this is no
+  longer an empty domain model, and every mapping FX-43 touched is now
+  `verified=True`. What still does NOT exist: JPY policy-rate data (no
+  provider mapping established, per FX-42H.1); CAD data before
+  2009-04-21 (no source found, explicitly documented, not backfilled);
+  ANY mapping classified `PointInTimeSafety.POINT_IN_TIME_SAFE` —
+  `released_at` is an effective-date proxy, not a verified announcement
+  timestamp, and `require_research_usable_mapping` still rejects every
+  mapping in the registry; any data beyond policy rates (CPI, GDP,
+  employment, an economic calendar); any rate differential, carry
+  strategy, fundamental score, or fundamentals-driven decision logic —
+  this story's own explicit instruction was to never call this data
+  "carry," and it never is anywhere in this codebase.
 
 ## Next
 
