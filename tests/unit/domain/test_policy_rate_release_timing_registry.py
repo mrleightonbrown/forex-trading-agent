@@ -3,8 +3,10 @@ from datetime import UTC, date, datetime
 import pytest
 
 from forex_agent.domain.policy_rate_release_timing_registry import (
+    USD_POLICY_TIMINGS,
     ReleaseTimingResolution,
     UnresolvedTiming,
+    UsdPolicyTiming,
     resolve_release_timing,
 )
 from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
@@ -43,26 +45,44 @@ def test_usd_2026_09_17_worked_example() -> None:
     assert result.effective_at.value == datetime(2026, 9, 17, 0, 0, 0, tzinfo=UTC)
 
 
-def test_usd_liftoff_2015_has_same_day_gap_not_minus_one() -> None:
-    # FX-44H's own verified exception: the two earliest EXACT-tier
-    # meetings (2015-12-16 "liftoff" and 2016-12-14) predate the
-    # standard next-day effective-date mechanism -- a blind "-1 day"
-    # transformation would get these two wrong. Proves the explicit
-    # mapping, not a formula, drives this resolution.
+def test_usd_2015_12_16_liftoff_decision_and_effective_dates() -> None:
+    # FX-44H.1 correction: FX-44H had wrongly modeled this as a same-day
+    # (0-day) stored/effective gap. The Fed's own Implementation Note
+    # ("Effective December 17, 2015, the Federal Open Market Committee
+    # directs the Desk...") establishes the TRUE operational effective
+    # date is one day AFTER the decision date, exactly like every other
+    # mapped meeting -- decision date 2015-12-16, effective date
+    # 2015-12-17.
     result = resolve_release_timing("USD", _period(2015, 12, 16))
 
     assert isinstance(result, ReleaseTimingResolution)
+    assert result.confidence is ReleaseTimingConfidence.EXACT
     assert result.released_at.value == datetime(2015, 12, 16, 19, 0, 0, tzinfo=UTC)  # 2pm EST
     assert result.effective_at is not None
-    assert result.effective_at.value == datetime(2015, 12, 16, 0, 0, 0, tzinfo=UTC)
-    # Same calendar day -- NOT the +1 day gap every later meeting has.
-    assert result.released_at.value.date() == result.effective_at.value.date()
+    assert result.effective_at.value == datetime(2015, 12, 17, 0, 0, 0, tzinfo=UTC)
+    assert result.released_at.value.date() < result.effective_at.value.date()
+
+
+def test_usd_2016_12_14_second_hike_decision_and_effective_dates() -> None:
+    # FX-44H.1 correction, same class of fix as 2015-12-16 above: the
+    # Fed's own Implementation Note ("Effective December 15, 2016, the
+    # Federal Open Market Committee directs the Desk...") establishes
+    # decision date 2016-12-14, effective date 2016-12-15 -- FX-44H had
+    # wrongly modeled a same-day gap here too.
+    result = resolve_release_timing("USD", _period(2016, 12, 14))
+
+    assert isinstance(result, ReleaseTimingResolution)
+    assert result.confidence is ReleaseTimingConfidence.EXACT
+    assert result.released_at.value == datetime(2016, 12, 14, 19, 0, 0, tzinfo=UTC)  # 2pm EST
+    assert result.effective_at is not None
+    assert result.effective_at.value == datetime(2016, 12, 15, 0, 0, 0, tzinfo=UTC)
+    assert result.released_at.value.date() < result.effective_at.value.date()
 
 
 def test_usd_exact_date_not_in_explicit_mapping_is_unresolved() -> None:
-    # FX-44H: no formulaic fallback for the EXACT tier -- a date that
-    # LOOKS like a regular post-2013 meeting but was never individually
-    # verified and added to USD_EFFECTIVE_TO_DECISION_DATE must not
+    # FX-44H/FX-44H.1: no formulaic fallback for the EXACT tier -- a
+    # date that LOOKS like a regular post-2013 meeting but was never
+    # individually verified and added to USD_POLICY_TIMINGS must not
     # resolve, even though it falls chronologically inside the "exact
     # era". 2027-01-01 stands in for "a future change point this
     # registry has not yet been taught about".
@@ -200,3 +220,56 @@ def test_jpy_raises_out_of_scope() -> None:
 def test_unsupported_currency_raises() -> None:
     with pytest.raises(ValueError, match="AUD"):
         resolve_release_timing("AUD", _period(2020, 1, 1))
+
+
+class TestUsdPolicyTiming:
+    """FX-44H.1: direct tests of the record type that replaced
+    USD_EFFECTIVE_TO_DECISION_DATE."""
+
+    def _timing(self, **overrides: object) -> UsdPolicyTiming:
+        defaults: dict[str, object] = {
+            "stored_date": date(2018, 6, 14),
+            "decision_date": date(2018, 6, 13),
+            "effective_date": date(2018, 6, 14),
+            "citation": "https://www.federalreserve.gov/",
+        }
+        defaults.update(overrides)
+        return UsdPolicyTiming(**defaults)  # type: ignore[arg-type]
+
+    def test_valid_record_holds_exact_fields(self) -> None:
+        timing = self._timing()
+
+        assert timing.stored_date == date(2018, 6, 14)
+        assert timing.decision_date == date(2018, 6, 13)
+        assert timing.effective_date == date(2018, 6, 14)
+
+    def test_effective_date_may_equal_decision_date(self) -> None:
+        # Structurally permitted -- not every meeting needs a gap.
+        self._timing(decision_date=date(2018, 6, 14), effective_date=date(2018, 6, 14))
+
+    def test_rejects_effective_date_before_decision_date(self) -> None:
+        with pytest.raises(ValueError, match="effective_date"):
+            self._timing(decision_date=date(2018, 6, 14), effective_date=date(2018, 6, 13))
+
+    def test_rejects_empty_citation(self) -> None:
+        with pytest.raises(ValueError, match="citation"):
+            self._timing(citation="")
+
+    def test_is_immutable(self) -> None:
+        timing = self._timing()
+        with pytest.raises(AttributeError):
+            timing.effective_date = date(2020, 1, 1)  # type: ignore[misc]
+
+
+def test_usd_policy_timings_has_no_formulaic_relationship_assumed() -> None:
+    # FX-44H.1's own invariant: every entry's stored/decision/effective
+    # dates are independently populated data, not derived from one
+    # another at lookup time -- this test asserts the STRUCTURAL fact
+    # (all 30 entries exist as fully-populated records) rather than
+    # re-deriving what each one says, which would just reimplement the
+    # registry inside the test.
+    assert len(USD_POLICY_TIMINGS) == 30
+    for stored_date, timing in USD_POLICY_TIMINGS.items():
+        assert timing.stored_date == stored_date
+        assert timing.decision_date <= timing.effective_date
+        assert timing.citation.strip() != ""

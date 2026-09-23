@@ -178,3 +178,66 @@ async def test_unresolved_exact_row_is_reported_not_applicable() -> None:
     stored = await fake.observation_as_known_at(SERIES_KEY, _ts(2008, 1, 22), _ts(2099, 1, 1))
     assert stored is not None
     assert stored.released_at == _ts(2008, 1, 22, 8, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_2015_12_16_and_2016_12_14_corrected_with_preserved_identity() -> None:
+    # FX-44H.1: reproduces FX-44H's own historical bug -- released_at
+    # already correct, effective_at wrongly equal to the stored date.
+    # Proves both corrections AND that value/revision_sequence/
+    # series_key/observation identity are all preserved.
+    fake = FakeMacroObservationRepository()
+    await fake.add_vintage(
+        MacroObservationVintage(
+            series_key=SERIES_KEY,
+            observation_period=_ts(2015, 12, 16),
+            value=Decimal("0.375"),
+            released_at=UtcTimestamp(datetime(2015, 12, 16, 19, 0, 0, tzinfo=UTC)),
+            effective_at=_ts(2015, 12, 16),  # FX-44H's own bug
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+    await fake.add_vintage(
+        MacroObservationVintage(
+            series_key=SERIES_KEY,
+            observation_period=_ts(2016, 12, 14),
+            value=Decimal("0.625"),
+            released_at=UtcTimestamp(datetime(2016, 12, 14, 19, 0, 0, tzinfo=UTC)),
+            effective_at=_ts(2016, 12, 14),  # FX-44H's own bug
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+    remediate = RemediateReleaseTiming(repository=fake)
+
+    records = await remediate("USD", SERIES_KEY)
+    by_period = {r.observation_period: r for r in records}
+    assert by_period[_ts(2015, 12, 16)].outcome is RemediationOutcome.CORRECTED
+    assert by_period[_ts(2016, 12, 14)].outcome is RemediationOutcome.CORRECTED
+
+    result_2015 = await fake.observation_as_known_at(SERIES_KEY, _ts(2015, 12, 16), _ts(2099, 1, 1))
+    assert result_2015 is not None
+    assert result_2015.effective_at is not None
+    assert result_2015.effective_at.value == datetime(2015, 12, 17, 0, 0, 0, tzinfo=UTC)
+    assert result_2015.value == Decimal("0.375")
+    assert result_2015.revision_sequence == 0
+    assert result_2015.series_key == SERIES_KEY
+    assert result_2015.observation_period == _ts(2015, 12, 16)
+
+    result_2016 = await fake.observation_as_known_at(SERIES_KEY, _ts(2016, 12, 14), _ts(2099, 1, 1))
+    assert result_2016 is not None
+    assert result_2016.effective_at is not None
+    assert result_2016.effective_at.value == datetime(2016, 12, 15, 0, 0, 0, tzinfo=UTC)
+    assert result_2016.value == Decimal("0.625")
+    assert result_2016.revision_sequence == 0
+    assert result_2016.series_key == SERIES_KEY
+    assert result_2016.observation_period == _ts(2016, 12, 14)
+
+    # Idempotent rerun.
+    second = await remediate("USD", SERIES_KEY)
+    second_by_period = {r.observation_period: r for r in second}
+    assert second_by_period[_ts(2015, 12, 16)].outcome is RemediationOutcome.ALREADY_CORRECT
+    assert second_by_period[_ts(2016, 12, 14)].outcome is RemediationOutcome.ALREADY_CORRECT

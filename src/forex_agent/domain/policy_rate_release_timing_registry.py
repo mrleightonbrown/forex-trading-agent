@@ -22,12 +22,30 @@ from the code that computes it.
 """
 
 from dataclasses import dataclass
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence, ReleaseTimingRule
 from forex_agent.domain.timestamps import UtcTimestamp
 
 _SIX_DAYS = timedelta(days=6)
+
+
+def _date_only_as_utc_midnight(value: date) -> UtcTimestamp:
+    """Represents a DATE-ONLY fact (e.g. an operational effective date)
+    as a `UtcTimestamp` at 00:00:00 UTC (FX-44H.1).
+
+    This is a NORMALIZATION CONVENTION for fitting a date-only fact
+    into this domain's `UtcTimestamp`-typed `effective_at` field --
+    the same convention `observation_period` itself already uses
+    elsewhere in this codebase (FX-41) to represent "this calendar
+    date." It is explicitly NOT a claim that 00:00 UTC is itself a
+    source-verified operational instant: every primary source this
+    registry cites for an effective date establishes a DATE the target
+    range took effect, never an intraday time, and none is claimed
+    here. A caller reading `effective_at.value.time()` as anything
+    other than this normalization artifact is misreading it.
+    """
+    return UtcTimestamp(datetime.combine(value, time(0, 0, 0), tzinfo=UTC))
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +67,69 @@ class UnresolvedTiming:
     PROVISIONAL. `reason` is written into the FX-44 report verbatim."""
 
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class UsdPolicyTiming:
+    """One individually-researched USD FOMC change point's full timing
+    picture (FX-44H.1) -- three INDEPENDENT dates, never assumed equal
+    to one another by a formula.
+
+    FX-44H's original `USD_EFFECTIVE_TO_DECISION_DATE: dict[date,
+    date]` assumed the provider-stored change-point date always equals
+    the genuine operational EFFECTIVE date, so only a DECISION date
+    needed recovering (via this same explicit-mapping discipline, at
+    least -- FX-44H never used a formula for that part either). That
+    assumption was itself wrong for two rows: 2015-12-16 ("liftoff")
+    and 2016-12-14 (the second post-crisis hike) both have their TRUE
+    effective date one day AFTER the stored date -- FX-44H had instead
+    modeled a same-day (0-day) gap for exactly these two, because
+    nothing distinguished "the provider's stored date" from "the
+    genuine effective date" as separately-verifiable facts. This type
+    exists so that distinction is structural, not assumed: a future
+    discrepancy between provider date and true effective date (for
+    ANY USD meeting, not only these two) cannot silently reintroduce
+    the same class of bug.
+
+    Fields:
+        stored_date: the date the raw provider series (FRED) shows the
+            value change on -- i.e. `observation_period`'s own date.
+            Never rewritten; kept here purely so each record is
+            self-describing and the lookup key is unambiguous.
+        decision_date: the actual FOMC meeting day the change was
+            decided/announced on.
+        effective_date: the actual date the new target range took
+            operational effect, per a primary Federal Reserve source
+            (typically the FOMC's own "Implementation Note") -- NOT
+            assumed equal to `stored_date`.
+        citation: a specific, checkable primary source establishing
+            `effective_date` (and, where the same source covers it,
+            `decision_date` too).
+        notes: free-text methodology/confidence context.
+    """
+
+    stored_date: date
+    decision_date: date
+    effective_date: date
+    citation: str
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stored_date, date):
+            raise TypeError(f"stored_date must be a date, got {type(self.stored_date)!r}")
+        if not isinstance(self.decision_date, date):
+            raise TypeError(f"decision_date must be a date, got {type(self.decision_date)!r}")
+        if not isinstance(self.effective_date, date):
+            raise TypeError(f"effective_date must be a date, got {type(self.effective_date)!r}")
+        if self.effective_date < self.decision_date:
+            raise ValueError(
+                f"effective_date ({self.effective_date}) must not be before "
+                f"decision_date ({self.decision_date})"
+            )
+        if not isinstance(self.citation, str) or not self.citation.strip():
+            raise ValueError(f"citation must be a non-empty string, got {self.citation!r}")
+        if not isinstance(self.notes, str):
+            raise TypeError(f"notes must be a str, got {type(self.notes)!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -98,66 +179,127 @@ USD_CONSERVATIVE_RULE = ReleaseTimingRule(
     ),
 )
 
-# FX-44H: this is NOT the same date as the stored proxy for modern
-# (2013-03-19 onward) meetings. FX-44 originally assumed the stored
-# change-point date (FRED's DFEDTARU/DFEDTARL series, which reflects
-# the OPERATIONAL EFFECTIVE date) was also the FOMC announcement date,
-# and set effective_at=None -- demonstrably wrong: the FOMC's own
-# "Implementation Note" (a document distinct from the main statement,
-# published alongside it since ~2019, and the mechanism -- a directive
-# to the Desk -- has applied since well before that) states an
-# explicit effective date for the new target range, e.g. "Effective
-# January 29, 2026, the Federal Open Market Committee directs the Desk
-# to..." (https://www.federalreserve.gov/newsevents/pressreleases/
-# monetary20260128a1.htm) -- one day AFTER the January 27-28, 2026
-# meeting's second (decision) day.
+# FX-44H.1: NOT necessarily the same date as the stored proxy for
+# modern (2013-03-19 onward) meetings, in EITHER direction -- FX-44H
+# fixed the assumption that the stored date always equals the
+# ANNOUNCEMENT date, but still assumed it always equals the EFFECTIVE
+# date. That second assumption was ALSO wrong for two rows: the Fed's
+# own Implementation Notes (a document distinct from the main
+# statement; the URL pattern `.../pressreleases/<YYYYMMDD>a1.htm`
+# already existed in 2015-2016, not only "since ~2019" as FX-44H
+# guessed) place BOTH 2015-12-16's and 2016-12-14's effective date ONE
+# DAY AFTER the stored/decision date -- FX-44H had instead modeled a
+# same-day (0-day) gap for exactly these two. `UsdPolicyTiming` keeps
+# `stored_date`/`decision_date`/`effective_date` as three genuinely
+# independent, individually-populated facts specifically so this class
+# of bug (silently assuming any two of the three coincide) cannot
+# recur unnoticed for a future USD meeting.
 #
-# This mapping was built by cross-referencing EVERY ONE of the 30
-# USD change points this registry classifies EXACT against the Fed's
-# own published FOMC meeting-date calendar (https://www.federalreserve
-# .gov/monetarypolicy/fomccalendars.htm and .../fomchistorical<year>
-# .htm for 2015-2019) -- NOT by assuming a fixed "-1 day" offset, which
-# this exercise itself proved would have been WRONG for two entries:
-# 2015-12-16 ("liftoff", the first hike since 2006) and 2016-12-14
-# (the second hike) both have a same-day (0-day) gap, predating the
-# now-standard next-day effective-date mechanism -- every meeting from
-# 2017-03-16 onward observed here has the +1-day gap. Because this
-# story found a genuine, non-formulaic exception, resolution for the
-# EXACT tier uses ONLY this explicit table, never a computed offset:
-# a USD change point -- including any future one a later backfill run
-# ingests -- that is not a key in this mapping is UNRESOLVED, even if
-# it would "look like" it fits the usual +1-day pattern.
-USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date] = {
-    date(2015, 12, 16): date(2015, 12, 16),  # liftoff -- same-day, pre-Implementation-Note era
-    date(2016, 12, 14): date(2016, 12, 14),  # same-day, pre-Implementation-Note era
-    date(2017, 3, 16): date(2017, 3, 15),
-    date(2017, 6, 15): date(2017, 6, 14),
-    date(2017, 12, 14): date(2017, 12, 13),
-    date(2018, 3, 22): date(2018, 3, 21),
-    date(2018, 6, 14): date(2018, 6, 13),
-    date(2018, 9, 27): date(2018, 9, 26),
-    date(2018, 12, 20): date(2018, 12, 19),
-    date(2019, 8, 1): date(2019, 7, 31),
-    date(2019, 9, 19): date(2019, 9, 18),
-    date(2019, 10, 31): date(2019, 10, 30),
-    date(2022, 3, 17): date(2022, 3, 16),
-    date(2022, 5, 5): date(2022, 5, 4),
-    date(2022, 6, 16): date(2022, 6, 15),
-    date(2022, 7, 28): date(2022, 7, 27),
-    date(2022, 9, 22): date(2022, 9, 21),
-    date(2022, 11, 3): date(2022, 11, 2),
-    date(2022, 12, 15): date(2022, 12, 14),
-    date(2023, 2, 2): date(2023, 2, 1),
-    date(2023, 3, 23): date(2023, 3, 22),
-    date(2023, 5, 4): date(2023, 5, 3),
-    date(2023, 7, 27): date(2023, 7, 26),
-    date(2024, 9, 19): date(2024, 9, 18),
-    date(2024, 11, 8): date(2024, 11, 7),
-    date(2024, 12, 19): date(2024, 12, 18),
-    date(2025, 9, 18): date(2025, 9, 17),
-    date(2025, 10, 30): date(2025, 10, 29),
-    date(2025, 12, 11): date(2025, 12, 10),
-    date(2026, 9, 17): date(2026, 9, 16),  # this story's own worked example
+# The 28 entries below not individually re-cited this story were
+# established in FX-44H by cross-referencing every USD EXACT change
+# point against the Fed's own published FOMC meeting-date calendar
+# (fomccalendars.htm, fomchistorical2015.htm through
+# fomchistorical2019.htm) and are carried forward UNCHANGED (per this
+# story's own instruction: "retain the already-verified decision/
+# effective relationships unless primary-source review finds another
+# discrepancy") -- for all 28, `stored_date == effective_date`, and
+# `decision_date` is one day earlier. Resolution for the EXACT tier
+# uses ONLY this explicit table, never a computed offset: a USD date
+# -- including any future one a later backfill run ingests -- that is
+# not a key here is UNRESOLVED, even if it would "look like" it fits
+# the usual +1-day pattern.
+_USD_STANDARD_PATTERN_CITATION = (
+    "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm ; "
+    "https://www.federalreserve.gov/monetarypolicy/fomchistorical2015.htm (and "
+    "fomchistorical2016.htm through fomchistorical2019.htm) -- decision date "
+    "cross-referenced against each meeting's own two-day calendar entry "
+    "(FX-44H); effective date follows the FOMC's Implementation Note "
+    "mechanism, e.g. https://www.federalreserve.gov/newsevents/pressreleases/"
+    "20151216a1.htm: 'Effective [date], the Federal Open Market Committee "
+    "directs the Desk to undertake open market operations...' -- confirmed "
+    "one day after the decision date for every meeting below not "
+    "individually re-cited (FX-44H.1)."
+)
+
+
+def _standard_pattern(stored_and_decision: tuple[date, date]) -> UsdPolicyTiming:
+    stored_date, decision_date = stored_and_decision
+    return UsdPolicyTiming(
+        stored_date=stored_date,
+        decision_date=decision_date,
+        effective_date=stored_date,  # unchanged from FX-44H for these 28
+        citation=_USD_STANDARD_PATTERN_CITATION,
+    )
+
+
+USD_POLICY_TIMINGS: dict[date, UsdPolicyTiming] = {
+    date(2015, 12, 16): UsdPolicyTiming(
+        stored_date=date(2015, 12, 16),
+        decision_date=date(2015, 12, 16),
+        effective_date=date(2015, 12, 17),  # FX-44H.1 correction -- was wrongly 2015-12-16
+        citation=(
+            "https://www.federalreserve.gov/newsevents/pressreleases/20151216a1.htm "
+            '("Implementation Note issued December 16, 2015"): "Effective December 17, '
+            "2015, the Federal Open Market Committee directs the Desk to undertake open "
+            'market operations..."'
+        ),
+        notes=(
+            "'Liftoff' -- the first hike since 2006. FX-44H had wrongly assumed a "
+            "same-day (0-day) stored/effective gap for this meeting; FX-44H.1 corrects "
+            "it using the FOMC's own Implementation Note, which was already being "
+            "published in this exact form in December 2015, not only 'since ~2019' as "
+            "FX-44H's own research note guessed."
+        ),
+    ),
+    date(2016, 12, 14): UsdPolicyTiming(
+        stored_date=date(2016, 12, 14),
+        decision_date=date(2016, 12, 14),
+        effective_date=date(2016, 12, 15),  # FX-44H.1 correction -- was wrongly 2016-12-14
+        citation=(
+            "https://www.federalreserve.gov/newsevents/pressreleases/20161214a1.htm "
+            '("Implementation Note issued December 14, 2016"): "Effective December 15, '
+            "2016, the Federal Open Market Committee directs the Desk to undertake open "
+            'market operations..."'
+        ),
+        notes=(
+            "The second post-crisis hike. FX-44H had wrongly assumed a same-day "
+            "(0-day) stored/effective gap for this meeting too; FX-44H.1 corrects it "
+            "the same way as 2015-12-16, above."
+        ),
+    ),
+    **{
+        stored: _standard_pattern((stored, decision))
+        for stored, decision in (
+            (date(2017, 3, 16), date(2017, 3, 15)),
+            (date(2017, 6, 15), date(2017, 6, 14)),
+            (date(2017, 12, 14), date(2017, 12, 13)),
+            (date(2018, 3, 22), date(2018, 3, 21)),
+            (date(2018, 6, 14), date(2018, 6, 13)),
+            (date(2018, 9, 27), date(2018, 9, 26)),
+            (date(2018, 12, 20), date(2018, 12, 19)),
+            (date(2019, 8, 1), date(2019, 7, 31)),
+            (date(2019, 9, 19), date(2019, 9, 18)),
+            (date(2019, 10, 31), date(2019, 10, 30)),
+            (date(2022, 3, 17), date(2022, 3, 16)),
+            (date(2022, 5, 5), date(2022, 5, 4)),
+            (date(2022, 6, 16), date(2022, 6, 15)),
+            (date(2022, 7, 28), date(2022, 7, 27)),
+            (date(2022, 9, 22), date(2022, 9, 21)),
+            (date(2022, 11, 3), date(2022, 11, 2)),
+            (date(2022, 12, 15), date(2022, 12, 14)),
+            (date(2023, 2, 2), date(2023, 2, 1)),
+            (date(2023, 3, 23), date(2023, 3, 22)),
+            (date(2023, 5, 4), date(2023, 5, 3)),
+            (date(2023, 7, 27), date(2023, 7, 26)),
+            (date(2024, 9, 19), date(2024, 9, 18)),
+            (date(2024, 11, 8), date(2024, 11, 7)),
+            (date(2024, 12, 19), date(2024, 12, 18)),
+            (date(2025, 9, 18), date(2025, 9, 17)),
+            (date(2025, 10, 30), date(2025, 10, 29)),
+            (date(2025, 12, 11), date(2025, 12, 10)),
+            (date(2026, 9, 17), date(2026, 9, 16)),  # this story's own worked example
+        )
+    },
 }
 
 _USD_EXACT_DECISION_TIME_RULE = ReleaseTimingRule(
@@ -172,17 +314,17 @@ _USD_EXACT_DECISION_TIME_RULE = ReleaseTimingRule(
         "Federal Reserve Board press release, March 13, 2013: 'Committee policy "
         "statements for all regularly scheduled meetings will be released at 2:00 "
         "p.m. Eastern Time.' Effective starting the next scheduled meeting. Applied "
-        "to the DECISION date from USD_EFFECTIVE_TO_DECISION_DATE, never to the "
-        "stored (effective-date) proxy directly."
+        "to each USD_POLICY_TIMINGS entry's own decision_date, never to the stored "
+        "proxy directly."
     ),
 )
 
 # Known irregular/inter-meeting/emergency USD change points -- NOT
 # regularly scheduled FOMC meeting decisions, so neither the
-# conservative rule's window nor USD_EFFECTIVE_TO_DECISION_DATE's
-# meeting-day framing applies; the true announcement date and/or time
-# for each of these differs from (or is not confidently identifiable
-# from) the stored effective-date proxy. Left provisional.
+# conservative rule's window nor USD_POLICY_TIMINGS's meeting-day
+# framing applies; the true announcement date and/or time for each of
+# these differs from (or is not confidently identifiable from) the
+# stored effective-date proxy. Left provisional.
 USD_IRREGULAR_DATES: dict[date, str] = {
     date(1998, 10, 15): "Inter-meeting cut (between the Sep 29 and Nov 17, 1998 meetings, "
     "LTCM/Russia crisis response) -- not a regular meeting-day announcement.",
@@ -208,19 +350,19 @@ def _resolve_usd(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
     if local_date in USD_IRREGULAR_DATES:
         return UnresolvedTiming(reason=USD_IRREGULAR_DATES[local_date])
 
-    decision_date = USD_EFFECTIVE_TO_DECISION_DATE.get(local_date)
-    if decision_date is not None:
-        # FX-44H: released_at is the FOMC statement/decision timestamp
-        # (structurally EARLIER than or equal to the stored date);
-        # effective_at is the stored proxy itself, which -- now
-        # correctly understood -- IS the genuine operational effective
-        # date, exactly the same announcement-before-effective pattern
-        # already modeled for EUR.
+    timing = USD_POLICY_TIMINGS.get(local_date)
+    if timing is not None:
+        # FX-44H.1: released_at comes from timing.decision_date (via the
+        # shared time-of-day rule); effective_at comes from timing.
+        # effective_at -- an INDEPENDENTLY populated fact, never derived
+        # from observation_period/the stored proxy. See UsdPolicyTiming's
+        # own docstring for why FX-44H's version of this conflated the
+        # two for 2015-12-16 and 2016-12-14 specifically.
         return ReleaseTimingResolution(
-            released_at=_USD_EXACT_DECISION_TIME_RULE.resolve(decision_date),
-            effective_at=observation_period,
+            released_at=_USD_EXACT_DECISION_TIME_RULE.resolve(timing.decision_date),
+            effective_at=_date_only_as_utc_midnight(timing.effective_date),
             confidence=ReleaseTimingConfidence.EXACT,
-            citation=_USD_EXACT_DECISION_TIME_RULE.citation,
+            citation=f"{timing.citation} ; {_USD_EXACT_DECISION_TIME_RULE.citation}",
         )
 
     if USD_CONSERVATIVE_RULE.covers(local_date):
@@ -230,7 +372,9 @@ def _resolve_usd(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
             confidence=USD_CONSERVATIVE_RULE.confidence,
             citation=USD_CONSERVATIVE_RULE.citation,
         )
-    return UnresolvedTiming(reason="no FX-44/FX-44H release-timing rule covers this date for USD")
+    return UnresolvedTiming(
+        reason="no FX-44/FX-44H/FX-44H.1 release-timing rule covers this date for USD"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -407,9 +551,9 @@ def _resolve_cad(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
 # automatically. `EUR_EXPLICIT_DECISION_DATE_OVERRIDES` is the ONLY
 # way a non-Wednesday date may still resolve -- an explicit, individually
 # researched and cited `date -> decision_date` entry, analogous to
-# USD_EFFECTIVE_TO_DECISION_DATE -- never a generic "subtract six days"
-# fallback. Empty today: no non-Wednesday EUR date has been
-# individually verified in this codebase yet.
+# USD_POLICY_TIMINGS -- never a generic "subtract six days" fallback.
+# Empty today: no non-Wednesday EUR date has been individually
+# verified in this codebase yet.
 _EUR_WEDNESDAY_ERA_START = date(2006, 3, 8)
 _EUR_TIME_CHANGE_DECISION_DATE = date(2022, 7, 21)
 _WEDNESDAY = 2  # date.weekday(): Monday=0 ... Wednesday=2 ... Sunday=6

@@ -70,6 +70,17 @@ class MacroObservationVintage:
             domain logic.
         effective_at: optional; see above. `None` for the (large)
             majority of series where release and effect coincide.
+            FX-44H.1: when the underlying source establishes only a
+            DATE the value takes effect (the common case -- see e.g.
+            `domain.policy_rate_release_timing_registry`'s EUR/USD
+            resolvers), `effective_at` is normalized to that date at
+            00:00:00 UTC purely to fit this field's `UtcTimestamp`
+            type -- this is a REPRESENTATION CONVENTION, not a claim
+            that 00:00 UTC is itself a source-verified intraday
+            instant. A caller must not read time-of-day precision into
+            `effective_at` unless the specific resolver/source that
+            populated it documents an actual verified intraday
+            effective time (none currently do).
         released_at_is_verified: whether `released_at` (and
             `effective_at`, where set) is a confirmed announcement/
             effective timestamp, as opposed to a same-day proxy

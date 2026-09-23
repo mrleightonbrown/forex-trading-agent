@@ -1,6 +1,6 @@
 {
   "story": "FX-44",
-  "generated_at": "2026-09-23T03:02:31+00:00",
+  "generated_at": "2026-09-23T03:46:31+00:00",
   "method": "Per-currency, per-change-point release timing is resolved by domain.policy_rate_release_timing_registry: a hand-researched, cited set of documented central-bank release-time conventions (EXACT confidence) and, where the exact minute is not confidently citable but a same-day/business-hours convention is confirmed, a deliberately conservative end-of-day bound guaranteed no earlier than the true release (CONSERVATIVE_SAFE_BOUND confidence). Known irregular/inter-meeting/emergency-action dates, and eras whose announcement/effective-date relationship was not confidently established, are excluded from both and remain fully provisional. No timestamp in this report is inferred merely from the daily rate series' change-point date.",
   "currencies": {
     "USD": {
@@ -49,7 +49,9 @@
       "conflicting_dates": [],
       "sources": [
         "https://www.federalreserve.gov/fomc/19940204default.htm ; https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
-        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm"
+        "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm ; https://www.federalreserve.gov/monetarypolicy/fomchistorical2015.htm (and fomchistorical2016.htm through fomchistorical2019.htm) -- decision date cross-referenced against each meeting's own two-day calendar entry (FX-44H); effective date follows the FOMC's Implementation Note mechanism, e.g. https://www.federalreserve.gov/newsevents/pressreleases/20151216a1.htm: 'Effective [date], the Federal Open Market Committee directs the Desk to undertake open market operations...' -- confirmed one day after the decision date for every meeting below not individually re-cited (FX-44H.1). ; https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
+        "https://www.federalreserve.gov/newsevents/pressreleases/20151216a1.htm (\"Implementation Note issued December 16, 2015\"): \"Effective December 17, 2015, the Federal Open Market Committee directs the Desk to undertake open market operations...\" ; https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
+        "https://www.federalreserve.gov/newsevents/pressreleases/20161214a1.htm (\"Implementation Note issued December 14, 2016\"): \"Effective December 15, 2016, the Federal Open Market Committee directs the Desk to undertake open market operations...\" ; https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm"
       ]
     },
     "EUR": {

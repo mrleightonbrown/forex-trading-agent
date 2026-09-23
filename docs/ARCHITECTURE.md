@@ -446,6 +446,36 @@ list catching every anomaly in advance. `EUR_EXPLICIT_DECISION_DATE_
 OVERRIDES` (empty today) is the only sanctioned escape hatch for a
 genuinely researched non-Wednesday exception.
 
+## USD effective-date correction (FX-44H.1)
+
+FX-44H correctly separated the FOMC decision date from the provider-
+stored change-point date, but silently assumed the stored date always
+equals the genuine operational EFFECTIVE date too -- an assumption
+that was itself wrong for the two rows FX-44H had already flagged as
+needing special handling (2015-12-16, 2016-12-14): the Fed's own
+Implementation Notes place both rows' true effective date one day
+AFTER the decision date, the same gap every other mapped meeting has.
+
+`USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date]` is replaced by
+`USD_POLICY_TIMINGS: dict[date, UsdPolicyTiming]` -- `stored_date`,
+`decision_date`, and `effective_date` as three genuinely independent
+fields on a new domain type, never assumed equal to one another by a
+formula. This is not a two-column mapping with a third column bolted
+on: the type exists specifically so a future discrepancy between the
+provider's date and the true effective date, for any USD meeting,
+cannot silently reintroduce this class of bug. `_resolve_usd` reads
+`effective_at` from `timing.effective_date` (via `_date_only_as_utc_
+midnight`, a normalization helper whose docstring is explicit that
+`00:00 UTC` represents a date-only fact, never a claimed intraday
+instant -- `MacroObservationVintage.effective_at`'s own docstring
+carries the same caveat now) -- never from `observation_period`
+directly.
+
+Remediation went through FX-44H's existing `RemediateReleaseTiming`/
+`correct_verified_release_timing` mechanism completely unmodified --
+exactly the value of having built it as a genuinely reusable
+mechanism rather than a one-off script.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

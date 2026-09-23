@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-22 (FX-44H)_
+_Last updated: 2026-09-22 (FX-44H.1)_
 
 ## What exists
 
@@ -739,6 +739,48 @@ _Last updated: 2026-09-22 (FX-44H)_
   live `IntegrityError` demonstration and the passing integration
   test). 1058 tests pass (full suite, up from 1023). Full details in
   `docs/DECISIONS.md`'s FX-44H entry.
+- **FX-44H.1: USD effective-date correction (complete)**. A narrow
+  factual correction to FX-44H: it correctly separated the FOMC
+  decision date from the provider-stored date, but silently assumed
+  the stored date always equals the genuine EFFECTIVE date too — wrong
+  for the same two rows FX-44H had already flagged (2015-12-16
+  "liftoff", 2016-12-14) — the Fed's own Implementation Notes place
+  both rows' true effective date one day after the decision date, the
+  same gap every other mapped meeting has.
+  `USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date]` is replaced by
+  `USD_POLICY_TIMINGS: dict[date, UsdPolicyTiming]` — a new domain
+  type with `stored_date`/`decision_date`/`effective_date` as three
+  genuinely independent, individually-populated fields, never assumed
+  equal to one another by a formula. All 30 entries re-expressed as
+  full records; the 28 unaffected ones carry forward FX-44H's
+  already-verified relationship unchanged, the 2 corrected ones carry
+  freshly-fetched Federal Reserve Implementation Note citations.
+  `_resolve_usd` now reads `effective_at` from `timing.effective_date`
+  (never from `observation_period` directly) via a new `_date_only_
+  as_utc_midnight` normalization helper, whose docstring — and a
+  matching addition to `MacroObservationVintage.effective_at`'s own —
+  is explicit that `00:00 UTC` represents a date-only fact, never a
+  claimed verified intraday instant. Remediation went through FX-44H's
+  existing `RemediateReleaseTiming`/`correct_verified_release_timing`
+  completely unmodified: running it against the corrected registry
+  found exactly the 2 affected rows (28 already matched), corrected
+  only `effective_at` for each (`released_at` was already right for
+  both), and a second run reported both `ALREADY_CORRECT` with zero
+  writes — `value`/`revision_sequence`/`series_key`/
+  `observation_period` confirmed unchanged directly via SQL and
+  dedicated tests. Total row count unchanged at 258; zero duplicate
+  rows; zero `CONFLICTING` change points remain across all four
+  currencies. Records, but does not solve, a future need for a way to
+  REVOKE research-ready status if an EXACT row's timing is later found
+  entirely wrong rather than merely imprecise (no declassification
+  mechanism exists yet — not needed by either correction in this
+  story, both of which stayed EXACT throughout). Regression-proof
+  discipline applied to both new checks (the type's ordering
+  validation, and `_resolve_usd`'s effective-date sourcing — the
+  latter confirmed to break not just the two new domain tests but also
+  both remediation-level tests, proving the fix is load-bearing
+  through the full pipeline). 1068 tests pass (full suite, up from
+  1058). Full details in `docs/DECISIONS.md`'s FX-44H.1 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

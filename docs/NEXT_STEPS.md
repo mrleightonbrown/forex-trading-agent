@@ -932,26 +932,63 @@ explicit override. Full details in `docs/DECISIONS.md`'s FX-44H entry.
 differential, no carry strategy, no JPY provider, no news/event-
 surprise work, no technical filtering follows this story.
 
+## FX-44H.1: USD effective-date correction (complete)
+
+A narrow factual correction to FX-44H: it correctly separated the
+FOMC decision date from the provider-stored date, but silently assumed
+the stored date always equals the genuine EFFECTIVE date too — wrong
+for the same two rows FX-44H had already flagged (2015-12-16
+"liftoff", 2016-12-14). The Federal Reserve's own Implementation Notes
+place both rows' true effective date one day after the decision date,
+the same gap every other mapped USD meeting has.
+`USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date]` is replaced by
+`USD_POLICY_TIMINGS: dict[date, UsdPolicyTiming]` — a new domain type
+keeping `stored_date`/`decision_date`/`effective_date` as three
+genuinely independent fields, never assumed equal by a formula, so
+this class of bug cannot silently recur for a future USD meeting.
+Remediation went through FX-44H's existing `RemediateReleaseTiming`/
+`correct_verified_release_timing` completely unmodified: it corrected
+exactly the 2 affected rows (28 already matched, untouched), and a
+second run reported both `ALREADY_CORRECT` with zero writes. Full
+details in `docs/DECISIONS.md`'s FX-44H.1 entry.
+
+**Recorded but explicitly not solved (this story's own point 7)**: if
+an observation currently classified EXACT later becomes UNRESOLVED
+because further research invalidates its timing entirely (not merely
+corrects a value within the tier), this codebase will eventually need
+a safe way to REVOKE research-ready status. No declassification
+mechanism exists yet — `correct_verified_release_timing` can only
+correct an EXACT row's timestamps within the EXACT tier; nothing can
+move a row from EXACT back to provisional or to CONSERVATIVE_SAFE_
+BOUND once classified. Neither correction in this story needed one.
+A future story must not assume this capability already exists.
+
+**Per this story's own explicit stop instruction**: no pair-rate
+differential, no carry strategy, no JPY provider work, no technical
+filtering, no news/event-surprise logic, no expected-rate differential,
+no decision engine changes follow this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-45's pair-rate differential
 experiment (now with a corrected USD EXACT tier and a carry-in-aware
 `require_research_ready_interval` as its mandatory pre-flight gate),
-the 18 still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3
-CAD known-irregular dates left unresolved, JPY provider mapping, the
-pre-2009 CAD gap, or any carry-strategy work.
+the future declassification-mechanism need noted above (not yet
+needed, not yet built), the 18 still-provisional pre-2006 EUR change
+points, the 8 USD/6 GBP/3 CAD known-irregular dates left unresolved,
+JPY provider mapping, the pre-2009 CAD gap, or any carry-strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44/FX-44H above are the explicitly-scoped
+FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1 above are the explicitly-scoped
 exceptions (domain model, storage-integrity hardening, canonical
 registry/provider-mapping definitions, real policy-rate ingestion,
-three rounds of hardening now, and genuine release-timing verification
-— still no strategy, no decision logic, no "carry" framing) and do not
-open the door to the rest of this phase. The same goes for the
-downstream epics not in this list at all (Decision Engine, Risk
-Engine, Paper Trading Execution, Performance Analytics, Shadow
-Trading) — none are part of the current phase.
+hardening and correction rounds, and genuine release-timing
+verification — still no strategy, no decision logic, no "carry"
+framing) and do not open the door to the rest of this phase. The same
+goes for the downstream epics not in this list at all (Decision
+Engine, Risk Engine, Paper Trading Execution, Performance Analytics,
+Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

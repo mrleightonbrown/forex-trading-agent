@@ -6146,3 +6146,153 @@ mutual-exclusivity invariant.
 Per this story's own explicit stop instruction: no pair differential,
 no carry strategy, no JPY provider, no news/event-surprise work, no
 technical filtering follows this story.
+
+## 2026-09-22 — FX-44H.1: USD effective-date correction
+
+A narrow factual correction to FX-44H's own USD registry, found by
+the same live primary-source scrutiny this whole epic has applied
+throughout: FX-44H correctly separated the FOMC decision date from the
+provider-stored change-point date, but it ALSO silently assumed the
+stored date always equals the genuine operational EFFECTIVE date --
+an assumption never stated, never tested, and wrong for the exact
+same two rows FX-44H had already flagged as needing special handling
+for a different reason.
+
+**The bug.** FX-44H's `USD_EFFECTIVE_TO_DECISION_DATE: dict[date,
+date]` mapped a stored date directly to a decision date, and
+`_resolve_usd` set `effective_at=observation_period` (the stored
+proxy) unconditionally -- correct for 28 of 30 entries, where the
+stored date genuinely does equal the effective date, but wrong for
+2015-12-16 ("liftoff") and 2016-12-14 (the second post-crisis hike).
+The Federal Reserve's own Implementation Notes -- confirmed to exist
+in exactly this document form as early as December 2015, contradicting
+FX-44H's own guess that they began "since ~2019"
+(https://www.federalreserve.gov/newsevents/pressreleases/
+20151216a1.htm, "Implementation Note issued December 16, 2015":
+"Effective December 17, 2015, the Federal Open Market Committee
+directs the Desk to undertake open market operations..."; https://
+www.federalreserve.gov/newsevents/pressreleases/20161214a1.htm,
+"Implementation Note issued December 14, 2016": "Effective December
+15, 2016, the Federal Open Market Committee directs the Desk to
+undertake open market operations...") -- establish the TRUE effective
+date is one day AFTER the decision date for BOTH, exactly the same gap
+every other mapped USD meeting has. FX-44H had instead modeled a
+same-day (0-day) stored/effective gap for these two specifically,
+because nothing in its data model distinguished "the provider's stored
+date" from "the genuine effective date" as independently-verifiable
+facts -- it only ever questioned whether the DECISION date could
+differ, never the effective date.
+
+**The fix.** `USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date]` is
+replaced by `USD_POLICY_TIMINGS: dict[date, UsdPolicyTiming]` (new
+domain type, `domain.policy_rate_release_timing_registry`) --
+`stored_date`, `decision_date`, and `effective_date` as three
+genuinely independent fields, each populated from an individual
+record, never assumed equal to one another by any formula. This is
+deliberately NOT a two-column mapping with a third column bolted on:
+the type exists specifically so a future discrepancy between the
+provider's date and the true effective date (for ANY USD meeting, not
+only these two) cannot silently reintroduce this exact class of bug.
+All 30 entries were re-expressed as full records -- the 28 unaffected
+ones carry forward FX-44H's already-verified decision/effective
+relationship unchanged (per this story's own instruction not to
+re-litigate what wasn't found to be wrong), sharing one citation
+pointing to the same FOMC-calendar cross-referencing evidence FX-44H
+used, now confirmed to ALSO be backed by the Implementation Note
+mechanism at least as far back as 2015; the 2 corrected ones carry
+their own freshly-verified, individually fetched primary citations.
+`_resolve_usd` now reads `effective_at` from `timing.effective_date`
+(via a new `_date_only_as_utc_midnight` normalization helper),
+never from `observation_period` directly.
+
+**Effective-date precision (this story's own explicit concern).**
+`_date_only_as_utc_midnight` and `MacroObservationVintage.effective_at`
+now both carry an explicit docstring warning: representing a date-only
+effective fact as a `UtcTimestamp` at `00:00:00 UTC` is a
+REPRESENTATION CONVENTION for fitting the fact into this field's type,
+never a claim that 00:00 UTC is itself a source-verified operational
+instant. No source this registry cites documents an intraday effective
+TIME for any USD or EUR entry; none is claimed.
+
+**Remediation, through the existing FX-44H mechanism, unmodified.**
+`RemediateReleaseTiming`/`MacroObservationRepository.correct_verified_
+release_timing` needed no code changes at all -- exactly the point of
+building them as a genuinely reusable mechanism in FX-44H rather than
+a one-off script. Running `scripts/remediate_usd_release_timing.py`
+against the corrected registry found precisely the 2 affected rows (28
+already matched and were left untouched) and corrected only
+`effective_at` for each (`released_at` was already correct for both --
+FX-44H's decision-date recovery was right, only the effective-date
+assumption was wrong): `2015-12-16` now reads `effective_at=
+2015-12-17T00:00:00Z`; `2016-12-14` now reads `effective_at=
+2016-12-15T00:00:00Z`. A second run reported both `ALREADY_CORRECT`
+with zero writes. `value`, `revision_sequence`, `series_key`, and
+`observation_period` were confirmed unchanged for both directly via
+SQL and via dedicated tests. Total row count unchanged at 258; zero
+duplicate rows; a full re-run of `scripts/verify_policy_rate_release_
+timing.py` shows zero `CONFLICTING` change points across all four
+currencies both before AND after remediation (`VerifyPolicyRateRelease
+Timing` correctly detected the 2 as `CONFLICTING` -- left untouched --
+the moment the registry changed, precisely the safety property that
+use case exists to provide, and precisely why remediation needed its
+own separate, deliberately-invoked mechanism rather than a relaxed
+`replace_provisional_release_timing`).
+
+**Future-safety note, recorded but explicitly NOT solved here (this
+story's own point 7).** If an observation currently classified EXACT
+later becomes UNRESOLVED because further source research invalidates
+its timing entirely (not merely corrects a value within the tier, as
+this story did), this codebase will eventually need a safe way to
+REVOKE research-ready status -- today, `correct_verified_release_
+timing` can only correct an EXACT row's timestamps WITHIN the EXACT
+tier; nothing can move a row from EXACT back to provisional (or to
+CONSERVATIVE_SAFE_BOUND) once classified. No declassification
+mechanism is built in this story -- neither of the two corrections
+here needed one (both stayed EXACT throughout) -- but a future story
+should not assume today's fail-closed guarantees also cover
+"un-verifying" a previously-verified row; they do not yet. Tracked in
+`docs/NEXT_STEPS.md`.
+
+**Regression-proof discipline applied to both new safety-relevant
+mechanisms**, each deliberately broken, confirmed to fail its
+dedicated test for the right reason, then restored: `UsdPolicyTiming`'s
+`effective_date >= decision_date` ordering check (dropped -- the new
+dedicated test failed correctly); `_resolve_usd`'s `effective_at`
+sourcing (reverted to reading `observation_period` again -- both new
+2015-12-16/2016-12-14 domain tests failed correctly, AND both
+remediation-level tests (unit and integration) failed correctly too,
+confirming the fix is genuinely load-bearing through the full
+resolve-then-remediate pipeline, not just at the point where it was
+introduced).
+
+**Tests**: `test_usd_2015_12_16_liftoff_decision_and_effective_dates`
+/ `test_usd_2016_12_14_second_hike_decision_and_effective_dates`
+(replacing FX-44H's own now-incorrect
+`test_usd_liftoff_2015_has_same_day_gap_not_minus_one`);
+`test_usd_regular_post_2013_meeting_is_exact` (2018-06-14, unchanged
+regression) and `test_usd_2026_09_17_worked_example` (2026-09-17,
+unchanged regression) both re-confirmed still correct;
+`test_usd_exact_date_not_in_explicit_mapping_is_unresolved` (unmapped
+future date, unchanged); `TestUsdPolicyTiming` (the new type's own
+validation: valid construction, `effective_date == decision_date`
+permitted, `effective_date < decision_date` rejected, empty citation
+rejected, immutability); `test_usd_policy_timings_has_no_formulaic_
+relationship_assumed` (structural: all 30 entries independently
+populated); new remediation tests reproducing the exact historical bug
+for both 2015-12-16 and 2016-12-14 (unit, fake-repository-based, and
+integration, live-Postgres-based) proving correction, idempotent
+rerun, and preserved `value`/`revision_sequence`/`series_key`/
+`observation_period`; a dedicated point-in-time visibility test for
+the corrected `released_at` boundary using 2015-12-16 specifically.
+
+**Verification**: `pytest` (1068 passed, full suite, up from 1058),
+`ruff`, `ruff format`, `mypy --strict`, `pre-commit run --all-files`.
+Live-verified against real Postgres as described above, including a
+second idempotent remediation run and a full verification re-run
+showing zero conflicts.
+
+Per this story's own explicit stop instruction: no pair-rate
+differential, no carry strategy, no JPY provider work, no technical
+filtering, no news/event-surprise logic, no expected-rate differential,
+no decision engine changes follow this story -- and FX-45 does not
+start automatically.

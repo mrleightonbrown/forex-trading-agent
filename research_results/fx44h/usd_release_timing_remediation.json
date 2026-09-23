@@ -1,24 +1,24 @@
 {
   "story": "FX-44H",
-  "generated_at": "2026-09-23T03:02:30+00:00",
+  "generated_at": "2026-09-23T03:46:30+00:00",
   "currency": "USD",
   "records": [
     {
       "observation_period": "2015-12-16T00:00:00+00:00",
       "outcome": "ALREADY_CORRECT",
       "previous_released_at": "2015-12-16T19:00:00+00:00",
-      "previous_effective_at": "2015-12-16T00:00:00+00:00",
+      "previous_effective_at": "2015-12-17T00:00:00+00:00",
       "corrected_released_at": "2015-12-16T19:00:00+00:00",
-      "corrected_effective_at": "2015-12-16T00:00:00+00:00",
+      "corrected_effective_at": "2015-12-17T00:00:00+00:00",
       "reason": "stored timing already matches the registry's current resolution"
     },
     {
       "observation_period": "2016-12-14T00:00:00+00:00",
       "outcome": "ALREADY_CORRECT",
       "previous_released_at": "2016-12-14T19:00:00+00:00",
-      "previous_effective_at": "2016-12-14T00:00:00+00:00",
+      "previous_effective_at": "2016-12-15T00:00:00+00:00",
       "corrected_released_at": "2016-12-14T19:00:00+00:00",
-      "corrected_effective_at": "2016-12-14T00:00:00+00:00",
+      "corrected_effective_at": "2016-12-15T00:00:00+00:00",
       "reason": "stored timing already matches the registry's current resolution"
     },
     {
