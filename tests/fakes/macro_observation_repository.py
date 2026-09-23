@@ -83,6 +83,55 @@ class FakeMacroObservationRepository:
             released_at_is_conservative_bound=not is_exact,
         )
 
+    async def correct_verified_release_timing(
+        self,
+        series_key: str,
+        observation_period: UtcTimestamp,
+        revision_sequence: int,
+        expected_current_released_at: UtcTimestamp,
+        expected_current_effective_at: UtcTimestamp | None,
+        corrected_released_at: UtcTimestamp,
+        corrected_effective_at: UtcTimestamp | None,
+    ) -> None:
+        # FX-44H: mirrors the real repository's optimistic-concurrency
+        # guard -- see its own docstring for why the expected_current_*
+        # check matters, not just the released_at_is_verified check.
+        key = (series_key, observation_period.value, revision_sequence)
+        existing = self._vintages.get(key)
+        if existing is None:
+            raise ValueError(
+                f"no vintage exists at identity (series_key={series_key!r}, "
+                f"observation_period={observation_period.value.isoformat()!r}, "
+                f"revision_sequence={revision_sequence})"
+            )
+        if not existing.released_at_is_verified:
+            raise ValueError(
+                f"vintage identity (series_key={series_key!r}, "
+                f"observation_period={observation_period.value.isoformat()!r}, "
+                f"revision_sequence={revision_sequence}) is not released_at_is_verified"
+                "=True -- correct_verified_release_timing only corrects an already-EXACT "
+                "row; nothing to correct"
+            )
+        current_matches = (
+            existing.released_at == expected_current_released_at
+            and existing.effective_at == expected_current_effective_at
+        )
+        if not current_matches:
+            raise ValueError(
+                f"vintage identity (series_key={series_key!r}, "
+                f"observation_period={observation_period.value.isoformat()!r}, "
+                f"revision_sequence={revision_sequence}) does not currently have "
+                f"released_at={expected_current_released_at.value.isoformat()!r}/"
+                f"effective_at={expected_current_effective_at!r} as expected -- it was "
+                "already corrected (or never had the value this correction targets); "
+                "refusing to apply a stale correction"
+            )
+        self._vintages[key] = dataclasses.replace(
+            existing,
+            released_at=corrected_released_at,
+            effective_at=corrected_effective_at,
+        )
+
     async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
         return tuple(v for v in self._vintages.values() if v.series_key == series_key)
 

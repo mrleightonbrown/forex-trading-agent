@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-22 (FX-44)_
+_Last updated: 2026-09-22 (FX-44H)_
 
 ## What exists
 
@@ -676,6 +676,69 @@ _Last updated: 2026-09-22 (FX-44)_
   confirmed to fail its dedicated test for the right reason, then
   restored. 1023 tests pass (full suite, up from 967). Full details in
   `docs/DECISIONS.md`'s FX-44 entry.
+- **FX-44H: release-timing semantic hardening (complete)**. Fixes one
+  real bug FX-44 shipped plus four related structural gaps. (1) USD's
+  modern (2013+) EXACT tier previously conflated FRED's stored
+  change-point date with the FOMC announcement date and set
+  `effective_at=None` — wrong: that date is the operational EFFECTIVE
+  date, per the FOMC's own "Implementation Note" mechanism. All 30
+  currently-EXACT USD change points were individually cross-referenced
+  against the Fed's own published meeting calendars — not a blind
+  `-1 day` formula, which this exercise proved would have been wrong
+  for 2 of the 30 (2015-12-16 "liftoff" and 2016-12-14 have a same-day
+  gap, not +1). New `USD_EFFECTIVE_TO_DECISION_DATE`
+  (`domain.policy_rate_release_timing_registry`) is an explicit,
+  individually-cited `dict[date, date]` with NO formulaic fallback — a
+  USD date not present as a mapping key is unresolved, even a future
+  one. (2) New `MacroObservationRepository.correct_verified_release_
+  timing` (port + both implementations) — a deliberately SEPARATE
+  atomic UPDATE from `replace_provisional_release_timing`, with the
+  opposite precondition (`released_at_is_verified = true`) plus an
+  optimistic-concurrency guard on the caller's expected current
+  values, proven safe under real concurrent correction attempts by a
+  new `asyncio.gather` regression test. New `application.use_cases.
+  remediate_release_timing.RemediateReleaseTiming` — a separate,
+  deliberately-invoked use case (never automatic) that compares every
+  currently-EXACT vintage against the registry's current resolution
+  and corrects mismatches; idempotent by construction.
+  `scripts/remediate_usd_release_timing.py` ran this live: all 30 USD
+  rows corrected on the first run, zero writes (`ALREADY_CORRECT`) on
+  an immediate second run — confirmed via direct SQL, including the
+  story's own worked example (`2026-09-17` now reads
+  `released_at=2026-09-16T18:00:00Z`,
+  `effective_at=2026-09-17T00:00:00Z`), zero duplicate rows, zero
+  remaining `CONFLICTING` change points across all four currencies. (3)
+  `require_research_ready_interval` previously judged only in-interval
+  vintages — insufficient, since a point-in-time query anywhere in an
+  interval with zero in-interval changes still returns whatever
+  vintage was carried in from before it. New `domain.research_
+  readiness.select_research_candidates` derives BOTH the carry-in
+  state and in-interval observations from a series' COMPLETE stored
+  history, so a caller cannot hand-select the wrong candidates;
+  `require_research_ready_interval`'s signature now takes that
+  complete history directly, and an entirely empty derived candidate
+  set fails closed too (`no_baseline` on `ResearchIntervalNotReadyError`
+  ) rather than vacuously passing. New regression using a
+  2008-01-22-like unresolved carry-in with a February interval
+  containing no changes of its own, proven to fail. (4) Exact/
+  conservative mutual exclusivity is now structurally enforced at both
+  the domain layer (`MacroObservationVintage.__post_init__`) and the
+  persistence layer (migration `f350d505412b`'s new CHECK constraint,
+  confirmed live via a raw `UPDATE` correctly rejected with
+  `IntegrityError`). (5) ECB citations now point to the ECB's own
+  official 27 June 2022 press release (replacing a tweet and a news
+  aggregator); `_resolve_eur` now structurally requires `stored_date.
+  weekday() == Wednesday` before applying its six-day transformation —
+  previously dependent entirely on a hand-curated exclusion list —
+  with a new, empty-today `EUR_EXPLICIT_DECISION_DATE_OVERRIDES` as
+  the only sanctioned escape hatch. Regression-proof discipline applied
+  to every new mechanism except the CHECK constraint's own drop/
+  recreate (correctly blocked by the sandbox's permission system as a
+  destructive schema action against the live dev database, and not
+  routed around — this one mechanism's protection instead rests on a
+  live `IntegrityError` demonstration and the passing integration
+  test). 1058 tests pass (full suite, up from 1023). Full details in
+  `docs/DECISIONS.md`'s FX-44H entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

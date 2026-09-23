@@ -1,7 +1,16 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forex_agent.infrastructure.db.base import Base
@@ -50,6 +59,15 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "series_key",
             "released_at",
         ),
+        # FX-44H: mirrors the domain-level __post_init__ check -- a row can
+        # never be BOTH exactly verified AND a deliberately inexact
+        # conservative bound. Enforced here too (not just in the domain
+        # constructor) so the invariant holds even for a row written by
+        # some future path that bypasses MacroObservationVintage entirely.
+        CheckConstraint(
+            "NOT (released_at_is_verified AND released_at_is_conservative_bound)",
+            name="ck_macro_observation_vintages_exclusive_timing_confidence",
+        ),
     )
 
     series_key: Mapped[str] = mapped_column(String, nullable=False)
@@ -73,9 +91,12 @@ class MacroObservationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # UPDATE -- True marks released_at as a deliberately conservative,
     # research-safe bound (not the exact confirmed moment) rather than
     # an exact verified timestamp. Never both this and released_at_is_
-    # verified True at once in practice (see the domain field's own
-    # docstring); defaults False (provisional, same as released_at_is_
-    # verified) so an unclassified row makes no timing claim at all.
+    # verified True at once -- STRUCTURALLY enforced (FX-44H) by both
+    # the domain field's own __post_init__ check and this table's
+    # ck_macro_observation_vintages_exclusive_timing_confidence CHECK
+    # constraint below; defaults False (provisional, same as released_
+    # at_is_verified) so an unclassified row makes no timing claim at
+    # all.
     released_at_is_conservative_bound: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )

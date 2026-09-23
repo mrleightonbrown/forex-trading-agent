@@ -908,22 +908,46 @@ performance research, no JPY provider ingestion, no COT, no
 macro-event surprises, no news, no decision logic follows this story
 — the differential experiment (FX-45) does not start automatically.
 
+## FX-44H: release-timing semantic hardening (complete)
+
+Fixed a real bug FX-44 shipped (USD's modern EXACT tier conflated the
+stored FRED date with the FOMC announcement date; it is actually the
+operational EFFECTIVE date — corrected via an explicit, individually-
+Fed-calendar-verified `date -> date` mapping, not a formula, after
+proving 2 of the 30 affected dates break a naive `-1 day` rule) plus
+four related structural gaps: a new, deliberately separate
+`correct_verified_release_timing` repository method and `Remediate
+ReleaseTiming` use case corrected all 30 already-written USD rows live
+(idempotent, concurrency-safe); `require_research_ready_interval` now
+accounts for carry-in state (a provisional observation before an
+interval can make the whole interval unsafe even with zero changes
+inside it) via new `select_research_candidates`, and fails closed on
+an empty candidate set; exact/conservative mutual exclusivity is now
+structurally enforced at both the domain and persistence layers;
+ECB citations now point to the ECB's own official press release, and
+`_resolve_eur` fails closed on any non-Wednesday date without an
+explicit override. Full details in `docs/DECISIONS.md`'s FX-44H entry.
+
+**Per this story's own explicit stop instruction**: no pair
+differential, no carry strategy, no JPY provider, no news/event-
+surprise work, no technical filtering follows this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-45's pair-rate differential
-experiment (now with `require_research_ready_interval` as its
-mandatory pre-flight gate), the 18 still-provisional pre-2006 EUR
-change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
-unresolved, JPY provider mapping, the pre-2009 CAD gap, or any
-carry-strategy work.
+experiment (now with a corrected USD EXACT tier and a carry-in-aware
+`require_research_ready_interval` as its mandatory pre-flight gate),
+the 18 still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3
+CAD known-irregular dates left unresolved, JPY provider mapping, the
+pre-2009 CAD gap, or any carry-strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44 above are the explicitly-scoped exceptions
-(domain model, storage-integrity hardening, canonical registry/
-provider-mapping definitions, real policy-rate ingestion, two rounds
-of its own hardening, and now genuine release-timing verification —
-still no strategy, no decision logic, no "carry" framing) and do not
+FX-43H/FX-43H.1/FX-44/FX-44H above are the explicitly-scoped
+exceptions (domain model, storage-integrity hardening, canonical
+registry/provider-mapping definitions, real policy-rate ingestion,
+three rounds of hardening now, and genuine release-timing verification
+— still no strategy, no decision logic, no "carry" framing) and do not
 open the door to the rest of this phase. The same goes for the
 downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow

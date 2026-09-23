@@ -96,21 +96,23 @@ class MacroObservationVintage:
             DELIBERATELY conservative bound -- not the exact confirmed
             announcement moment, but a timestamp researched and chosen
             to be guaranteed no earlier than the true (unknown-exact)
-            release (FX-44 section 3). Defaults to `False`. Mutually
-            exclusive in PRACTICE with `released_at_is_verified` (a
-            timestamp is either exactly confirmed, or a safe stand-in
-            for an unconfirmed one, never claimed as both), though
-            nothing in this type enforces that -- the fail-closed
-            atomic-UPDATE predicate in `replace_provisional_release_
-            timing` is what actually prevents a row from being written
-            through both paths. Exists specifically so a genuinely
-            conservative, research-safe timestamp is never confused
-            with an exact one: `released_at_is_verified=True` must
-            never be used to mean "we guessed a safely late time" --
-            see `domain.research_readiness.is_research_safe`, which
-            treats EITHER flag as sufficient for point-in-time research
-            use, while keeping the two provenance claims distinct in
-            storage and in every report.
+            release (FX-44 section 3). Defaults to `False`. STRUCTURALLY
+            mutually exclusive with `released_at_is_verified` (FX-44H):
+            `__post_init__` rejects both `True` at once, a timestamp is
+            either exactly confirmed or a safe stand-in for an
+            unconfirmed one, never claimed as both -- mirrored by a
+            Postgres CHECK constraint at the persistence layer, and by
+            the fail-closed atomic-UPDATE predicate in `replace_
+            provisional_release_timing`/`correct_verified_release_
+            timing`, which never write both flags `True` either.
+            Exists specifically so a genuinely conservative,
+            research-safe timestamp is never confused with an exact
+            one: `released_at_is_verified=True` must never be used to
+            mean "we guessed a safely late time" -- see `domain.
+            research_readiness.is_research_safe`, which treats EITHER
+            flag as sufficient for point-in-time research use, while
+            keeping the two provenance claims distinct in storage and
+            in every report.
     """
 
     series_key: str
@@ -160,4 +162,17 @@ class MacroObservationVintage:
             raise TypeError(
                 "released_at_is_conservative_bound must be a bool, "
                 f"got {type(self.released_at_is_conservative_bound).__name__}"
+            )
+        if self.released_at_is_verified and self.released_at_is_conservative_bound:
+            # FX-44H: structurally impossible to construct a vintage claiming
+            # BOTH an exact confirmed timestamp AND a deliberately inexact
+            # conservative bound at once -- these are mutually exclusive
+            # provenance claims about the SAME released_at value. Mirrored by
+            # a Postgres CHECK constraint (infrastructure.db.models.
+            # macro_observation_vintage) so this holds in storage too, not
+            # just at construction time.
+            raise ValueError(
+                "released_at_is_verified and released_at_is_conservative_bound must "
+                "not both be True -- a timestamp cannot be simultaneously exactly "
+                "confirmed and a deliberately inexact conservative bound"
             )

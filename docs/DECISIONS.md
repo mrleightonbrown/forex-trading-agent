@@ -5955,3 +5955,194 @@ performance research, no JPY provider ingestion, no COT, no
 macro-event surprises, no news, no decision logic follows this story
 -- and the differential experiment (FX-45) does not start
 automatically.
+
+## 2026-09-22 — FX-44H: release-timing semantic hardening
+
+A review of FX-44 found a real, demonstrable bug in its USD
+resolution, plus four related gaps in the mechanisms around it. This
+story fixes all five, using the SAME live-Postgres-verification
+discipline as every prior story in this epic.
+
+**1. USD announcement/effective semantics were backwards for the
+modern (2013+) EXACT tier.** FX-44 treated FRED's stored change-point
+date as the FOMC announcement date and set `effective_at=None`. This
+is wrong: that stored date is the target range's OPERATIONAL EFFECTIVE
+date, and the FOMC's own "Implementation Note" (a document accompanying
+the main statement, e.g. "Effective January 29, 2026, the Federal Open
+Market Committee directs the Desk to...",
+https://www.federalreserve.gov/newsevents/pressreleases/
+monetary20260128a1.htm) states an explicit effective date that is
+LATER than the decision itself -- one day later, in every case this
+story checked. Per the story's own explicit instruction not to assume
+a blind `-1 day` offset, every one of the 30 currently EXACT-classified
+USD change points was individually cross-referenced against the Fed's
+own published FOMC meeting calendars (fomccalendars.htm for 2021-2027,
+fomchistorical2015.htm through fomchistorical2019.htm for the rest).
+This paid off directly: 2015-12-16 ("liftoff", the first hike since
+2006) and 2016-12-14 (the second hike) both have a same-day (0-day)
+gap, predating the now-standard next-day mechanism -- a blind `-1 day`
+formula would have gotten these two specific, real historical dates
+wrong. `USD_EFFECTIVE_TO_DECISION_DATE` (`domain.policy_rate_
+release_timing_registry`) is therefore an explicit, individually-cited
+`dict[date, date]`, not a formula -- the EXACT tier now has NO
+fallback transformation at all: a USD date not present as a mapping
+key is unresolved, even a future one that "looks like" it fits the
+usual pattern. `effective_at` is now populated (the original stored
+proxy, kept as-is) for all 30, mirroring the same announcement-before-
+effective pattern already established for EUR.
+
+**2. Remediating the 30 already-written rows required a genuinely new
+mechanism, not a bigger hammer.** FX-44 had already written the WRONG
+timing into Postgres for these 30 rows, and `replace_provisional_
+release_timing`'s whole safety contract is refusing to touch an
+already-classified row -- exactly the rows needing a fix. Rather than
+weakening that guarantee, `MacroObservationRepository.correct_
+verified_release_timing` (new port method) is a SEPARATE, deliberately
+different atomic conditional UPDATE: it requires the row to ALREADY be
+`released_at_is_verified=True` (the opposite precondition), plus an
+exact match on the caller's `expected_current_released_at`/
+`expected_current_effective_at` -- an optimistic-concurrency guard that
+makes a second, accidental correction attempt fail closed (the
+expected value is now stale) rather than silently reapplying, and a
+concurrent double-correction race structurally impossible (proven by a
+new `asyncio.gather` concurrency regression test, mirroring FX-43H.1's
+own). `application.use_cases.remediate_release_timing.
+RemediateReleaseTiming` is the use case that drives this: for every
+currently-EXACT vintage of a currency, it compares stored timing
+against what the (now-fixed) registry resolves NOW, corrects a
+mismatch, and reports (without writing) a row that's already correct
+-- idempotent by construction. `scripts/remediate_usd_release_
+timing.py` ran this live against the real 30 rows: all 30 corrected
+on the first run, all 30 reported `ALREADY_CORRECT` (zero writes) on
+an immediate second run. This is a genuinely different operation from
+routine verification, run deliberately, not automatically -- see
+`docs/ARCHITECTURE.md`'s own framing of the split.
+
+**3. Research readiness didn't account for carry-in state.**
+`require_research_ready_interval` originally judged only vintages
+whose `observation_period` fell literally inside the selected
+interval -- insufficient, because a query anywhere in an interval with
+zero in-interval changes still returns whatever vintage was CARRIED IN
+from before it (`latest_available_as_of`/`observation_as_known_at`'s
+own semantics). An interval with no changes of its own is not
+vacuously safe: if the observation that actually governs the whole
+interval is provisional, the interval is unsafe even though nothing
+"inside" it looks wrong. New `domain.research_readiness.select_
+research_candidates` derives BOTH the carry-in state (the latest
+`observation_period` at or before `interval_start`) and the
+in-interval observations from a series' COMPLETE stored history, so a
+caller cannot get this wrong by hand-selecting the wrong candidate set
+-- `require_research_ready_interval`'s own signature changed to take
+that complete history directly, not a pre-filtered list. An interval
+with an EMPTY derived candidate set (no carry-in and nothing in-
+interval either) now fails closed too, via a new `no_baseline` flag on
+`ResearchIntervalNotReadyError` -- "no evidence" is not the same as
+"nothing wrong found", and must not silently pass.
+
+**4. Exact/conservative mutual exclusivity is now structurally
+enforced, at both layers the story named.** Nothing previously stopped
+`MacroObservationVintage(released_at_is_verified=True, released_at_
+is_conservative_bound=True)` from being constructed -- the two
+FX-44H.1/FX-44 docstrings only asserted this was true "in practice".
+`__post_init__` now rejects it explicitly. Migration `f350d505412b`
+adds `ck_macro_observation_vintages_exclusive_timing_confidence`, a
+Postgres CHECK constraint mirroring the same rule -- applying this
+migration is itself the existing-data verification (Postgres refuses
+to add a CHECK constraint over data that already violates it; this
+migration applied cleanly, and a direct query confirmed zero violating
+rows before it ran). Live-verified twice: a raw `UPDATE` attempting to
+set both flags on a real row was rejected with `IntegrityError` and
+rolled back cleanly (confirmed via direct SQL that zero rows ended up
+violating the invariant), and a dedicated integration test reproduces
+this exact scenario formally.
+
+**5. ECB provenance hardened.** The EUR timing rules' citations were
+secondary sources (investinglive.com, an ECB tweet) even though a
+primary one exists: the ECB's own official 27 June 2022 press release,
+"New times for ECB's monetary policy decisions and press conference"
+(https://www.ecb.europa.eu/press/pr/date/2022/html/
+ecb.pr220627~73acedf868.en.html), which explicitly states "Starting
+from 21 July, monetary policy decisions will be published at 14:15 CET
+(instead of 13:45)" -- one document, authoritative for BOTH the old
+and new times, replacing both prior citations. Separately, `_resolve_
+eur` previously relied ENTIRELY on a hand-curated exclusion list
+(`EUR_IRREGULAR_DATES`) to keep the six-day transformation away from
+non-Wednesday dates -- safe only as long as every past anomaly had
+already been found and listed by hand. It now REQUIRES `stored_date.
+weekday() == Wednesday` structurally before ever applying the
+transformation, with `EUR_EXPLICIT_DECISION_DATE_OVERRIDES` (new,
+empty today) as the only sanctioned way a genuinely-researched
+non-Wednesday date may still resolve -- never a generic fallback. This
+means a future anomalous EUR date a later backfill run ingests fails
+closed automatically, not only the two anomalies already known today.
+
+**Regression-proof discipline applied to every new safety-relevant
+mechanism**, each deliberately broken, confirmed to fail its dedicated
+test for the right reason, then restored: the USD explicit mapping
+(reverted to FX-44's original per-date-formula bug -- all 4 relevant
+tests failed correctly, including one proving a random future date
+would wrongly resolve); the EUR Wednesday structural check (disabled
+-- the new non-Wednesday test failed correctly); the carry-in
+derivation (`select_research_candidates` reverted to excluding
+carry-in -- 5 tests failed correctly, including both new `Test
+SelectResearchCandidates` cases); `correct_verified_release_timing`'s
+optimistic-concurrency guard (expected-value predicate clauses
+dropped -- the idempotency, stale-value, AND concurrency tests all
+failed correctly, the concurrency test specifically by showing
+`outcomes=[None, None]`, both racers wrongly succeeding). The CHECK
+constraint's own drop/recreate cycle was not attempted: the sandbox's
+permission system correctly blocked a direct `ALTER TABLE ... DROP
+CONSTRAINT` against the live dev database as a destructive schema
+action, and that block was respected rather than routed around --
+this mechanism's protection instead rests on the live `IntegrityError`
+demonstration and passing integration test described in point 4 above,
+plus the migration's own clean-apply verification.
+
+**Tests**: `test_usd_2026_09_17_worked_example` (this story's own
+worked example, verbatim); `test_usd_regular_post_2013_meeting_is_
+exact` (2018-06-14, a second historical post-2015 case, corrected in
+place); `test_usd_liftoff_2015_has_same_day_gap_not_minus_one`;
+`test_usd_exact_date_not_in_explicit_mapping_is_unresolved`; new
+`correct_verified_release_timing` tests (fake and integration:
+corrects a stale row, rejects missing identity, rejects a non-verified
+row, rejects a stale expected value, has no `value` parameter, and a
+new `asyncio.gather` concurrency regression); new `Remediate
+ReleaseTiming` tests (fake and integration: corrects a stale row,
+idempotent rerun, an already-correct row is reported without writing,
+a provisional row is not remediated at all, a conservative-bound row
+is not remediated, an EXACT row for a now-unresolved date is reported
+`NOT_APPLICABLE` and left untouched); `test_provisional_carry_in_
+blocks_an_otherwise_empty_interval` (this story's own required
+regression -- a 2008-01-22-like unresolved observation with a February
+interval containing no changes of its own); `test_verified_carry_in_
+permits_an_otherwise_empty_interval` (the safe counterpart);
+`test_empty_candidate_set_fails_closed` / `test_no_baseline_interval_
+fails_closed_even_with_unrelated_history`; `TestSelectResearch
+Candidates` (direct tests of the new derivation helper);
+`test_rejects_exact_and_conservative_simultaneously` (domain) and
+`test_database_rejects_exact_and_conservative_simultaneously`
+(integration, a raw UPDATE against the real CHECK constraint);
+`test_eur_non_wednesday_effective_date_is_unresolved_unless_
+explicitly_mapped` and `test_eur_non_wednesday_date_resolves_when_
+explicitly_overridden` (the override mechanism itself, via
+`monkeypatch.setitem`, proven to work, not just proven empty).
+
+**Live run against real Postgres**: all 30 USD EXACT rows corrected on
+the first remediation run, `ALREADY_CORRECT` (zero writes) on the
+second; the story's own worked example verified directly via SQL --
+`2026-09-17` now reads `released_at=2026-09-16T18:00:00Z` (14:00 EDT),
+`effective_at=2026-09-17T00:00:00Z`; zero duplicate rows anywhere (an
+UPDATE, not an INSERT -- total row count unchanged at 258); a full
+re-run of `scripts/verify_policy_rate_release_timing.py` afterward
+shows zero `CONFLICTING` change points across all four currencies
+(previously 30, all USD, immediately after the resolver fix and before
+remediation); final aggregate counts across all 258 rows: 139 exact,
+84 conservative-safe, 35 unresolved, zero rows violating the new
+mutual-exclusivity invariant.
+
+**Verification**: `pytest` (1058 passed, full suite, up from 1023),
+`ruff`, `ruff format`, `mypy --strict`, `pre-commit run --all-files`.
+
+Per this story's own explicit stop instruction: no pair differential,
+no carry strategy, no JPY provider, no news/event-surprise work, no
+technical filtering follows this story.

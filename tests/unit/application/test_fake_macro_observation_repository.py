@@ -556,6 +556,177 @@ async def test_replace_provisional_release_timing_rejects_already_conservative_r
     assert result.released_at == _ts(2024, 7, 1)
 
 
+# ---------------------------------------------------------------------------
+# FX-44H: correct_verified_release_timing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_corrects_a_stale_exact_row() -> None:
+    fake = FakeMacroObservationRepository()
+    period = _ts(2018, 6, 14)
+    stale = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("1.875"),
+        released_at=_ts(2018, 6, 14),  # FX-44's original, wrong value
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    await fake.add_vintage(stale)
+
+    corrected_released_at = _ts(2018, 6, 13)
+    corrected_effective_at = _ts(2018, 6, 14)
+    await fake.correct_verified_release_timing(
+        SERIES_KEY,
+        period,
+        0,
+        expected_current_released_at=_ts(2018, 6, 14),
+        expected_current_effective_at=None,
+        corrected_released_at=corrected_released_at,
+        corrected_effective_at=corrected_effective_at,
+    )
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2099, 1, 1))
+    assert result is not None
+    assert result.released_at == corrected_released_at
+    assert result.effective_at == corrected_effective_at
+    assert result.released_at_is_verified is True  # tier unchanged
+    assert result.value == Decimal("1.875")  # value untouched
+    assert result.revision_sequence == 0  # never treated as a revision
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_is_idempotent_on_rerun() -> None:
+    # FX-44H test requirement: corrected classified rows can be
+    # remediated once and are idempotent.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2018, 6, 14)
+    stale = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=period,
+        value=Decimal("1.875"),
+        released_at=_ts(2018, 6, 14),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    await fake.add_vintage(stale)
+
+    await fake.correct_verified_release_timing(
+        SERIES_KEY,
+        period,
+        0,
+        expected_current_released_at=_ts(2018, 6, 14),
+        expected_current_effective_at=None,
+        corrected_released_at=_ts(2018, 6, 13),
+        corrected_effective_at=_ts(2018, 6, 14),
+    )
+
+    # A second attempt using the SAME (now stale) expected_current_released_at
+    # must fail closed, not silently reapply.
+    with pytest.raises(ValueError, match="already corrected"):
+        await fake.correct_verified_release_timing(
+            SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=_ts(2018, 6, 14),
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+    result = await fake.observation_as_known_at(SERIES_KEY, period, _ts(2099, 1, 1))
+    assert result is not None
+    assert result.released_at == _ts(2018, 6, 13)  # unchanged by the rejected second attempt
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_rejects_missing_identity() -> None:
+    fake = FakeMacroObservationRepository()
+
+    with pytest.raises(ValueError, match="no vintage exists"):
+        await fake.correct_verified_release_timing(
+            SERIES_KEY,
+            _ts(2018, 6, 14),
+            0,
+            expected_current_released_at=_ts(2018, 6, 14),
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_rejects_non_verified_row() -> None:
+    # A still-provisional (or conservative-bound) row has nothing to
+    # "correct" via this method -- it isn't in the EXACT tier at all.
+    fake = FakeMacroObservationRepository()
+    period = _ts(2018, 6, 14)
+    await fake.add_vintage(
+        MacroObservationVintage(
+            series_key=SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=period,
+            revision_sequence=0,
+            source="FRED",
+        )
+    )
+
+    with pytest.raises(ValueError, match="not released_at_is_verified=True"):
+        await fake.correct_verified_release_timing(
+            SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=period,
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_rejects_stale_expected_value() -> None:
+    # The optimistic-concurrency guard: an expected_current_released_at
+    # that does not match what's ACTUALLY stored must be rejected, not
+    # blindly applied -- covers "someone already corrected this
+    # differently" as well as "you never knew the real current value".
+    fake = FakeMacroObservationRepository()
+    period = _ts(2018, 6, 14)
+    await fake.add_vintage(
+        MacroObservationVintage(
+            series_key=SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=_ts(2018, 6, 14),
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+
+    with pytest.raises(ValueError, match="does not currently have"):
+        await fake.correct_verified_release_timing(
+            SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=_ts(1999, 1, 1),  # wrong -- not what's stored
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_has_no_value_parameter() -> None:
+    import inspect
+
+    signature = inspect.signature(FakeMacroObservationRepository.correct_verified_release_timing)
+    assert "value" not in signature.parameters
+
+
 @pytest.mark.asyncio
 async def test_replace_provisional_release_timing_has_no_value_parameter() -> None:
     # Structural guarantee, not just a runtime check: the method signature

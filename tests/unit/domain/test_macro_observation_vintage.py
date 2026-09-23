@@ -150,3 +150,11 @@ def test_released_at_is_conservative_bound_can_be_explicitly_true() -> None:
 def test_rejects_non_bool_released_at_is_conservative_bound() -> None:
     with pytest.raises(TypeError, match="released_at_is_conservative_bound"):
         _vintage(released_at_is_conservative_bound="yes")  # type: ignore[arg-type]
+
+
+def test_rejects_exact_and_conservative_simultaneously() -> None:
+    # FX-44H: a timestamp cannot be simultaneously exactly confirmed AND a
+    # deliberately inexact conservative bound -- structurally rejected,
+    # not merely discouraged by convention.
+    with pytest.raises(ValueError, match="must not both be True"):
+        _vintage(released_at_is_verified=True, released_at_is_conservative_bound=True)

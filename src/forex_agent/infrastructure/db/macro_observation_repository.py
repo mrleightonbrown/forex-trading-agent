@@ -136,6 +136,79 @@ class SqlAlchemyMacroObservationRepository:
             "release timing"
         )
 
+    async def correct_verified_release_timing(
+        self,
+        series_key: str,
+        observation_period: UtcTimestamp,
+        revision_sequence: int,
+        expected_current_released_at: UtcTimestamp,
+        expected_current_effective_at: UtcTimestamp | None,
+        corrected_released_at: UtcTimestamp,
+        corrected_effective_at: UtcTimestamp | None,
+    ) -> None:
+        # FX-44H: a SECOND, deliberately DIFFERENT atomic conditional UPDATE
+        # from replace_provisional_release_timing's -- this one requires the
+        # row to ALREADY be released_at_is_verified=True (the opposite
+        # precondition), plus an exact match on the CURRENT released_at/
+        # effective_at the caller expects to be correcting FROM. That
+        # optimistic-concurrency guard is what makes a second, accidental
+        # remediation run a safe no-op-that-fails-closed rather than a
+        # silent reapplication: once corrected, the row's released_at no
+        # longer equals expected_current_released_at, so the predicate
+        # below stops matching it.
+        effective_at_predicate = (
+            MacroObservationVintageRow.effective_at.is_(None)
+            if expected_current_effective_at is None
+            else MacroObservationVintageRow.effective_at == expected_current_effective_at.value
+        )
+        stmt = (
+            update(MacroObservationVintageRow)
+            .where(
+                MacroObservationVintageRow.series_key == series_key,
+                MacroObservationVintageRow.observation_period == observation_period.value,
+                MacroObservationVintageRow.revision_sequence == revision_sequence,
+                MacroObservationVintageRow.released_at_is_verified.is_(True),
+                MacroObservationVintageRow.released_at == expected_current_released_at.value,
+                effective_at_predicate,
+            )
+            .values(
+                released_at=corrected_released_at.value,
+                effective_at=(
+                    None if corrected_effective_at is None else corrected_effective_at.value
+                ),
+                # released_at_is_verified stays True -- no confidence-tier
+                # change, and released_at_is_conservative_bound is never
+                # touched (stays False, as it must already be -- the WHERE
+                # above only matches rows the exclusivity constraint already
+                # guarantees have it False).
+            )
+            .returning(MacroObservationVintageRow.id)
+        )
+        updated_id = (await self._session.execute(stmt)).scalar_one_or_none()
+        await self._session.commit()
+        if updated_id is not None:
+            return
+
+        existing_row = await self._select_one(series_key, observation_period, revision_sequence)
+        await self._session.commit()
+        if not existing_row.released_at_is_verified:
+            raise ValueError(
+                f"vintage identity (series_key={series_key!r}, "
+                f"observation_period={observation_period.value.isoformat()!r}, "
+                f"revision_sequence={revision_sequence}) is not released_at_is_verified"
+                "=True -- correct_verified_release_timing only corrects an already-EXACT "
+                "row; nothing to correct"
+            )
+        raise ValueError(
+            f"vintage identity (series_key={series_key!r}, "
+            f"observation_period={observation_period.value.isoformat()!r}, "
+            f"revision_sequence={revision_sequence}) does not currently have "
+            f"released_at={expected_current_released_at.value.isoformat()!r}/"
+            f"effective_at={expected_current_effective_at!r} as expected -- it was "
+            "already corrected (or never had the value this correction targets); "
+            "refusing to apply a stale correction"
+        )
+
     async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
         stmt = select(MacroObservationVintageRow).where(
             MacroObservationVintageRow.series_key == series_key

@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forex_agent.application.ports.macro_observation_repository import (
@@ -643,3 +644,275 @@ async def test_concurrent_replace_provisional_release_timing_only_one_wins(
     assert final is not None
     assert final.released_at_is_verified is True
     assert final.released_at in (_ts(2024, 5, 30), _ts(2024, 5, 31))
+
+
+# ---------------------------------------------------------------------------
+# FX-44H: correct_verified_release_timing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_corrects_a_stale_exact_row(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2018, 6, 14)
+    stale = MacroObservationVintage(
+        series_key=TEST_SERIES_KEY,
+        observation_period=period,
+        value=Decimal("1.875"),
+        released_at=_ts(2018, 6, 14),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    await repo.add_vintage(stale)
+
+    await repo.correct_verified_release_timing(
+        TEST_SERIES_KEY,
+        period,
+        0,
+        expected_current_released_at=_ts(2018, 6, 14),
+        expected_current_effective_at=None,
+        corrected_released_at=_ts(2018, 6, 13),
+        corrected_effective_at=_ts(2018, 6, 14),
+    )
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2099, 1, 1))
+    assert result is not None
+    assert result.released_at == _ts(2018, 6, 13)
+    assert result.effective_at == _ts(2018, 6, 14)
+    assert result.released_at_is_verified is True
+    assert result.value == Decimal("1.875")
+    assert result.revision_sequence == 0
+
+    # Exactly one row for this identity -- an UPDATE, not an INSERT; no
+    # stale duplicate coexists with the corrected row.
+    stored = (
+        (
+            await session.execute(
+                select(MacroObservationVintageRow).where(
+                    MacroObservationVintageRow.series_key == TEST_SERIES_KEY,
+                    MacroObservationVintageRow.observation_period == period.value,
+                    MacroObservationVintageRow.revision_sequence == 0,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(stored) == 1
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_is_idempotent_on_rerun(
+    session: AsyncSession,
+) -> None:
+    # FX-44H test requirement: corrected classified rows can be
+    # remediated once and are idempotent.
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2018, 6, 14)
+    await repo.add_vintage(
+        MacroObservationVintage(
+            series_key=TEST_SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=_ts(2018, 6, 14),
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+
+    await repo.correct_verified_release_timing(
+        TEST_SERIES_KEY,
+        period,
+        0,
+        expected_current_released_at=_ts(2018, 6, 14),
+        expected_current_effective_at=None,
+        corrected_released_at=_ts(2018, 6, 13),
+        corrected_effective_at=_ts(2018, 6, 14),
+    )
+
+    with pytest.raises(ValueError, match="already corrected"):
+        await repo.correct_verified_release_timing(
+            TEST_SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=_ts(2018, 6, 14),  # now stale
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2099, 1, 1))
+    assert result is not None
+    assert result.released_at == _ts(2018, 6, 13)
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_rejects_non_verified_row(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2018, 6, 14)
+    await repo.add_vintage(
+        MacroObservationVintage(
+            series_key=TEST_SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=period,
+            revision_sequence=0,
+            source="FRED",
+        )
+    )
+
+    with pytest.raises(ValueError, match="not released_at_is_verified=True"):
+        await repo.correct_verified_release_timing(
+            TEST_SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=period,
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+
+@pytest.mark.asyncio
+async def test_correct_verified_release_timing_rejects_stale_expected_value(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2018, 6, 14)
+    await repo.add_vintage(
+        MacroObservationVintage(
+            series_key=TEST_SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=_ts(2018, 6, 14),
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+
+    with pytest.raises(ValueError, match="does not currently have"):
+        await repo.correct_verified_release_timing(
+            TEST_SERIES_KEY,
+            period,
+            0,
+            expected_current_released_at=_ts(1999, 1, 1),
+            expected_current_effective_at=None,
+            corrected_released_at=_ts(2018, 6, 13),
+            corrected_effective_at=_ts(2018, 6, 14),
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_correct_verified_release_timing_only_one_wins(
+    session: AsyncSession,
+) -> None:
+    # FX-44H regression, mirroring FX-43H.1's concurrency proof for
+    # replace_provisional_release_timing: two competing correction
+    # attempts against the identical already-EXACT identity, racing via
+    # asyncio.gather on two independent sessions -- at most one may
+    # succeed.
+    setup_repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2018, 6, 14)
+    await setup_repo.add_vintage(
+        MacroObservationVintage(
+            series_key=TEST_SERIES_KEY,
+            observation_period=period,
+            value=Decimal("1.875"),
+            released_at=_ts(2018, 6, 14),
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async def _attempt(candidate_released_at: UtcTimestamp) -> str | None:
+        async with session_factory() as race_session:
+            race_repo = SqlAlchemyMacroObservationRepository(race_session)
+            try:
+                await race_repo.correct_verified_release_timing(
+                    TEST_SERIES_KEY,
+                    period,
+                    0,
+                    expected_current_released_at=_ts(2018, 6, 14),
+                    expected_current_effective_at=None,
+                    corrected_released_at=candidate_released_at,
+                    corrected_effective_at=_ts(2018, 6, 14),
+                )
+            except ValueError as exc:
+                return str(exc)
+            return None
+
+    outcomes = await asyncio.gather(
+        _attempt(_ts(2018, 6, 13)),
+        _attempt(_ts(2018, 6, 12)),
+    )
+
+    successes = [outcome for outcome in outcomes if outcome is None]
+    failures = [outcome for outcome in outcomes if outcome is not None]
+    assert len(successes) == 1, f"expected exactly one winner, got outcomes={outcomes!r}"
+    assert len(failures) == 1
+
+    final = await setup_repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2099, 1, 1))
+    assert final is not None
+    assert final.released_at in (_ts(2018, 6, 13), _ts(2018, 6, 12))
+
+
+# ---------------------------------------------------------------------------
+# FX-44H: exact/conservative mutual exclusivity CHECK constraint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_database_rejects_exact_and_conservative_simultaneously(
+    session: AsyncSession,
+) -> None:
+    # FX-44H test requirement: exact+conservative simultaneously is
+    # rejected -- at the PERSISTENCE layer specifically (the domain
+    # constructor's own rejection is tested in
+    # tests/unit/domain/test_macro_observation_vintage.py). Writes a
+    # row honestly (released_at_is_verified=True only), then attempts a
+    # raw UPDATE that would also set released_at_is_conservative_bound
+    # =True on the SAME row -- something no application code path ever
+    # does, but the ck_macro_observation_vintages_exclusive_timing_
+    # confidence CHECK constraint must reject regardless of how the
+    # write was attempted.
+    repo = SqlAlchemyMacroObservationRepository(session)
+    period = _ts(2024, 6, 1)
+    await repo.add_vintage(
+        MacroObservationVintage(
+            series_key=TEST_SERIES_KEY,
+            observation_period=period,
+            value=Decimal("2.1"),
+            released_at=period,
+            revision_sequence=0,
+            source="FRED",
+            released_at_is_verified=True,
+        )
+    )
+
+    with pytest.raises(IntegrityError, match="ck_macro_observation_vintages_exclusive_timing"):
+        await session.execute(
+            update(MacroObservationVintageRow)
+            .where(
+                MacroObservationVintageRow.series_key == TEST_SERIES_KEY,
+                MacroObservationVintageRow.observation_period == period.value,
+                MacroObservationVintageRow.revision_sequence == 0,
+            )
+            .values(released_at_is_conservative_bound=True)
+        )
+    await session.rollback()
+
+    # Untouched -- still exactly the single, honestly-written state.
+    result = await repo.observation_as_known_at(TEST_SERIES_KEY, period, _ts(2099, 1, 1))
+    assert result is not None
+    assert result.released_at_is_verified is True
+    assert result.released_at_is_conservative_bound is False

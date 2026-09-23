@@ -1,6 +1,6 @@
 {
   "story": "FX-44",
-  "generated_at": "2026-09-22T05:45:29+00:00",
+  "generated_at": "2026-09-23T03:02:31+00:00",
   "method": "Per-currency, per-change-point release timing is resolved by domain.policy_rate_release_timing_registry: a hand-researched, cited set of documented central-bank release-time conventions (EXACT confidence) and, where the exact minute is not confidently citable but a same-day/business-hours convention is confirmed, a deliberately conservative end-of-day bound guaranteed no earlier than the true release (CONSERVATIVE_SAFE_BOUND confidence). Known irregular/inter-meeting/emergency-action dates, and eras whose announcement/effective-date relationship was not confidently established, are excluded from both and remain fully provisional. No timestamp in this report is inferred merely from the daily rate series' change-point date.",
   "currencies": {
     "USD": {
@@ -137,8 +137,7 @@
       ],
       "conflicting_dates": [],
       "sources": [
-        "https://investinglive.com/centralbank/ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/",
-        "https://x.com/ecb/status/1550012703548137472 ; https://investinglive.com/centralbank/ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/"
+        "https://www.ecb.europa.eu/press/pr/date/2022/html/ecb.pr220627~73acedf868.en.html (\"New times for ECB's monetary policy decisions and press conference\", 27 June 2022: \"Starting from 21 July, monetary policy decisions will be published at 14:15 CET (instead of 13:45).\")"
       ]
     },
     "GBP": {

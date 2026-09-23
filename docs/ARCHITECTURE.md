@@ -373,6 +373,79 @@ within it. `research_results/fx44/policy_rate_release_verification.
 json` (written by `scripts/verify_policy_rate_release_timing.py`)
 represents interval-specific safety explicitly instead, per currency.
 
+## Release-timing semantic hardening (FX-44H)
+
+FX-44 shipped one real bug (USD's modern announcement/effective
+semantics) and four related structural gaps; this story fixes all
+five (see `docs/DECISIONS.md`'s FX-44H entry for the full research and
+live verification).
+
+**USD's EXACT tier is now an explicit, individually-cited `dict[date,
+date]`** (`USD_EFFECTIVE_TO_DECISION_DATE`), not a formula. FX-44's
+original resolver treated FRED's stored change-point date as both the
+announcement date and the effective date; it is actually only the
+latter -- the FOMC's own "Implementation Note" states a genuinely
+later effective date (one day later, in every one of the 30 currently
+EXACT-classified USD change points this story individually verified
+against the Fed's own published meeting calendars). A blind `-1 day`
+transformation would have been wrong for two of those thirty
+(2015-12-16 "liftoff" and 2016-12-14 both have a same-day gap) --
+exactly the kind of case an unverified formula would miss, which is
+why the EXACT tier has no formula at all: a USD date not present as an
+explicit mapping key is unresolved, full stop, including a future date
+a later backfill run ingests.
+
+**Remediating rows FX-44 already wrote required a genuinely separate
+mechanism, `MacroObservationRepository.correct_verified_release_
+timing`** -- not a relaxed `replace_provisional_release_timing`.
+`replace_provisional_release_timing`'s entire safety contract is
+refusing to touch an already-classified row; correction targets
+exactly that row, on purpose, when the classifier itself was later
+found wrong. Its atomic UPDATE therefore has the OPPOSITE precondition
+(`released_at_is_verified = true`, not `false`) plus an exact match on
+the caller's `expected_current_released_at`/`expected_current_
+effective_at` -- an optimistic-concurrency guard, proven by a
+dedicated `asyncio.gather` regression, that makes a second correction
+attempt (accidental or concurrent) fail closed rather than silently
+reapplying or racing. `application.use_cases.remediate_release_
+timing.RemediateReleaseTiming` drives this deliberately, as its own
+separate operation (`scripts/remediate_usd_release_timing.py`) --
+never automatically as part of routine verification -- comparing every
+currently-EXACT vintage against what the registry resolves NOW and
+correcting only a genuine mismatch; idempotent by construction.
+
+**Research readiness now accounts for carry-in state.**
+`require_research_ready_interval` originally judged only vintages
+whose `observation_period` fell inside the selected interval --
+insufficient, because a point-in-time query anywhere in an interval
+with zero in-interval changes still returns whatever vintage was
+carried in from before it. New `domain.research_readiness.select_
+research_candidates` derives BOTH the carry-in state (the latest
+`observation_period` at or before `interval_start`) and the
+in-interval observations from a series' COMPLETE stored history, so a
+caller cannot get this wrong by hand-selecting candidates --
+`require_research_ready_interval` now takes that complete history
+directly. An entirely empty derived candidate set (no carry-in, no
+in-interval observations either) fails closed too (`no_baseline` on
+`ResearchIntervalNotReadyError`) -- "no evidence" is not "nothing
+wrong found".
+
+**Exact/conservative mutual exclusivity is now structurally
+enforced** at both the domain layer (`MacroObservationVintage.
+__post_init__` rejects both flags `True` at once) and the persistence
+layer (migration `f350d505412b`'s `ck_macro_observation_vintages_
+exclusive_timing_confidence` CHECK constraint) -- previously asserted
+only by docstring convention.
+
+**ECB citations now point to the ECB's own official 27 June 2022
+press release** (not a tweet or a news aggregator), and `_resolve_eur`
+structurally requires `stored_date.weekday() == Wednesday` before ever
+applying its six-day announcement/effective transformation --
+previously this safety depended entirely on a hand-curated exclusion
+list catching every anomaly in advance. `EUR_EXPLICIT_DECISION_DATE_
+OVERRIDES` (empty today) is the only sanctioned escape hatch for a
+genuinely researched non-Wednesday exception.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

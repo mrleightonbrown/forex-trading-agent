@@ -179,6 +179,67 @@ class MacroObservationRepository(Protocol):
         """
         ...
 
+    async def correct_verified_release_timing(
+        self,
+        series_key: str,
+        observation_period: UtcTimestamp,
+        revision_sequence: int,
+        expected_current_released_at: UtcTimestamp,
+        expected_current_effective_at: UtcTimestamp | None,
+        corrected_released_at: UtcTimestamp,
+        corrected_effective_at: UtcTimestamp | None,
+    ) -> None:
+        """Deliberately, auditably corrects an ALREADY-`released_at_is_
+        verified=True` vintage's `released_at`/`effective_at` in place --
+        WITHOUT touching `value`, `revision_sequence`, or the `EXACT`
+        classification itself (FX-44H).
+
+        This is a DIFFERENT operation from `replace_provisional_
+        release_timing` on purpose, not a relaxed variant of it:
+        `replace_provisional_release_timing`'s whole safety contract is
+        that it refuses to touch a row that is already classified --
+        exactly the row this method exists to fix, when the CLASSIFIER
+        ITSELF (a registry rule) is later found to have been wrong.
+        Both structural properties are preserved: no `value` parameter
+        (a genuine value correction must still go through `add_vintage`
+        as a new revision), and the resulting row is left `released_
+        at_is_verified=True` -- this never re-provisions a row or
+        changes its confidence tier, only the timestamp VALUES within
+        the EXACT tier.
+
+        `expected_current_released_at`/`expected_current_effective_at`
+        are a deliberate optimistic-concurrency guard, not decoration:
+        an implementation's atomic UPDATE must include them in its
+        WHERE predicate (alongside `released_at_is_verified = true`),
+        so this can only correct a row that is CURRENTLY in the EXACT
+        state the caller believes it is correcting FROM. This is what
+        makes remediation auditable and safe to re-run: a second
+        attempt with the SAME `expected_current_released_at` (now
+        stale, since the first attempt already changed it) matches
+        nothing and fails closed rather than silently reapplying, and
+        an unrelated future correction of the same row by a different
+        process cannot be clobbered by a remediation run that still
+        believes the OLD value is current.
+
+        Fails closed:
+          - raises `ValueError` if no vintage exists at this identity;
+          - raises `ValueError` if the existing vintage is not
+            currently `released_at_is_verified=True`, OR its current
+            `released_at`/`effective_at` do not match the `expected_
+            current_*` arguments exactly -- covers both "this row was
+            never in the state you think it was" and "this row was
+            already corrected (by this method or otherwise) since you
+            last read it";
+          - never writes `released_at_is_conservative_bound=True` --
+            this method has no `confidence` parameter, structurally
+            preventing a correction from silently reclassifying a row
+            out of the EXACT tier.
+
+        `RemediateReleaseTiming` (FX-44H) is this method's first real
+        caller -- see `docs/DECISIONS.md`'s FX-44H entry.
+        """
+        ...
+
     async def list_all_for_series(self, series_key: str) -> tuple[MacroObservationVintage, ...]:
         """Every stored vintage for `series_key`, in no particular
         guaranteed order (FX-44).

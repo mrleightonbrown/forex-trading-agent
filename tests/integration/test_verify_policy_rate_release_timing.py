@@ -87,7 +87,11 @@ async def test_verified_observation_is_replaced_through_the_repository(
     stored = await repo.observation_as_known_at(TEST_SERIES_KEY, _ts(2018, 6, 14), _ts(2099, 1, 1))
     assert stored is not None
     assert stored.released_at_is_verified is True
-    assert stored.released_at.value == datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC)
+    # FX-44H: released_at is the FOMC decision timestamp (2018-06-13, the
+    # day BEFORE the stored effective date), not the stored date itself.
+    assert stored.released_at.value == datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC)
+    assert stored.effective_at is not None
+    assert stored.effective_at.value == datetime(2018, 6, 14, 0, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -109,7 +113,7 @@ async def test_rerun_does_not_rewrite_an_already_verified_timestamp(
 
     stored = await repo.observation_as_known_at(TEST_SERIES_KEY, _ts(2018, 6, 14), _ts(2099, 1, 1))
     assert stored is not None
-    assert stored.released_at.value == datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC)
+    assert stored.released_at.value == datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -171,15 +175,15 @@ async def test_future_timestamp_never_visible_before_its_release_time(
     repo = SqlAlchemyMacroObservationRepository(session)
     await repo.add_vintage(_provisional_vintage((2018, 6, 14)))
     use_case = VerifyPolicyRateReleaseTiming(repository=repo)
-    await use_case("USD", TEST_SERIES_KEY)  # corrects released_at to 2018-06-14T18:00:00Z
+    await use_case("USD", TEST_SERIES_KEY)  # corrects released_at to 2018-06-13T18:00:00Z
 
     just_before = await repo.observation_as_known_at(
         TEST_SERIES_KEY,
         _ts(2018, 6, 14),
-        UtcTimestamp(datetime(2018, 6, 14, 17, 59, 59, tzinfo=UTC)),
+        UtcTimestamp(datetime(2018, 6, 13, 17, 59, 59, tzinfo=UTC)),
     )
     at_release = await repo.observation_as_known_at(
-        TEST_SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC))
+        TEST_SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC))
     )
 
     assert just_before is None

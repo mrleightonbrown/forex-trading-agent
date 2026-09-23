@@ -79,46 +79,110 @@ class UnresolvedTiming:
 # represented as a CONSERVATIVE_SAFE_BOUND: end of the announcement
 # day, US Eastern time -- guaranteed no earlier than the true release,
 # never claimed as the exact moment.
-USD_RULES: tuple[ReleaseTimingRule, ...] = (
-    ReleaseTimingRule(
-        institution="Federal Reserve",
-        local_time=time(23, 59, 59),
-        timezone="America/New_York",
-        confidence=ReleaseTimingConfidence.CONSERVATIVE_SAFE_BOUND,
-        applies_from=date(1994, 2, 4),
-        applies_to=date(2013, 3, 19),
-        citation="https://www.federalreserve.gov/fomc/19940204default.htm ; "
-        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
-        notes=(
-            "FOMC statements in this era were consistently released same-day, in the "
-            "afternoon, US Eastern time -- but the exact minute is not confidently "
-            "citable as a single stable convention across this whole span (evidence "
-            "found includes a 12:30pm ET statement release time for some 2011-2012 "
-            "meetings, distinct from the 2:15pm figure describing others) -- so this "
-            "story uses a conservative end-of-day bound rather than an exact minute."
-        ),
+USD_CONSERVATIVE_RULE = ReleaseTimingRule(
+    institution="Federal Reserve",
+    local_time=time(23, 59, 59),
+    timezone="America/New_York",
+    confidence=ReleaseTimingConfidence.CONSERVATIVE_SAFE_BOUND,
+    applies_from=date(1994, 2, 4),
+    applies_to=date(2013, 3, 19),
+    citation="https://www.federalreserve.gov/fomc/19940204default.htm ; "
+    "https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
+    notes=(
+        "FOMC statements in this era were consistently released same-day, in the "
+        "afternoon, US Eastern time -- but the exact minute is not confidently "
+        "citable as a single stable convention across this whole span (evidence "
+        "found includes a 12:30pm ET statement release time for some 2011-2012 "
+        "meetings, distinct from the 2:15pm figure describing others) -- so this "
+        "story uses a conservative end-of-day bound rather than an exact minute."
     ),
-    ReleaseTimingRule(
-        institution="Federal Reserve",
-        local_time=time(14, 0, 0),
-        timezone="America/New_York",
-        confidence=ReleaseTimingConfidence.EXACT,
-        applies_from=date(2013, 3, 19),
-        applies_to=None,
-        citation="https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
-        notes=(
-            "Federal Reserve Board press release, March 13, 2013: 'Committee policy "
-            "statements for all regularly scheduled meetings will be released at 2:00 "
-            "p.m. Eastern Time.' Effective starting the next scheduled meeting."
-        ),
+)
+
+# FX-44H: this is NOT the same date as the stored proxy for modern
+# (2013-03-19 onward) meetings. FX-44 originally assumed the stored
+# change-point date (FRED's DFEDTARU/DFEDTARL series, which reflects
+# the OPERATIONAL EFFECTIVE date) was also the FOMC announcement date,
+# and set effective_at=None -- demonstrably wrong: the FOMC's own
+# "Implementation Note" (a document distinct from the main statement,
+# published alongside it since ~2019, and the mechanism -- a directive
+# to the Desk -- has applied since well before that) states an
+# explicit effective date for the new target range, e.g. "Effective
+# January 29, 2026, the Federal Open Market Committee directs the Desk
+# to..." (https://www.federalreserve.gov/newsevents/pressreleases/
+# monetary20260128a1.htm) -- one day AFTER the January 27-28, 2026
+# meeting's second (decision) day.
+#
+# This mapping was built by cross-referencing EVERY ONE of the 30
+# USD change points this registry classifies EXACT against the Fed's
+# own published FOMC meeting-date calendar (https://www.federalreserve
+# .gov/monetarypolicy/fomccalendars.htm and .../fomchistorical<year>
+# .htm for 2015-2019) -- NOT by assuming a fixed "-1 day" offset, which
+# this exercise itself proved would have been WRONG for two entries:
+# 2015-12-16 ("liftoff", the first hike since 2006) and 2016-12-14
+# (the second hike) both have a same-day (0-day) gap, predating the
+# now-standard next-day effective-date mechanism -- every meeting from
+# 2017-03-16 onward observed here has the +1-day gap. Because this
+# story found a genuine, non-formulaic exception, resolution for the
+# EXACT tier uses ONLY this explicit table, never a computed offset:
+# a USD change point -- including any future one a later backfill run
+# ingests -- that is not a key in this mapping is UNRESOLVED, even if
+# it would "look like" it fits the usual +1-day pattern.
+USD_EFFECTIVE_TO_DECISION_DATE: dict[date, date] = {
+    date(2015, 12, 16): date(2015, 12, 16),  # liftoff -- same-day, pre-Implementation-Note era
+    date(2016, 12, 14): date(2016, 12, 14),  # same-day, pre-Implementation-Note era
+    date(2017, 3, 16): date(2017, 3, 15),
+    date(2017, 6, 15): date(2017, 6, 14),
+    date(2017, 12, 14): date(2017, 12, 13),
+    date(2018, 3, 22): date(2018, 3, 21),
+    date(2018, 6, 14): date(2018, 6, 13),
+    date(2018, 9, 27): date(2018, 9, 26),
+    date(2018, 12, 20): date(2018, 12, 19),
+    date(2019, 8, 1): date(2019, 7, 31),
+    date(2019, 9, 19): date(2019, 9, 18),
+    date(2019, 10, 31): date(2019, 10, 30),
+    date(2022, 3, 17): date(2022, 3, 16),
+    date(2022, 5, 5): date(2022, 5, 4),
+    date(2022, 6, 16): date(2022, 6, 15),
+    date(2022, 7, 28): date(2022, 7, 27),
+    date(2022, 9, 22): date(2022, 9, 21),
+    date(2022, 11, 3): date(2022, 11, 2),
+    date(2022, 12, 15): date(2022, 12, 14),
+    date(2023, 2, 2): date(2023, 2, 1),
+    date(2023, 3, 23): date(2023, 3, 22),
+    date(2023, 5, 4): date(2023, 5, 3),
+    date(2023, 7, 27): date(2023, 7, 26),
+    date(2024, 9, 19): date(2024, 9, 18),
+    date(2024, 11, 8): date(2024, 11, 7),
+    date(2024, 12, 19): date(2024, 12, 18),
+    date(2025, 9, 18): date(2025, 9, 17),
+    date(2025, 10, 30): date(2025, 10, 29),
+    date(2025, 12, 11): date(2025, 12, 10),
+    date(2026, 9, 17): date(2026, 9, 16),  # this story's own worked example
+}
+
+_USD_EXACT_DECISION_TIME_RULE = ReleaseTimingRule(
+    institution="Federal Reserve",
+    local_time=time(14, 0, 0),
+    timezone="America/New_York",
+    confidence=ReleaseTimingConfidence.EXACT,
+    applies_from=date(2013, 3, 19),
+    applies_to=None,
+    citation="https://www.federalreserve.gov/newsevents/pressreleases/monetary20130313a.htm",
+    notes=(
+        "Federal Reserve Board press release, March 13, 2013: 'Committee policy "
+        "statements for all regularly scheduled meetings will be released at 2:00 "
+        "p.m. Eastern Time.' Effective starting the next scheduled meeting. Applied "
+        "to the DECISION date from USD_EFFECTIVE_TO_DECISION_DATE, never to the "
+        "stored (effective-date) proxy directly."
     ),
 )
 
 # Known irregular/inter-meeting/emergency USD change points -- NOT
-# regularly scheduled FOMC meeting decisions, so USD_RULES's
-# meeting-day framing does not apply; the true announcement date
-# and/or time for each of these differs from (or is not confidently
-# identifiable from) the stored effective-date proxy. Left provisional.
+# regularly scheduled FOMC meeting decisions, so neither the
+# conservative rule's window nor USD_EFFECTIVE_TO_DECISION_DATE's
+# meeting-day framing applies; the true announcement date and/or time
+# for each of these differs from (or is not confidently identifiable
+# from) the stored effective-date proxy. Left provisional.
 USD_IRREGULAR_DATES: dict[date, str] = {
     date(1998, 10, 15): "Inter-meeting cut (between the Sep 29 and Nov 17, 1998 meetings, "
     "LTCM/Russia crisis response) -- not a regular meeting-day announcement.",
@@ -143,15 +207,30 @@ def _resolve_usd(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
     local_date = observation_period.value.date()
     if local_date in USD_IRREGULAR_DATES:
         return UnresolvedTiming(reason=USD_IRREGULAR_DATES[local_date])
-    for rule in USD_RULES:
-        if rule.covers(local_date):
-            return ReleaseTimingResolution(
-                released_at=rule.resolve(local_date),
-                effective_at=None,  # Fed target changes take effect same-day as announced
-                confidence=rule.confidence,
-                citation=rule.citation,
-            )
-    return UnresolvedTiming(reason="no FX-44 release-timing rule covers this date for USD")
+
+    decision_date = USD_EFFECTIVE_TO_DECISION_DATE.get(local_date)
+    if decision_date is not None:
+        # FX-44H: released_at is the FOMC statement/decision timestamp
+        # (structurally EARLIER than or equal to the stored date);
+        # effective_at is the stored proxy itself, which -- now
+        # correctly understood -- IS the genuine operational effective
+        # date, exactly the same announcement-before-effective pattern
+        # already modeled for EUR.
+        return ReleaseTimingResolution(
+            released_at=_USD_EXACT_DECISION_TIME_RULE.resolve(decision_date),
+            effective_at=observation_period,
+            confidence=ReleaseTimingConfidence.EXACT,
+            citation=_USD_EXACT_DECISION_TIME_RULE.citation,
+        )
+
+    if USD_CONSERVATIVE_RULE.covers(local_date):
+        return ReleaseTimingResolution(
+            released_at=USD_CONSERVATIVE_RULE.resolve(local_date),
+            effective_at=None,
+            confidence=USD_CONSERVATIVE_RULE.confidence,
+            citation=USD_CONSERVATIVE_RULE.citation,
+        )
+    return UnresolvedTiming(reason="no FX-44/FX-44H release-timing rule covers this date for USD")
 
 
 # ---------------------------------------------------------------------------
@@ -296,11 +375,17 @@ def _resolve_cad(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
 # -- a genuine, documented announcement-before-effective-date split
 # (FX-44 section 4), not merely an imprecise same-day proxy.
 #
-# The ECB also changed its OWN announcement time within this era: the
-# European Central Bank's own 27 June 2022 announcement (and same-day
-# reminder) states the monetary policy decision publication time moved
-# from 13:45 CET to 14:15 CET, effective from the 21 July 2022 decision
-# onward.
+# The ECB also changed its OWN announcement time within this era.
+# FX-44H: replaced the earlier secondary (investinglive.com/tweet)
+# citations with the ECB's OWN official press release, "New times for
+# ECB's monetary policy decisions and press conference"
+# (https://www.ecb.europa.eu/press/pr/date/2022/html/
+# ecb.pr220627~73acedf868.en.html, published 27 June 2022), which
+# explicitly states: "Starting from 21 July, monetary policy decisions
+# will be published at 14:15 CET (instead of 13:45)." This one
+# primary document is authoritative for BOTH the old (13:45) and new
+# (14:15) times below -- the ECB itself confirms 13:45 was the prior
+# convention it is replacing.
 #
 # This rule is therefore only applied to change points confirmed to
 # sit on this Wednesday pattern -- 2006-03-08 onward, with 2006-06-15
@@ -310,8 +395,31 @@ def _resolve_cad(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
 # own page describes an earlier, PRE-10-March-2004 rule using
 # different operational timing) and is left unresolved here rather
 # than assuming the same six-day/Wednesday pattern applies.
+#
+# FX-44H hardening: the six-day transformation is a GENERALIZATION
+# from a confirmed pattern, not a proven rule for every date that will
+# ever be ingested -- so `_resolve_eur` structurally REQUIRES the
+# stored date to actually BE a Wednesday before applying it (`weekday()
+# == 2`), rather than relying solely on `EUR_IRREGULAR_DATES` to have
+# already enumerated every possible exception. A future anomalous date
+# this registry has not seen before (e.g. a new backfill run ingesting
+# a genuinely irregular EUR change point) therefore fails closed
+# automatically. `EUR_EXPLICIT_DECISION_DATE_OVERRIDES` is the ONLY
+# way a non-Wednesday date may still resolve -- an explicit, individually
+# researched and cited `date -> decision_date` entry, analogous to
+# USD_EFFECTIVE_TO_DECISION_DATE -- never a generic "subtract six days"
+# fallback. Empty today: no non-Wednesday EUR date has been
+# individually verified in this codebase yet.
 _EUR_WEDNESDAY_ERA_START = date(2006, 3, 8)
 _EUR_TIME_CHANGE_DECISION_DATE = date(2022, 7, 21)
+_WEDNESDAY = 2  # date.weekday(): Monday=0 ... Wednesday=2 ... Sunday=6
+
+_ECB_JUNE_2022_TIMING_CHANGE_CITATION = (
+    "https://www.ecb.europa.eu/press/pr/date/2022/html/ecb.pr220627~73acedf868.en.html "
+    '("New times for ECB\'s monetary policy decisions and press conference", '
+    '27 June 2022: "Starting from 21 July, monetary policy decisions will be '
+    'published at 14:15 CET (instead of 13:45).")'
+)
 
 EUR_RULES: tuple[ReleaseTimingRule, ...] = (
     ReleaseTimingRule(
@@ -321,10 +429,11 @@ EUR_RULES: tuple[ReleaseTimingRule, ...] = (
         confidence=ReleaseTimingConfidence.EXACT,
         applies_from=date(2004, 3, 10),
         applies_to=_EUR_TIME_CHANGE_DECISION_DATE,
-        citation="https://investinglive.com/centralbank/"
-        "ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/",
+        citation=_ECB_JUNE_2022_TIMING_CHANGE_CITATION,
         notes="ECB monetary policy decisions published at 13:45 CET, with the press "
-        "conference at 14:30 CET, prior to the 21 July 2022 change (below).",
+        "conference at 14:30 CET, prior to the 21 July 2022 change (below) -- the "
+        "\"instead of 13:45\" wording in the ECB's own release is this rule's citation "
+        "for the OLD time, not just the new one.",
     ),
     ReleaseTimingRule(
         institution="European Central Bank",
@@ -333,9 +442,7 @@ EUR_RULES: tuple[ReleaseTimingRule, ...] = (
         confidence=ReleaseTimingConfidence.EXACT,
         applies_from=_EUR_TIME_CHANGE_DECISION_DATE,
         applies_to=None,
-        citation="https://x.com/ecb/status/1550012703548137472 ; "
-        "https://investinglive.com/centralbank/"
-        "ecb-changes-publication-time-of-monetary-policy-decisions-and-press-conferences-20220627/",
+        citation=_ECB_JUNE_2022_TIMING_CHANGE_CITATION,
         notes="ECB monetary policy decisions published at 14:15 CET (press conference "
         "14:45 CET), from the 21 July 2022 decision onward.",
     ),
@@ -355,6 +462,11 @@ EUR_IRREGULAR_DATES: dict[date, str] = {
     "11 attacks -- not a regular Governing Council decision.",
 }
 
+#: FX-44H: the ONLY sanctioned way a non-Wednesday EUR effective date
+#: may still resolve -- each entry is an individually researched,
+#: cited `stored_date -> decision_date` override. Empty today.
+EUR_EXPLICIT_DECISION_DATE_OVERRIDES: dict[date, date] = {}
+
 
 def _resolve_eur(observation_period: UtcTimestamp) -> ReleaseTimingResolution | UnresolvedTiming:
     stored_date = observation_period.value.date()
@@ -368,7 +480,26 @@ def _resolve_eur(observation_period: UtcTimestamp) -> ReleaseTimingResolution | 
                 "to the ECB's earlier operational regime"
             )
         )
-    decision_date = stored_date - _SIX_DAYS
+
+    override = EUR_EXPLICIT_DECISION_DATE_OVERRIDES.get(stored_date)
+    if override is not None:
+        decision_date = override
+    elif stored_date.weekday() == _WEDNESDAY:
+        decision_date = stored_date - _SIX_DAYS
+    else:
+        # FX-44H fail-closed: a date that does not fit the verified
+        # Wednesday-effective pattern, and has no explicit override,
+        # never gets the generic six-day transformation applied to it
+        # -- including a future date this registry has never seen.
+        return UnresolvedTiming(
+            reason=(
+                f"{stored_date.isoformat()} is not a Wednesday and has no explicit "
+                "entry in EUR_EXPLICIT_DECISION_DATE_OVERRIDES -- refusing to apply "
+                "the generic six-day announcement/effective transformation to an "
+                "unverified date pattern"
+            )
+        )
+
     for rule in EUR_RULES:
         if rule.covers(decision_date):
             return ReleaseTimingResolution(

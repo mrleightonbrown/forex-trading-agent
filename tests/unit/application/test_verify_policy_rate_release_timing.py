@@ -55,7 +55,11 @@ async def test_regular_post_2013_date_is_newly_classified_exact() -> None:
     assert stored is not None
     assert stored.released_at_is_verified is True
     assert stored.released_at_is_conservative_bound is False
-    assert stored.released_at.value == datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC)
+    # FX-44H: released_at is the FOMC decision timestamp (2018-06-13, the
+    # day BEFORE the stored effective date), not the stored date itself.
+    assert stored.released_at.value == datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC)
+    assert stored.effective_at is not None
+    assert stored.effective_at.value == datetime(2018, 6, 14, 0, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -116,7 +120,7 @@ async def test_rerun_does_not_rewrite_an_already_classified_timestamp() -> None:
 
     stored = await fake.observation_as_known_at(SERIES_KEY, _ts(2018, 6, 14), _ts(2099, 1, 1))
     assert stored is not None
-    assert stored.released_at.value == datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC)  # unchanged
+    assert stored.released_at.value == datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC)  # unchanged
 
 
 @pytest.mark.asyncio
@@ -168,13 +172,13 @@ async def test_a_future_timestamp_cannot_become_visible_before_its_release_time(
     fake = FakeMacroObservationRepository()
     await fake.add_vintage(_provisional_vintage((2018, 6, 14)))
     use_case = VerifyPolicyRateReleaseTiming(repository=fake)
-    await use_case("USD", SERIES_KEY)  # corrects released_at to 2018-06-14T18:00:00Z
+    await use_case("USD", SERIES_KEY)  # corrects released_at to 2018-06-13T18:00:00Z
 
     just_before = await fake.observation_as_known_at(
-        SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 14, 17, 59, 59, tzinfo=UTC))
+        SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 13, 17, 59, 59, tzinfo=UTC))
     )
     at_release = await fake.observation_as_known_at(
-        SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 14, 18, 0, 0, tzinfo=UTC))
+        SERIES_KEY, _ts(2018, 6, 14), UtcTimestamp(datetime(2018, 6, 13, 18, 0, 0, tzinfo=UTC))
     )
 
     assert just_before is None  # not yet knowable, one second before release
