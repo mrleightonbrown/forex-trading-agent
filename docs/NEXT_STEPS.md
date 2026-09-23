@@ -968,27 +968,75 @@ differential, no carry strategy, no JPY provider work, no technical
 filtering, no news/event-surprise logic, no expected-rate differential,
 no decision engine changes follow this story.
 
+## FX-45: pair-relative policy-rate differential (complete)
+
+A deterministic, fully-auditable monetary-policy feature --
+`differential = base_currency_rate - quote_currency_rate`, `Decimal`
+only, never called "carry" -- for EUR/USD, GBP/USD, USD/CAD, built on
+two structurally-separate rate-state notions (new `domain.policy_rate_
+state`): ANNOUNCED (market-known, `released_at <= T`, deliberately
+including a future-effective-but-already-announced rate) and EFFECTIVE
+(operationally in force, a POPULATED `effective_at <= T`, never a
+fallback guess). New `domain.policy_rate_differential` is pure domain
+logic; new `application.use_cases.compute_policy_rate_differential.
+ComputePolicyRateDifferential` orchestrates it, running every
+historical read through the unmodified FX-44H `require_research_ready_
+interval` first, padded by a new 14-day `_AXIS_SAFETY_MARGIN` covering
+the gap between FX-44H's `observation_period`-based readiness axis and
+this story's `released_at`/`effective_at`-based state-selection axis.
+Two kinds of "no answer" are deliberately not conflated:
+`ResearchIntervalNotReadyError` RAISED for unsafe/insufficient data
+(JPY, via the gate's own `no_baseline` case); `DifferentialUnavailable`
+RETURNED for a structurally unsupported request (XAU has no canonical
+policy rate; GBP and CAD's EFFECTIVE semantics is genuinely,
+permanently unavailable today — confirmed directly via SQL before any
+code was written). Full details in `docs/DECISIONS.md`'s FX-45 entry.
+
+**This story's own real diagnostic finding, via `scripts/report_
+policy_rate_differential_coverage.py`** (live against real Postgres,
+`research_results/fx45/policy_rate_differential_coverage.json`):
+EUR/USD 49 usable/105 blocked ANNOUNCED, 43 usable/111 blocked
+EFFECTIVE; GBP/USD 78 usable/84 blocked ANNOUNCED, 0 usable/162
+blocked EFFECTIVE (never ready — not a bug, GBP's exact tier has never
+had `effective_at` populated); USD/CAD 44 usable/79 blocked ANNOUNCED,
+0 usable/123 blocked EFFECTIVE (never ready — CAD is 100%
+conservative-tier). These blocked windows are the evidence a future
+decision about which irregular dates are worth researching
+individually should be made from — this story deliberately did not
+resolve or delete any of them (its own point 11), and deliberately did
+not start the historical rate-differential experiment (FX-46, not yet
+started).
+
+**Per this story's own explicit stop instruction**: no automatic
+resolution of the blocked crisis dates, no historical rate-
+differential experiment, no trading rules, no backtest performance
+research, no optimized thresholds, no technical-signal gating, no JPY
+ingestion work, no actual broker financing/roll/forward-points/OIS
+logic, no event-surprise logic, no news intelligence, no decision
+engine changes follow this story.
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-45's pair-rate differential
-experiment (now with a corrected USD EXACT tier and a carry-in-aware
-`require_research_ready_interval` as its mandatory pre-flight gate),
-the future declassification-mechanism need noted above (not yet
-needed, not yet built), the 18 still-provisional pre-2006 EUR change
-points, the 8 USD/6 GBP/3 CAD known-irregular dates left unresolved,
-JPY provider mapping, the pre-2009 CAD gap, or any carry-strategy work.
+new here or elsewhere — including FX-46's historical rate-differential
+experiment (now with real usable/blocked coverage evidence for all
+three pairs), the future declassification-mechanism need noted above
+(not yet needed, not yet built), the 18 still-provisional pre-2006 EUR
+change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
+unresolved, JPY provider mapping, the pre-2009 CAD gap, or any carry-
+strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1 above are the explicitly-scoped
-exceptions (domain model, storage-integrity hardening, canonical
+FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45 above are the explicitly-
+scoped exceptions (domain model, storage-integrity hardening, canonical
 registry/provider-mapping definitions, real policy-rate ingestion,
-hardening and correction rounds, and genuine release-timing
-verification — still no strategy, no decision logic, no "carry"
-framing) and do not open the door to the rest of this phase. The same
-goes for the downstream epics not in this list at all (Decision
-Engine, Risk Engine, Paper Trading Execution, Performance Analytics,
-Shadow Trading) — none are part of the current phase.
+hardening and correction rounds, genuine release-timing verification,
+and a deterministic, auditable, scoring-free policy-rate differential
+feature — still no strategy, no decision logic, no "carry" framing)
+and do not open the door to the rest of this phase. The same goes for
+the downstream epics not in this list at all (Decision Engine, Risk
+Engine, Paper Trading Execution, Performance Analytics, Shadow
+Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

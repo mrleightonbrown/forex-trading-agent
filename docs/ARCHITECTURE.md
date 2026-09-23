@@ -476,6 +476,74 @@ Remediation went through FX-44H's existing `RemediateReleaseTiming`/
 exactly the value of having built it as a genuinely reusable
 mechanism rather than a one-off script.
 
+## Pair-relative policy-rate differential (FX-45)
+
+A deterministic, fully-auditable monetary-policy feature -- `domain.
+policy_rate_differential = base_currency_rate - quote_currency_rate`,
+`Decimal` only, never called "carry" anywhere in this codebase (it is
+not a tradeable financing return, not an interest-rate strategy, not a
+rate-arbitrage signal -- see that module's own docstring). Built
+entirely on top of FX-44H/FX-44H.1's release-timing model rather than
+introducing a new one.
+
+**Two rate-state notions, kept structurally separate.** New `domain.
+policy_rate_state` answers "which decision governs a currency's policy
+rate at instant T" two distinct ways that must never substitute for
+one another: `announced_state_as_of` (market-known, gated on
+`released_at <= T` -- a future-effective-but-already-announced rate IS
+the announced rate, deliberately) and `effective_state_as_of`
+(operationally in force, gated on a POPULATED `effective_at <= T`,
+strictly excluding any vintage whose `effective_at` is `None` rather
+than falling back to `released_at` or `observation_period`). These are
+two distinctly-named functions, not one function with a mode flag, so
+a caller cannot accidentally request the wrong semantics and silently
+get the other one. Neither function consults research readiness
+itself -- they answer "what does the stored history say," not "is it
+safe to trust."
+
+**Raise vs. return, deliberately not conflated.** `application.
+use_cases.compute_policy_rate_differential.ComputePolicyRateDifferential`
+is the single use case orchestrating this against real repository
+history. Two distinct kinds of "no answer" exist: unsafe or
+insufficient DATA -- `domain.research_readiness.
+ResearchIntervalNotReadyError` is RAISED, the existing FX-44H
+mechanism completely unmodified; a structurally unsupported REQUEST
+(a currency with no canonical policy rate at all, e.g. XAU; or
+EFFECTIVE semantics for a currency/vintage that has never had a
+verified effective date, e.g. GBP or CAD today) -- `domain.
+policy_rate_differential.DifferentialUnavailable` is RETURNED. JPY
+(registered in `domain.policy_rate_registry` but zero ingested rows,
+per FX-43/FX-43H) naturally falls into the raise path via the
+readiness gate's own `no_baseline` case, needing no special-case
+currency list.
+
+**Axis-safety margin.** `require_research_ready_interval`/`select_
+research_candidates` (FX-44H) window on `observation_period`, while
+this story's state selection windows on `released_at`/`effective_at`
+-- different axes that are usually close but never assumed identical.
+A fixed `_AXIS_SAFETY_MARGIN` (14 days -- more than double the largest
+offset this registry has ever found, EUR's historical six-day
+announcement/effective gap) pads every readiness-window bound, so a
+state-selection result is always provably covered by the readiness
+check that ran for it.
+
+**Change companions.** `PolicyRateDifferentialFeature` carries three
+independently-computed changes alongside the current snapshot --
+since the previous policy observation, ~3 months, and ~6 months --
+each with its own purely mathematically-defined `DifferentialDirection`
+(`WIDENING`/`NARROWING`/exact-zero `UNCHANGED`; no fuzzy band, no
+tuned threshold). "Change since previous policy observation" for a
+PAIR uses a "last-mover reversion": only the leg whose current state
+began more recently is reverted to its own previous state (both legs,
+on an exact tie), since the other leg's rate did not change at that
+instant. Any change FX-45 cannot defensibly compute is `None` with a
+`None` direction -- never a guessed value or a default `UNCHANGED`.
+
+**No scoring, no thresholds, no trading labels anywhere in this
+feature** -- every result type carries full per-leg provenance
+(currency, rate, source series/observation, `released_at`,
+`effective_at`, verification tier) instead, by design.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

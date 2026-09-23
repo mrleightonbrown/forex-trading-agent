@@ -6296,3 +6296,222 @@ differential, no carry strategy, no JPY provider work, no technical
 filtering, no news/event-surprise logic, no expected-rate differential,
 no decision engine changes follow this story -- and FX-45 does not
 start automatically.
+
+## 2026-09-23 — FX-45: pair-relative policy-rate differential
+
+A deterministic, fully-auditable monetary-policy feature built on top
+of FX-44H/FX-44H.1's release-timing model: `policy_rate_differential =
+base_currency_rate - quote_currency_rate`, `Decimal` only, never
+called "carry" anywhere in this codebase -- not a tradeable financing
+return, not an interest-rate strategy, not a rate-arbitrage signal.
+EUR/USD, GBP/USD, USD/CAD as the first pairs; XAU/USD explicitly out
+of scope (not a canonical-policy-rate currency); USD/JPY must fail
+closed (JPY has a registry definition, per FX-42H, but zero ingested
+rows, per FX-43/FX-43H).
+
+**Two rate-state notions, kept structurally separate.** New `domain.
+policy_rate_state` answers "which decision governs a currency's policy
+rate at instant T" two ways that must never substitute for one
+another: `announced_state_as_of` (market-known, gated on `released_at
+<= T`) and `effective_state_as_of` (operationally in force, gated on a
+POPULATED `effective_at <= T`). A future-effective-but-already-
+announced rate IS the announced rate under ANNOUNCED semantics --
+deliberate, per this story's own section 5. `effective_state_as_of`
+strictly excludes any vintage whose `effective_at` is `None` from
+consideration; it never falls back to `released_at` or
+`observation_period` for such a vintage. This is why these are two
+distinctly-named functions rather than one function taking a mode
+flag: a caller cannot accidentally pass the wrong mode and silently
+receive the other semantics. `previous_announced_state`/`previous_
+effective_state` answer the matching "what came immediately before
+this state" question, each within its own semantics only. Neither
+function consults `domain.research_readiness` itself -- this module
+answers "what does the stored history say," not "is it safe to
+trust"; every caller must run the readiness gate separately.
+
+**`domain.policy_rate_differential`** is pure domain logic: `RateSemantics`
+(`ANNOUNCED`/`EFFECTIVE`), `DifferentialDirection`
+(`WIDENING`/`NARROWING`/`UNCHANGED`), `CurrencyRateState` (one leg's
+full auditable provenance -- currency, rate, series key, observation
+period, revision sequence, `released_at`, `effective_at`, both
+timing-confidence flags), `PolicyRateDifferentialSnapshot` (pair,
+`as_of`, semantics, both legs, differential), `PolicyRateDifferential
+Feature` (a snapshot plus three independently-computed changes and
+directions), and `DifferentialUnavailable` (pair, `as_of`, semantics,
+reason). `rate_differential(base, quote) = base - quote`, requiring
+`Decimal` for both arguments; reversing the arguments reverses the
+sign by construction, proven directly by `test_pair_orientation_is_
+antisymmetric` at the point a snapshot is actually built (base/quote
+assignment), not merely at the arithmetic. `classify_direction` is
+purely mathematical -- positive is `WIDENING`, negative is `NARROWING`,
+exactly zero is `UNCHANGED`, `None` in producing `None` out -- no
+fuzzy "neutral" band, no tuned threshold, and an unavailable change is
+never coerced into `UNCHANGED`.
+
+**"Change since previous policy observation" for a PAIR: last-mover
+reversion.** A single currency's "previous state" is well-defined, but
+a PAIR has two legs that do not necessarily change together.
+`pair_differential_change_since_previous` determines which leg's
+CURRENT state began more recently (comparing `released_at` under
+ANNOUNCED, `effective_at` under EFFECTIVE) and reverts ONLY that leg
+to its own previous state, keeping the other leg's current rate
+unchanged since it did not move at that instant; on an exact tie, both
+legs are reverted. Returns `None` (never a guess) if the mover's own
+previous state is unavailable. Hand-verified by dedicated domain tests
+computing the expected value by hand for both a base-leg-moved and a
+quote-leg-moved scenario.
+
+**Orchestration: `application.use_cases.compute_policy_rate_
+differential.ComputePolicyRateDifferential`.** A single use case,
+`(instrument, as_of, rate_semantics) -> PolicyRateDifferentialFeature |
+DifferentialUnavailable`. Fetches each currency's COMPLETE stored
+history via `MacroObservationRepository.list_all_for_series` and lets
+the readiness gate examine it, rather than hand-selecting which rows
+"should" matter -- a single provisional observation anywhere in the
+window this feature actually needs (current state, previous policy
+observation, and both lookbacks, all at once) fails the WHOLE request;
+there is no partial result.
+
+**Raise vs. return, deliberately not conflated.** Two distinct kinds
+of "no answer": unsafe or insufficient DATA -- `domain.research_
+readiness.ResearchIntervalNotReadyError` is RAISED, the existing
+FX-44H mechanism completely unmodified, propagated to the caller
+uncaught; a structurally unsupported REQUEST -- `DifferentialUnavailable`
+is RETURNED, covering (a) a currency with no canonical policy rate at
+all (`canonical_series_for_currency` returns `None` -- XAU) and (b) a
+currency whose readiness-proven-safe history still lacks a governing
+CURRENT state under the requested semantics (only possible for
+EFFECTIVE: every currently-relevant vintage is exact/conservative on
+`released_at` but has no `effective_at` at all). JPY needs no special
+case at all: `list_all_for_series` returns an empty tuple, and
+`require_research_ready_interval` raises with `no_baseline=True`
+naturally, exactly like any other currency with zero rows would.
+
+**Axis-safety margin -- the key new structural risk this story found
+and closed.** `require_research_ready_interval`/`select_research_
+candidates` (FX-44H) window on `observation_period`; this story's
+state selection windows on `released_at`/`effective_at` -- different
+axes that are usually close (per FX-44H.1's own research, at most a
+few days apart for any currency in this registry, EUR's six-day gap
+being the largest ever found) but never assumed identical. Without
+accounting for this, a state-selection query could return a vintage
+whose actual safety was validated by a naively-computed window that
+did not truly cover it. `_AXIS_SAFETY_MARGIN` (14 days -- comfortably
+more than double the largest known offset) pads every bound of
+`_readiness_window`'s computed `[start, end)`, so the vintage a
+state-selection query actually returns is always PROVABLY inside the
+window that was actually validated for it, not merely "usually"
+inside it.
+
+**No scoring, no thresholds, no trading labels.** Every result type
+carries full per-leg provenance instead (currency, rate, source series
+key, `observation_period`, `revision_sequence`, `released_at`,
+`effective_at`, both timing-confidence flags) -- a reviewer can trace
+any `differential` back to the exact stored vintage on both legs
+without re-querying anything.
+
+**Real, live findings (this story's own point 14 diagnostic,
+`scripts/report_policy_rate_differential_coverage.py`, every candidate
+`as_of` a REAL stored change point's own `released_at` across both
+legs and every confidence tier, each queried once per semantics
+through the same `ComputePolicyRateDifferential` the real feature
+uses -- no bespoke coverage logic).** Written live to `research_
+results/fx45/policy_rate_differential_coverage.json`:
+- EUR/USD: 49 usable / 105 blocked ANNOUNCED (earliest research-ready
+  2007-03-08); 43 usable / 111 blocked EFFECTIVE (earliest
+  2016-03-10).
+- GBP/USD: 78 usable / 84 blocked ANNOUNCED (earliest 1998-06-04); 0
+  usable / 162 blocked EFFECTIVE, NEVER research-ready. Confirmed
+  directly via SQL before any code was written: GBP's exact tier (65
+  rows) has never had `effective_at` populated by FX-44's original
+  resolver. A genuine, expected data-quality finding, not a bug.
+- USD/CAD: 44 usable / 79 blocked ANNOUNCED (earliest 2015-12-16); 0
+  usable / 123 blocked EFFECTIVE, NEVER research-ready. Confirmed
+  directly via SQL: CAD is 100% conservative-tier (zero exact rows),
+  so `effective_at` coverage is 0% by construction. Also genuine and
+  expected.
+
+One blocked ANNOUNCED entry was individually spot-checked as due
+diligence: USD/CAD at `as_of=2022-09-21T18:00:00Z` is blocked citing
+USD's own `2020-03-16` (COVID emergency cut, known-irregular) as the
+offending observation, despite the query instant being roughly two and
+a half years later. Verified this is CORRECT, not a bug: the Fed held
+its target rate at the zero lower bound with no intervening change
+from March 2020 until its first post-COVID hike on 2022-03-17; this
+query's ~6-month-plus-margin window starts on 2022-03-09, eight days
+BEFORE that hike, so the only vintage on record at-or-before the
+window's start is genuinely the 2020-03-16 cut -- exactly the carry-in
+mechanism FX-44H built working as designed, now exercised for real by
+FX-45. A useful illustration of why some blocked windows late in a
+long rate-hold period are correctly, not spuriously, blocked.
+
+**Mandatory three-state regression, against the real, FX-44H.1-
+verified USD observation (decision 2026-09-16 18:00 UTC, effective
+2026-09-17), both unit (fake-repository) and integration (live
+Postgres).** Just before release: ANNOUNCED and EFFECTIVE both read
+the OLD rate (3.625%). Just after release, before the effective date:
+ANNOUNCED already reads the NEW rate (3.875%); EFFECTIVE still reads
+the OLD rate (3.625%) -- the two semantics visibly diverge for exactly
+the window this story exists to make safe. Once effective: both read
+the NEW rate. EUR (stable throughout this window) is used as the
+quote leg so the observed movement is provably attributable to USD
+alone.
+
+**Regression-proof discipline applied to three new safety-relevant
+mechanisms**, each deliberately broken, confirmed to fail its
+dedicated tests for the right reason, then restored: (1) `effective_
+state_as_of`'s fail-closed exclusion of `effective_at is None` --
+removing the filter broke 4 tests across domain/application/
+integration layers; (2) the axis-safety-margin readiness-gate
+integration -- removing the margin (or the readiness call entirely)
+broke 6 tests across unit and integration layers; (3) orientation/
+subtraction order in `rate_differential` -- swapping the operands
+broke 4 absolute-value/real-data tests (while confirming, separately,
+that relative sign-flip-style tests correctly did NOT catch this class
+of bug, validating the need for both test styles in this story's own
+test list). All three restored cleanly; full suite (1131 passing)
+reconfirmed after each restore.
+
+**Architecture**: pure domain functions for rate-state selection
+(`domain.policy_rate_state`), pair subtraction/differential-changes/
+direction classification (`domain.policy_rate_differential`);
+repository orchestration entirely in the application layer
+(`application.use_cases.compute_policy_rate_differential`); no
+SQLAlchemy in the domain layer; no new FastAPI endpoints (none
+genuinely required -- this story's own explicit allowance). No
+"carry"/"interest-rate strategy"/"rate-arbitrage signal" language
+anywhere in the new modules, checked directly.
+
+**Tests**: `tests/unit/domain/test_policy_rate_state.py` (14 tests,
+including `test_announced_and_effective_diverge_around_a_real_
+verified_observation` using the real 2026-09-16/17 USD case);
+`tests/unit/domain/test_policy_rate_differential.py` (17 tests,
+including `test_pair_orientation_is_antisymmetric` and hand-verified
+last-mover-reversion arithmetic); `tests/unit/application/test_
+compute_policy_rate_differential.py` (19 tests, including the
+mandatory three-state regression, JPY raising, XAU/GBP/CAD-EFFECTIVE
+returning `DifferentialUnavailable`, and a crisis-crossing rejection);
+`tests/integration/test_compute_policy_rate_differential.py` (8 tests
+against live Postgres: real EUR/USD and USD/CAD orientation with exact
+verified rate values, real GBP/USD and USD/CAD EFFECTIVE-unavailable,
+real USD/JPY raise, real 2008-01-22 crisis-crossing rejection, the
+real three-state regression, deterministic output for identical
+inputs).
+
+**Verification**: `pytest` (1131 passed, full suite, up from 1068),
+`ruff`, `ruff format`, `mypy --strict`, `pre-commit run --all-files`,
+all clean. Diagnostic script run live against real Postgres, output
+committed at `research_results/fx45/policy_rate_differential_coverage.
+json`, regenerated once more immediately before commit to confirm
+byte-for-byte determinism against the unchanged code.
+
+Per this story's own explicit stop instruction: no automatic
+resolution of the blocked crisis dates, no historical rate-
+differential experiment, no trading rules, no backtest performance
+research, no optimized thresholds, no technical-signal gating, no JPY
+ingestion work, no actual broker financing/roll/forward-points/OIS-or-
+futures-expectations logic, no event-surprise logic, no news
+intelligence, no decision engine changes follow this story -- and
+FX-46 (the historical rate-differential experiment) does not start
+automatically. The usable/blocked evidence above is reported so the
+next story can be decided from it.
