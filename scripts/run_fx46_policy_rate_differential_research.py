@@ -1148,7 +1148,26 @@ async def main() -> None:
         commit_hash = "unknown"
 
     try:
-        dirty_output = subprocess.check_output(["git", "status", "--porcelain"]).decode().strip()
+        # Scoped to the code this script's results actually depend on --
+        # NOT a bare repo-wide `git status`, which would spuriously read
+        # dirty forever in this project (`.claude/` stays untracked by
+        # convention, and this run's own regenerated `research_results/
+        # fx46/` artifacts are themselves modified relative to HEAD until
+        # committed as the follow-up "artifacts" commit).
+        dirty_output = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "status",
+                    "--porcelain",
+                    "--",
+                    "src/forex_agent",
+                    __file__,
+                ]
+            )
+            .decode()
+            .strip()
+        )
         git_commit_dirty: bool | None = bool(dirty_output)
         git_dirty_paths = dirty_output.splitlines() if dirty_output else []
     except Exception:
