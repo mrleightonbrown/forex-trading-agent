@@ -612,6 +612,61 @@ story onward (not "permanently unavailable" -- FX-45's own wording
 overclaimed permanence for what is, in fact, a present data-coverage
 fact that a future backfill could change).
 
+## Policy-rate readiness & revision semantics hardening (FX-45H.1)
+
+A narrow hardening pass on FX-45H -- every fix corrects this
+codebase's own logic, none required new external research.
+
+**State selection and research readiness no longer share one
+destructively filtered view.** A provisional vintage's `released_at`
+may be an uncorroborated proxy (FX-43H), never a verified knowability
+instant -- FX-45H's `known_as_of` pre-filtered history by it before
+handing that SAME filtered view to BOTH state selection AND `require_
+research_ready_interval`, letting a genuinely relevant provisional row
+silently vanish from readiness consideration instead of correctly
+failing the interval closed. `known_as_of` is renamed `_released_at_
+on_or_before` and made private -- used only internally by state
+selection, which may still use this mechanical filter (it must pick
+SOME candidate). `ComputePolicyRateDifferential` no longer pre-filters
+at all: state selection and the readiness check both receive the SAME
+complete, unfiltered series history directly, matching FX-44H's
+original contract for `require_research_ready_interval`. Verified
+directly, not assumed, that the real 1998-10-15 worked example (FX-45H's
+own) still correctly stays out of the readiness window -- via its
+`observation_period` falling outside the computed window bound, not
+via trusting its own `released_at`.
+
+**ANNOUNCED state selects by observation identity, not raw `released_
+at`.** A revision published later for an OLDER observation_period (a
+correction to a stale figure) could have a `released_at` exceeding a
+genuinely newer, unrevised observation's own -- wrongly resurrecting
+the older observation as "current". New two-step selection: among
+vintages knowable at `T`, find the latest `observation_period` with
+any representative at all, then pick that observation's own latest
+admissible revision. `previous_announced_state` needed the identical
+treatment and gained an explicit `as_of` parameter as a result.
+
+**A same-observation higher revision can ALSO leave EFFECTIVE
+unresolved**, not only a later, different observation_period --
+`revision_sequence` is reserved for genuine value corrections to the
+SAME decision, so an unresolved higher-revision sibling supersedes an
+older, lower-revision sibling's own effective timing just as a
+genuinely later decision would. Both `effective_state_as_of` and
+`previous_effective_state` now check for this.
+
+The FX-45H `GBP/USD ANNOUNCED 78 -> 80` improvement was explicitly
+verified, not assumed, to remain valid after these fixes -- a full
+diff of the regenerated coverage diagnostic shows zero verdict flips;
+the two specific instants FX-45H unblocked were always excluded via
+the readiness window's own bound, never via trusting either offending
+row's provisional proxy. A real, previously-uncaught instance of the
+actual bug DID surface on regeneration: several already-blocked
+entries (USD `2020-03-04`, GBP `1997-06-02`) now correctly list an
+additional offending observation each that FX-45H's design had
+silently pruned from consideration -- the verdict for each was already
+blocked for an unrelated reason, so no usable/blocked count changed,
+but the reported reason is now complete rather than silently partial.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

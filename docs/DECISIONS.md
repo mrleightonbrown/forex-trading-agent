@@ -7040,3 +7040,229 @@ story, not this one. This story's own scope (Python 3.13, dependency
 upgrade) is verified fully unaffected by it: 1137/1145 pass in a
 clean, data-free environment either way, both before and after every
 change this correction made.
+
+## 2026-09-25 — FX-45H.1: policy-rate readiness & revision semantics hardening
+
+A narrow hardening pass on FX-45H, prompted by external review of
+FX-45H's own design rather than new external research -- every fix
+below corrects this codebase's own logic; none required resolving any
+previously-unresolved historical date.
+
+**1/2/3. A provisional `released_at` is a proxy, not proof -- state
+selection and research readiness must not share one destructively
+filtered view.** FX-45H's `known_as_of(vintages, as_of)` (`released_at
+<= as_of`) was used both to select ANNOUNCED/EFFECTIVE state AND to
+pre-filter the history handed to `require_research_ready_interval`.
+For a PROVISIONAL vintage (FX-43H: `released_at_is_verified=False`
+and `released_at_is_conservative_bound=False`), `released_at` may be
+nothing more than an uncorroborated same-day proxy (e.g. "the date a
+provider's raw series shows a value change"), never a verified
+knowability instant. Treating `released_at > as_of` as PROOF such a
+row was not yet public is exactly the unverified-assumption this
+codebase's fail-closed philosophy forbids -- the row might genuinely
+have been known earlier; the proxy simply does not say either way.
+Pre-narrowing the readiness check's input by it let a genuinely
+relevant provisional row silently vanish from consideration instead
+of correctly failing the interval closed.
+
+**The fix.** `domain.policy_rate_state.known_as_of` is renamed
+`_released_at_on_or_before` and made private (FX-45H.1 section 5 --
+see below) -- used ONLY internally by `announced_state_as_of`/
+`effective_state_as_of`/`previous_effective_state` for STATE
+SELECTION, which may still use this mechanical filter (it must pick
+SOME candidate, and `released_at` is the only field available to
+order ANNOUNCED by). `application.use_cases.compute_policy_rate_
+differential.ComputePolicyRateDifferential` no longer pre-filters
+history at all before either state selection or the readiness check --
+both now receive the SAME complete, unfiltered series history
+directly from `list_all_for_series`, exactly matching FX-44H's own
+original contract for `require_research_ready_interval` ("must be the
+series' COMPLETE stored history, not a pre-filtered subset").
+`_readiness_window`'s own bounds (FX-45H's tightened, non-
+unconditionally-forward-padded `end`) are UNCHANGED -- they were never
+the unsafe part; only what history got examined within them was.
+
+**Verified empirically, not assumed, that this does not reopen the
+original FX-45H bug (a genuinely irrelevant future observation
+wrongly blocking a historical query).** The real 1998-10-15 USD row
+(FX-45H's own worked example) is STILL correctly excluded from the
+readiness window for a 1998-10-08 query -- confirmed directly: the
+computed window is `[1997-03-11, 1998-10-13)`, and 1998-10-15 falls
+outside it purely by `observation_period` (current's own observation_
+period, 1998-09-29, plus the axis-safety margin reaches only to
+1998-10-13) -- NOT because its own `released_at` was used to prune it
+from the input. `tests/integration/test_compute_policy_rate_
+differential.py`'s own real regression for this case is unchanged in
+outcome, its comment rewritten to state the real, verified reason
+rather than the FX-45H-era one this story showed was unsafe.
+
+**A real, previously-uncaught instance of the actual bug, found by
+regenerating the diagnostic (point 6 below).** `research_results/
+fx45/policy_rate_differential_coverage.json`'s blocked entry for USD
+`as_of=2020-03-04` (itself a genuine, still-unresolved COVID-era
+inter-meeting cut) now ALSO lists `2020-03-16` (the COVID zero-bound
+emergency cut 12 days later) as a second offending observation --
+previously silently absent, because 2020-03-16's own provisional
+proxy `released_at` read after `as_of=2020-03-04` and pruned it from
+FX-45H's readiness input, even though the window's own margin (2020-
+03-04 + 14 days reaches 2020-03-18) genuinely covers it. The verdict
+for this `as_of` does not change (it was already blocked by 2020-03-
+04 itself being provisional too) -- but the REPORTED REASON is now
+complete rather than silently partial, exactly the class of case this
+fix exists for. Three more near-identical additions appear across the
+regenerated report (GBP `1997-06-02` gaining `1997-06-06`; the same
+USD `2020-03-04`/`2020-03-16` pair recurring in both the EUR/USD and
+USD/CAD sections, since both scan USD's own history independently).
+
+**A regression test was ALSO needed that the real data cannot provide
+on its own**, since the real 1998/2020 cases either already block for
+an unrelated reason or fall outside the window regardless: `tests/
+unit/application/test_compute_policy_rate_differential.py`'s new
+`test_provisional_observation_in_window_still_blocks_despite_future_
+proxy` constructs a provisional row whose own `observation_period`
+genuinely falls inside a computed window (via a `current` state close
+enough to `as_of` that the axis-safety margin reaches forward past
+`as_of` itself) -- proven, via regression-proof discipline, to be the
+ONLY test in this story that actually catches reverting this specific
+fix (the real 1998 integration test does not, confirming it was
+already excluded by the window-bound mechanism, independent of this
+fix). A direct contrast test, `test_verified_observation_in_window_
+does_not_block_despite_future_released_at`, proves a VERIFIED row in
+the identical in-window position correctly does NOT block (its own
+timing is trustworthy regardless of when it falls relative to
+`as_of`) -- together, these two tests are the concrete proof the
+provisional-vs-verified distinction is actually respected, not merely
+asserted.
+
+**4. ANNOUNCED state now selects by observation identity, not raw
+`released_at`.** `announced_state_as_of` picked "the vintage with the
+greatest `released_at <= T`" outright -- wrong once revisions exist: a
+REVISION published later for an OLDER observation_period (a
+correction to a stale figure) can have a `released_at` exceeding a
+genuinely newer, unrevised observation's own `released_at`, wrongly
+resurrecting the older observation as "current" merely because it was
+republished more recently. Worked example (the story's own): a
+January observation (5.0%), a February observation (5.5%), and a
+March revision correcting January's own figure to 5.1% -- at a March
+`as_of`, the current ANNOUNCED state must remain February, not
+January.
+
+**The fix**: a new private `_latest_observation_state` two-step
+selection -- among vintages knowable at `T`, find the latest
+`observation_period` with any representative at all, THEN, among
+vintages sharing that one observation_period, pick the latest
+admissible revision (by `released_at`, tie-broken by `revision_
+sequence`). A correction to an old figure never changes WHICH decision
+currently governs; it only updates what is known about that same
+decision. `previous_announced_state` needed the identical two-step
+treatment and consequently gained an explicit `as_of` parameter (a
+real signature change) -- the two-step selection can no longer rely on
+simple transitivity from `current.released_at` the way pure `released_
+at`-ordering could, since a "previous" observation could itself have a
+later, out-of-order revision whose own `released_at` must be checked
+against the SAME `as_of` `current` was resolved against.
+`ComputePolicyRateDifferential` reunifies `previous_announced_state`/
+`previous_effective_state` dispatch behind one shared `_PreviousLookup`
+type alias again, now that both share the identical `(vintages,
+current, as_of)` shape (FX-45H had to diverge them; FX-45H.1 brings
+them back together).
+
+**5. A same-observation higher revision can ALSO leave EFFECTIVE
+unresolved**, not only a later, different observation_period.
+`_has_unresolved_later_decision` originally only matched a vintage
+with a strictly later `observation_period` (FX-45H's own case). It
+missed a REVISION of the SAME observation_period whose own `effective_
+at` is unestablished: `revision_sequence` is reserved for genuine
+changes to the value (`MacroObservationVintage`'s own docstring), so a
+higher-revision sibling supersedes what an older, lower-revision
+sibling says about that SAME decision -- if that higher revision's own
+effective timing is unresolved, the older revision cannot be trusted
+as "the" effective state either, even though no NEW, different
+decision has occurred. Worked example (the story's own): revision 0
+of a January observation has known effective timing (Jan 1); revision
+1 of the SAME January observation_period (a correction to the value)
+is released a month later with its own `effective_at` unresolved --
+EFFECTIVE must become unavailable at a subsequent `as_of`, not
+silently fall back to revision 0's stale figure. Both `effective_
+state_as_of` and `previous_effective_state` now check for this
+sibling case, sharing the same generalized `_has_unresolved_later_
+decision(known, candidate, before=...)` -- confirmed via regression-
+proof discipline to be independently load-bearing for BOTH callers at
+once (a single deliberate break failed both `effective_state_as_of`'s
+own dedicated test AND `previous_effective_state`'s own dedicated
+test simultaneously, since they share one mechanism).
+
+**6. Diagnostic regenerated; the FX-45H `GBP/USD ANNOUNCED 78 -> 80`
+increase was explicitly NOT assumed to remain valid -- verified
+directly instead, per the story's own instruction.** Every headline
+number in `research_results/fx45/policy_rate_differential_coverage.
+json` is UNCHANGED from FX-45H: EUR/USD 49/105 ANNOUNCED, 44/30
+EFFECTIVE; GBP/USD 80/82 ANNOUNCED, 0/30 EFFECTIVE; USD/CAD 44/79
+ANNOUNCED, 0/30 EFFECTIVE. This was confirmed, not assumed: a full
+diff of the before/after report shows zero `as_of` entries changed
+verdict (no blocked-to-usable or usable-to-blocked flips anywhere) --
+the only substantive differences are the four additional-offending-
+observation cases described above (verdict unchanged, reason now
+complete) and the updated `DifferentialUnavailable` reason wording
+(now covering the same-observation-revision case too). The GBP/USD
+ANNOUNCED improvement holds for the SAME legitimate reason the real
+1998 test does: the two specific instants FX-45H unblocked
+(1998-10-08T11:00:00Z, 1999-08-25T03:59:59Z) were excluded via the
+readiness window's own `observation_period` bound, not via trusting
+either offending row's provisional `released_at` proxy -- confirmed by
+inspecting both directly.
+
+**7. Preserved, all reconfirmed via the full suite and dedicated
+regression-proof breaks, not merely asserted**: future revision cannot
+leak before its real release; intervening later decision with unknown
+`effective_at` blocks EFFECTIVE; `previous_effective_state` remains
+PIT-safe; future-effective but already-announced decisions remain
+visible under ANNOUNCED; the diagnostic's semantics-specific axes
+(ANNOUNCED samples `released_at` transitions, EFFECTIVE samples
+populated `effective_at` transitions) are untouched; the mandatory
+2026 Fed three-state regression stays green; the real 2008-01-22
+crisis-crossing rejection stays green.
+
+**Regression-proof discipline applied to all three new mechanisms**,
+each deliberately broken, confirmed to fail its dedicated tests for
+the right reason, then restored: the ANNOUNCED two-step selection
+(reverted to raw `released_at` ordering -- broke the January/February/
+March worked-example test correctly, January wrongly winning over
+February); the same-observation EFFECTIVE revision check (Case B
+removed -- broke both `effective_state_as_of`'s and `previous_
+effective_state`'s dedicated tests simultaneously, confirming the
+shared mechanism); the readiness-receives-complete-history fix
+(PIT pre-filter reintroduced -- broke the new in-window provisional
+test precisely, while confirmably NOT breaking the real 1998
+integration test, proving the synthetic test is doing genuinely
+distinct work the real data cannot).
+
+**Tests**: 6 new domain tests (ANNOUNCED ignoring a later revision of
+an older observation, for both `announced_state_as_of` and `previous_
+announced_state`; a contrast proving a later revision of the WINNING
+observation still wins; same-observation unresolved EFFECTIVE
+revision, for both `effective_state_as_of` and `previous_effective_
+state`, plus a contrast proving a RESOLVED same-observation revision
+correctly does not block); 3 new updated/added application-layer
+tests (the in-window provisional-still-blocks regression, its
+verified-does-not-block contrast, and the existing future-unreleased
+test's comment corrected to state what it actually proves); the real
+1998 integration test's comment rewritten to the verified reason.
+3 domain tests for the now-private, renamed filter removed (no longer
+part of the public contract; its behavior remains covered indirectly
+through every state-selection test that already exercised it). Every
+pre-existing FX-45/FX-45H test re-confirmed passing unchanged.
+
+**Verification**: `pytest` (1150 passed, full suite, up from 1145 --
+2 unrelated, transient live-OANDA-API test failures during this
+story's own work, confirmed via immediate re-run to be a Cloudflare
+gateway timeout, not a regression), `ruff`, `ruff format`, `mypy .`
+(262 files), `pre-commit run --all-files`, all clean. Diagnostic
+re-run live against real Postgres, full before/after diff reviewed
+line by line, not sampled.
+
+Per this story's own explicit stop instruction: no FX-return research,
+no trading/backtesting, no carry, no JPY ingestion, no new macro
+providers, no news/event-surprise logic, no technical gating, no
+decision-engine changes, no broad macro-vintage-model redesign follow
+this story -- and FX-46 does not start automatically.

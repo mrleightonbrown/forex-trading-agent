@@ -5,7 +5,6 @@ from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.policy_rate_state import (
     announced_state_as_of,
     effective_state_as_of,
-    known_as_of,
     previous_announced_state,
     previous_effective_state,
 )
@@ -159,7 +158,9 @@ def test_effective_state_as_of_returns_none_when_nothing_has_taken_effect_yet() 
 def test_previous_announced_state_finds_the_prior_entry() -> None:
     vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
 
-    result = previous_announced_state(vintages, _SEP_2026)
+    result = previous_announced_state(
+        vintages, _SEP_2026, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
 
     assert result == _EARLIER
 
@@ -167,7 +168,9 @@ def test_previous_announced_state_finds_the_prior_entry() -> None:
 def test_previous_announced_state_returns_none_for_earliest_entry() -> None:
     vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
 
-    result = previous_announced_state(vintages, _STILL_EARLIER)
+    result = previous_announced_state(
+        vintages, _STILL_EARLIER, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
 
     assert result is None
 
@@ -222,31 +225,6 @@ def test_announced_state_as_of_includes_a_released_decision_days_before_its_own_
     result = announced_state_as_of([_EARLIER, released_early], as_of)
 
     assert result == released_early
-
-
-# ---------------------------------------------------------------------------
-# known_as_of -- FX-45H section 1/3's shared point-in-time filter
-# ---------------------------------------------------------------------------
-
-
-def test_known_as_of_filters_by_released_at() -> None:
-    vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
-
-    result = known_as_of(vintages, UtcTimestamp(datetime(2025, 12, 15, tzinfo=UTC)))
-
-    assert result == (_STILL_EARLIER, _EARLIER)  # _SEP_2026 not yet released
-
-
-def test_known_as_of_is_inclusive_at_released_at() -> None:
-    result = known_as_of([_SEP_2026], UtcTimestamp(datetime(2026, 9, 16, 18, 0, 0, tzinfo=UTC)))
-
-    assert result == (_SEP_2026,)
-
-
-def test_known_as_of_excludes_strictly_future_released_at() -> None:
-    result = known_as_of([_SEP_2026], UtcTimestamp(datetime(2026, 9, 16, 17, 59, 59, tzinfo=UTC)))
-
-    assert result == ()
 
 
 # ---------------------------------------------------------------------------
@@ -412,3 +390,236 @@ def test_announced_and_effective_diverge_around_a_real_verified_observation() ->
     assert announced is not None and announced.value == Decimal("3.875")  # NEW
     assert effective is not None and effective.value == Decimal("3.625")  # still OLD
     assert announced != effective
+
+
+# ---------------------------------------------------------------------------
+# FX-45H.1 section 4 -- ANNOUNCED selects by observation identity, not
+# raw released_at: a later-published revision of an OLDER observation
+# must never resurrect that older observation as "current".
+# ---------------------------------------------------------------------------
+
+
+def test_announced_state_as_of_ignores_a_later_republished_revision_of_an_older_observation() -> (
+    None
+):
+    # The story's own worked example: Jan observation, Feb (newer)
+    # observation, a March revision REPUBLISHING Jan -- March's current
+    # ANNOUNCED state must remain February, not January.
+    jan = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.0"),
+        released_at=_ts(2026, 1, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    feb = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 2, 1),
+        value=Decimal("5.5"),
+        released_at=_ts(2026, 2, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    jan_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.1"),
+        released_at=_ts(2026, 3, 1),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [jan, feb, jan_revision]
+
+    result = announced_state_as_of(vintages, UtcTimestamp(datetime(2026, 3, 15, tzinfo=UTC)))
+
+    assert result == feb
+    assert result is not None and result.value == Decimal("5.5")
+
+
+def test_announced_state_as_of_uses_latest_admissible_revision_of_the_winning_observation() -> None:
+    # Contrast: a later revision of the WINNING (latest) observation
+    # itself must still win over its own earlier revision -- only a
+    # revision of an OLDER observation is ignored, not revisions in
+    # general.
+    feb_rev0 = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 2, 1),
+        value=Decimal("5.5"),
+        released_at=_ts(2026, 2, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    feb_rev1 = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 2, 1),
+        value=Decimal("5.6"),
+        released_at=_ts(2026, 2, 20),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [feb_rev0, feb_rev1]
+
+    result = announced_state_as_of(vintages, UtcTimestamp(datetime(2026, 3, 15, tzinfo=UTC)))
+
+    assert result == feb_rev1
+    assert result is not None and result.value == Decimal("5.6")
+
+
+def test_previous_announced_state_ignores_a_later_revision_of_an_even_older_observation() -> None:
+    # Same principle applied to "previous": a later revision of an
+    # observation OLDER than current must not beat a genuinely more
+    # recent (but still-before-current) observation.
+    jan = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.0"),
+        released_at=_ts(2026, 1, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    feb = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 2, 1),
+        value=Decimal("5.5"),
+        released_at=_ts(2026, 2, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    mar = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 3, 1),
+        value=Decimal("5.75"),
+        released_at=_ts(2026, 3, 2),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    jan_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.1"),
+        released_at=_ts(2026, 3, 15),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [jan, feb, mar, jan_revision]
+
+    result = previous_announced_state(
+        vintages, mar, UtcTimestamp(datetime(2026, 3, 20, tzinfo=UTC))
+    )
+
+    assert result == feb
+    assert result is not None and result.value == Decimal("5.5")
+
+
+# ---------------------------------------------------------------------------
+# FX-45H.1 section 5 -- a same-observation higher revision can ALSO
+# leave EFFECTIVE unresolved, not only a later, different observation.
+# ---------------------------------------------------------------------------
+
+
+def test_effective_state_as_of_unavailable_with_unresolved_same_observation_revision() -> None:
+    # revision 0 has known effective timing; revision 1 of the SAME
+    # observation_period (a correction) is released later with its own
+    # effective_at unresolved -- EFFECTIVE must become unavailable, not
+    # silently fall back to revision 0's stale figure.
+    rev0 = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.0"),
+        released_at=_ts(2026, 1, 1),
+        effective_at=_ts(2026, 1, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    rev1_unresolved = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("4.9"),
+        released_at=_ts(2026, 2, 1),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+        # effective_at deliberately omitted -- unresolved
+    )
+    vintages = [rev0, rev1_unresolved]
+
+    result = effective_state_as_of(vintages, UtcTimestamp(datetime(2026, 3, 1, tzinfo=UTC)))
+
+    assert result is None  # NOT rev0
+
+
+def test_effective_state_as_of_unblocked_once_same_observation_revision_is_resolved() -> None:
+    # Contrast: once the higher revision's own effective_at is
+    # established, it correctly becomes the candidate itself -- a
+    # genuine correction to the same decision, not a block.
+    rev0 = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.0"),
+        released_at=_ts(2026, 1, 1),
+        effective_at=_ts(2026, 1, 1),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    rev1_resolved = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("4.9"),
+        released_at=_ts(2026, 2, 1),
+        effective_at=_ts(2026, 1, 1),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [rev0, rev1_resolved]
+
+    result = effective_state_as_of(vintages, UtcTimestamp(datetime(2026, 3, 1, tzinfo=UTC)))
+
+    assert result == rev1_resolved
+    assert result is not None and result.value == Decimal("4.9")
+
+
+def test_previous_effective_state_unavailable_with_unresolved_same_observation_revision() -> None:
+    # FX-45H.1 section 5's own required "equivalent previous-effective-
+    # state regression": the found predecessor candidate has its OWN
+    # unresolved higher-revision sibling -- it cannot be trusted as
+    # "previous" either.
+    old_rev0 = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2025, 12, 11),
+        value=Decimal("3.625"),
+        released_at=_ts(2025, 12, 10, 19, 0, 0),
+        effective_at=_ts(2025, 12, 11),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    old_rev1_unresolved = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2025, 12, 11),
+        value=Decimal("3.615"),
+        released_at=_ts(2026, 1, 15),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+        # effective_at deliberately omitted -- unresolved
+    )
+    vintages = [old_rev0, old_rev1_unresolved, _SEP_2026]
+
+    result = previous_effective_state(
+        vintages, _SEP_2026, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
+
+    assert result is None  # NOT old_rev0

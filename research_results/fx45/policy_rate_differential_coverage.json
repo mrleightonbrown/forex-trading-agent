@@ -1,6 +1,6 @@
 {
   "story": "FX-45H",
-  "generated_at": "2026-09-25T02:04:07+00:00",
+  "generated_at": "2026-09-25T04:36:02+00:00",
   "method": "For each pair, candidate as_of instants are drawn from the axis the requested rate_semantics actually governs itself on (FX-45H section 5): ANNOUNCED samples every real stored vintage's own released_at (both legs, every confidence tier); EFFECTIVE samples every real stored vintage's own POPULATED effective_at instead. Each candidate is queried through ComputePolicyRateDifferential -- the same use case the real feature uses, not bespoke coverage logic. This report contains no FX returns, expectancy, correlation, significance, or trading-performance figures.",
   "pairs": {
     "EUR/USD": {
@@ -1396,6 +1396,10 @@
                 {
                   "series_key": "USD_POLICY_RATE",
                   "observation_period": "2020-03-04T00:00:00+00:00"
+                },
+                {
+                  "series_key": "USD_POLICY_RATE",
+                  "observation_period": "2020-03-16T00:00:00+00:00"
                 }
               ]
             },
@@ -1547,12 +1551,12 @@
             {
               "as_of": "2007-03-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2007-03-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2007-03-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2007-06-13T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2007-06-13T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2007-06-13T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2008-07-09T00:00:00+00:00",
@@ -1627,52 +1631,52 @@
             {
               "as_of": "2009-05-13T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2009-05-13T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2009-05-13T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2011-04-13T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-04-13T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-04-13T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2011-07-13T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-07-13T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-07-13T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2011-11-09T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-11-09T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-11-09T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2011-12-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-12-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2011-12-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2012-07-11T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2012-07-11T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2012-07-11T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2013-05-08T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2013-05-08T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2013-05-08T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2013-11-13T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2013-11-13T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2013-11-13T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2014-06-11T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2014-06-11T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2014-06-11T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2014-09-10T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2014-09-10T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for USD as of 2014-09-10T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2022-03-17T00:00:00+00:00",
@@ -1822,6 +1826,10 @@
                 {
                   "series_key": "GBP_POLICY_RATE",
                   "observation_period": "1997-06-02T00:00:00+00:00"
+                },
+                {
+                  "series_key": "GBP_POLICY_RATE",
+                  "observation_period": "1997-06-06T00:00:00+00:00"
                 }
               ]
             },
@@ -2412,6 +2420,10 @@
                 {
                   "series_key": "USD_POLICY_RATE",
                   "observation_period": "2020-03-04T00:00:00+00:00"
+                },
+                {
+                  "series_key": "USD_POLICY_RATE",
+                  "observation_period": "2020-03-16T00:00:00+00:00"
                 }
               ]
             },
@@ -2589,62 +2601,62 @@
             {
               "as_of": "2015-12-17T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2015-12-17T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2015-12-17T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2016-12-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2016-12-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2016-12-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-03-16T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-03-16T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-03-16T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-06-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-06-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-06-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-12-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-12-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2017-12-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-03-22T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-03-22T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-03-22T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-06-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-06-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-06-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-09-27T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-09-27T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-09-27T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-12-20T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-12-20T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2018-12-20T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-08-01T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-08-01T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-08-01T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-09-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-09-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-09-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-10-31T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-10-31T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2019-10-31T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2022-03-17T00:00:00+00:00",
@@ -2699,67 +2711,67 @@
             {
               "as_of": "2022-11-03T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2022-11-03T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2022-11-03T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2022-12-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2022-12-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2022-12-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-02-02T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-02-02T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-02-02T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-03-23T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-03-23T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-03-23T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-05-04T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-05-04T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-05-04T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-07-27T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-07-27T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2023-07-27T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-09-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-09-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-09-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-11-08T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-11-08T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-11-08T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-12-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-12-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2024-12-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-09-18T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-09-18T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-09-18T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-10-30T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-10-30T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-10-30T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-12-11T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-12-11T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2025-12-11T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2026-09-17T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2026-09-17T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for GBP as of 2026-09-17T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             }
           ]
         }
@@ -3273,6 +3285,10 @@
                 {
                   "series_key": "USD_POLICY_RATE",
                   "observation_period": "2020-03-04T00:00:00+00:00"
+                },
+                {
+                  "series_key": "USD_POLICY_RATE",
+                  "observation_period": "2020-03-16T00:00:00+00:00"
                 }
               ]
             },
@@ -3428,62 +3444,62 @@
             {
               "as_of": "2015-12-17T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2015-12-17T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2015-12-17T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2016-12-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2016-12-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2016-12-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-03-16T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-03-16T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-03-16T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-06-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-06-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-06-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2017-12-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-12-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2017-12-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-03-22T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-03-22T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-03-22T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-06-14T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-06-14T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-06-14T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-09-27T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-09-27T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-09-27T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2018-12-20T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-12-20T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2018-12-20T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-08-01T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-08-01T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-08-01T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-09-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-09-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-09-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2019-10-31T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-10-31T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2019-10-31T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2022-03-17T00:00:00+00:00",
@@ -3538,67 +3554,67 @@
             {
               "as_of": "2022-11-03T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2022-11-03T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2022-11-03T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2022-12-15T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2022-12-15T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2022-12-15T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-02-02T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-02-02T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-02-02T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-03-23T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-03-23T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-03-23T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-05-04T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-05-04T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-05-04T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2023-07-27T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-07-27T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2023-07-27T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-09-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-09-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-09-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-11-08T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-11-08T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-11-08T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2024-12-19T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-12-19T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2024-12-19T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-09-18T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-09-18T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-09-18T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-10-30T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-10-30T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-10-30T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2025-12-11T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-12-11T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2025-12-11T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             },
             {
               "as_of": "2026-09-17T00:00:00+00:00",
               "reason": "missing_rate_state",
-              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2026-09-17T00:00:00+00:00 (either effective_at has not been populated for the governing vintage, or a newer decision has already been released whose own effective_at is not yet established)"
+              "detail": "no EFFECTIVE policy-rate state is defensibly established for CAD as of 2026-09-17T00:00:00+00:00 (effective_at has not been populated for the governing vintage, a newer decision has already been released whose own effective_at is not yet established, or a newer revision of the same observation has been released whose own effective_at is not yet established)"
             }
           ]
         }

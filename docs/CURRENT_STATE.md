@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-24 (FX-45H)_
+_Last updated: 2026-09-25 (FX-45H.1)_
 
 ## What exists
 
@@ -904,6 +904,46 @@ _Last updated: 2026-09-24 (FX-45H)_
   each deliberately broken, confirmed to fail for the right reason,
   then restored. 1145 tests pass (full suite, up from 1131). Full
   details in `docs/DECISIONS.md`'s FX-45H entry.
+- **FX-45H.1: policy-rate readiness & revision semantics hardening
+  (complete)**. A narrow further hardening pass on FX-45H, correcting
+  this codebase's own logic (no new external research). (1) State
+  selection and research readiness no longer share one destructively
+  filtered view -- a provisional vintage's `released_at` may be an
+  uncorroborated proxy (FX-43H), not a verified knowability instant;
+  FX-45H's `known_as_of` (now private, renamed `_released_at_on_or_
+  before`) is used only by state selection, and `ComputePolicyRate
+  Differential` now hands BOTH state selection and `require_research_
+  ready_interval` the SAME complete, unfiltered history, matching
+  FX-44H's original contract. Verified directly (not assumed) that the
+  real 1998-10-15 worked example stays correctly excluded from the
+  readiness window -- via its `observation_period` falling outside the
+  computed bound, never via trusting its own `released_at`. (2)
+  `announced_state_as_of` now selects by observation identity: among
+  vintages knowable at `T`, the latest `observation_period` present,
+  then that observation's own latest admissible revision -- a
+  correction republished later for an OLDER observation no longer
+  wrongly resurrects it as current. `previous_announced_state` gained
+  an explicit `as_of` parameter for the identical reason. (3) A
+  same-observation higher revision with unresolved `effective_at` now
+  also blocks EFFECTIVE (previously only a later, different
+  observation_period did) -- `revision_sequence` is reserved for
+  genuine value corrections to the SAME decision, so an unresolved
+  higher-revision sibling supersedes an older sibling's own effective
+  timing. Diagnostic regenerated: every headline usable/blocked number
+  is UNCHANGED from FX-45H (verified via a full before/after diff
+  showing zero verdict flips, not assumed) -- GBP/USD ANNOUNCED's
+  78→80 improvement holds for the same legitimate, window-bound reason
+  the real 1998 case does. A real, previously-uncaught instance of the
+  actual bug DID surface: several already-blocked entries (USD
+  `2020-03-04`, GBP `1997-06-02`) now correctly list an additional
+  offending observation FX-45H's design had silently pruned -- verdict
+  unchanged (already blocked for another reason), reason now complete.
+  Regression-proof discipline applied to all three new mechanisms,
+  including proving a new synthetic test catches a reversion the real
+  1998 data cannot (it's excluded by the window bound regardless).
+  1150 tests pass (full suite, up from 1145; 2 unrelated live-OANDA
+  transient failures confirmed via re-run, not a regression). Full
+  details in `docs/DECISIONS.md`'s FX-45H.1 entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

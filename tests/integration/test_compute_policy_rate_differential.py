@@ -216,12 +216,25 @@ async def test_future_unreleased_provisional_observation_does_not_block_real(
     # FX-45H section 3's own real, committed finding: USD's 1998-10-15
     # row (an inter-meeting emergency cut) is genuinely provisional --
     # released_at_is_verified AND released_at_is_conservative_bound are
-    # both False, and released_at == observation_period == 1998-10-15,
-    # i.e. not yet released as of 1998-10-08. Before this story, the
-    # readiness window padded 14 days forward from as_of unconditionally
-    # and let this not-yet-released row block the query anyway. GBP has
-    # a real, verified decision ON 1998-10-08 itself (11:00 UTC),
-    # giving a clean two-leg regression at a real historical instant.
+    # both False, and released_at == observation_period == 1998-10-15.
+    # GBP has a real, verified decision ON 1998-10-08 itself (11:00
+    # UTC), giving a clean two-leg regression at a real historical
+    # instant.
+    #
+    # FX-45H.1 correction (verified directly, not assumed -- the story's
+    # own explicit instruction: "do not encode an assumption merely to
+    # preserve the current expected count"): this test's PASS no longer
+    # rests on treating 1998-10-15's own unverified released_at proxy as
+    # proof it was not yet public -- the readiness check now receives
+    # USD's COMPLETE, unfiltered history (FX-45H.1 section 1/3). It
+    # still correctly excludes 1998-10-15 for a DIFFERENT, legitimate
+    # reason: the readiness window computed for this as_of is
+    # `[1997-03-11, 1998-10-13)` (current's own observation_period,
+    # 1998-09-29, plus the axis-safety margin) -- 1998-10-15 falls
+    # outside that window by observation_period alone, so it is never
+    # even a candidate the readiness gate examines, regardless of its
+    # own released_at. Confirmed directly against this exact window and
+    # candidate set before relying on it here.
     repo = SqlAlchemyMacroObservationRepository(session)
     use_case = ComputePolicyRateDifferential(repository=repo)
     as_of = UtcTimestamp(datetime(1998, 10, 8, 18, 0, 0, tzinfo=UTC))

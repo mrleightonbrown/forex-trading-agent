@@ -1061,25 +1061,65 @@ performance research, no optimized thresholds, no technical-signal
 gating, no JPY ingestion, no news, no event-surprise work follows this
 story.
 
+## FX-45H.1: policy-rate readiness & revision semantics hardening (complete)
+
+A narrow further hardening pass on FX-45H, correcting this codebase's
+own logic -- no new external research. State selection and research
+readiness no longer share one destructively filtered view: a
+provisional vintage's `released_at` may be an uncorroborated proxy
+(FX-43H), not verified knowability, so `known_as_of` (now private,
+renamed `_released_at_on_or_before`) is used only by state selection;
+`ComputePolicyRateDifferential` now hands BOTH state selection and
+`require_research_ready_interval` the SAME complete, unfiltered
+history. `announced_state_as_of`/`previous_announced_state` now select
+by observation identity (latest knowable observation_period, then its
+own latest admissible revision) rather than raw `released_at`, so a
+later-republished correction to an OLDER observation can no longer
+wrongly resurrect it as current. A same-observation higher revision
+with unresolved `effective_at` now also blocks EFFECTIVE, not only a
+later, different observation_period. Full details in `docs/
+DECISIONS.md`'s FX-45H.1 entry.
+
+**Diagnostic re-verified, not assumed.** The story's own explicit
+instruction was not to assume FX-45H's `GBP/USD ANNOUNCED 78→80`
+increase remained valid -- a full before/after diff of the
+regenerated report confirms every headline number is unchanged (zero
+verdict flips), and the two specific instants FX-45H unblocked hold
+for the same legitimate, window-bound reason the real 1998 regression
+does, not because of the (now-corrected) unsafe proxy-trust. A real,
+previously-uncaught instance of the actual bug DID surface on
+regeneration -- several already-blocked entries now correctly list an
+additional offending observation FX-45H's design had silently pruned
+(verdict unchanged, reason now complete). 1150 tests pass (full suite,
+up from 1145).
+
+**Per this story's own explicit stop instruction**: no FX-return
+research, no trading/backtesting, no carry, no JPY ingestion, no new
+macro providers, no news/event-surprise logic, no technical gating, no
+decision-engine changes, no broad macro-vintage-model redesign follow
+this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-46's historical rate-differential
-experiment (now with corrected coverage evidence for all three pairs),
-the future declassification-mechanism need noted above (not yet
-needed, not yet built), the 18 still-provisional pre-2006 EUR change
-points, the 8 USD/6 GBP/3 CAD known-irregular dates left unresolved,
-JPY provider mapping, the pre-2009 CAD gap, or any carry-strategy work.
+experiment (now with re-verified coverage evidence for all three
+pairs), the future declassification-mechanism need noted above (not
+yet needed, not yet built), the 18 still-provisional pre-2006 EUR
+change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
+unresolved, JPY provider mapping, the pre-2009 CAD gap, or any
+carry-strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H above are the
-explicitly-scoped exceptions (domain model, storage-integrity
+FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1 above are
+the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, and a deterministic, auditable, scoring-
-free policy-rate differential feature plus its own point-in-time
-hardening -- still no strategy, no decision logic, no "carry" framing)
-and do not open the door to the rest of this phase. The same goes for
+free policy-rate differential feature plus two rounds of its own
+point-in-time hardening -- still no strategy, no decision logic, no
+"carry" framing) and do not open the door to the rest of this phase.
+The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow
 Trading) — none are part of the current phase.

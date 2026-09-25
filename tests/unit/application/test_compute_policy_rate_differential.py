@@ -317,16 +317,23 @@ async def test_three_state_regression_around_the_real_2026_09_17_observation() -
 # FX-45H section 3 -- a future, not-yet-released observation must not
 # block a query evaluated before it existed; a released-but-future-
 # effective observation must still remain visible under ANNOUNCED.
+#
+# FX-45H.1 section 1/2: this must hold WITHOUT relying on a provisional
+# row's own unverified released_at proxy to exclude it from readiness --
+# see test_provisional_observation_in_window_still_blocks_despite_
+# future_proxy below, which places the provisional row genuinely INSIDE
+# the readiness window (unlike the test immediately below, where the
+# row's own observation_period simply falls outside the window
+# regardless of any released_at filtering at all).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_future_unreleased_provisional_observation_does_not_block() -> None:
-    # Mirrors the real 1998-10-08/1998-10-15 USD finding: a provisional
-    # observation whose own observation_period/released_at lies a few
-    # days in the FUTURE relative to as_of -- well inside the 14-day
-    # axis-safety margin -- must not block a query evaluated before it
-    # was ever released.
+    # A provisional observation whose own observation_period AND
+    # released_at both lie well past this query's readiness window (no
+    # currently-relevant state needs to reach that far forward) must
+    # not affect it -- true regardless of how the window is computed.
     fake = FakeMacroObservationRepository()
     await _seed_exact(fake, "USD_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 18, 0, 0), "5.375")
     # Not yet released as of as_of below.
@@ -339,6 +346,55 @@ async def test_future_unreleased_provisional_observation_does_not_block() -> Non
     )
 
     assert result.current.base.rate == Decimal("5.375")  # the not-yet-released row is invisible
+
+
+@pytest.mark.asyncio
+async def test_provisional_observation_in_window_still_blocks_despite_future_proxy() -> None:
+    # FX-45H.1 section 1/2's own required regression: a provisional
+    # row's own observation_period genuinely falls INSIDE the readiness
+    # window (current's own observation_period is close enough to
+    # as_of that the axis-safety margin reaches it) -- it must still
+    # correctly BLOCK, even though its released_at proxy reads AFTER
+    # as_of. Excluding it here would be exactly FX-45H.1's own bug:
+    # treating an unverified provisional proxy as proof of non-
+    # knowability rather than letting the readiness gate examine it.
+    fake = FakeMacroObservationRepository()
+    # current: close enough to as_of that the window's margin extension
+    # reaches forward past as_of itself (2024-05-25 + 14d = 2024-06-08).
+    await _seed_exact(fake, "USD_POLICY_RATE", (2024, 5, 25), (2024, 5, 24, 18, 0, 0), "5.375")
+    # Provisional, observation_period genuinely inside the window
+    # (2024-06-03 < 2024-06-08), released_at also after as_of.
+    await _seed_provisional(fake, "USD_POLICY_RATE", (2024, 6, 3), (2024, 6, 3), "5.625")
+    await _seed_exact(fake, "EUR_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 11, 45, 0), "4.00")
+    use_case = ComputePolicyRateDifferential(repository=fake)
+
+    with pytest.raises(ResearchIntervalNotReadyError) as exc_info:
+        await use_case(Instrument("USD", "EUR"), _ts(2024, 6, 1), RateSemantics.ANNOUNCED)
+
+    assert not exc_info.value.no_baseline
+    assert any(v.observation_period == _ts(2024, 6, 3) for v in exc_info.value.provisional_vintages)
+
+
+@pytest.mark.asyncio
+async def test_verified_observation_in_window_does_not_block_despite_future_released_at() -> None:
+    # Direct contrast with the test above: a VERIFIED (not provisional)
+    # row in the exact same in-window position, released after as_of --
+    # correctly excluded from state (not yet knowable) and correctly
+    # does NOT block readiness either (a verified row's own timing is
+    # trustworthy regardless of when it falls relative to as_of).
+    fake = FakeMacroObservationRepository()
+    await _seed_exact(fake, "USD_POLICY_RATE", (2024, 5, 25), (2024, 5, 24, 18, 0, 0), "5.375")
+    await _seed_exact(
+        fake, "USD_POLICY_RATE", (2024, 6, 3), (2024, 6, 3, 0, 0, 0), "5.625"
+    )  # verified, released after as_of
+    await _seed_exact(fake, "EUR_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 11, 45, 0), "4.00")
+    use_case = ComputePolicyRateDifferential(repository=fake)
+
+    result = _feature(
+        await use_case(Instrument("USD", "EUR"), _ts(2024, 6, 1), RateSemantics.ANNOUNCED)
+    )
+
+    assert result.current.base.rate == Decimal("5.375")  # not yet knowable, but does not block
 
 
 @pytest.mark.asyncio
