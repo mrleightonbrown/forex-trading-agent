@@ -202,6 +202,33 @@ async def test_three_state_regression_real_2026_09_17_observation(session: Async
 
 
 @pytest.mark.asyncio
+async def test_future_unreleased_provisional_observation_does_not_block_real(
+    session: AsyncSession,
+) -> None:
+    # FX-45H section 3's own real, committed finding: USD's 1998-10-15
+    # row (an inter-meeting emergency cut) is genuinely provisional --
+    # released_at_is_verified AND released_at_is_conservative_bound are
+    # both False, and released_at == observation_period == 1998-10-15,
+    # i.e. not yet released as of 1998-10-08. Before this story, the
+    # readiness window padded 14 days forward from as_of unconditionally
+    # and let this not-yet-released row block the query anyway. GBP has
+    # a real, verified decision ON 1998-10-08 itself (11:00 UTC),
+    # giving a clean two-leg regression at a real historical instant.
+    repo = SqlAlchemyMacroObservationRepository(session)
+    use_case = ComputePolicyRateDifferential(repository=repo)
+    as_of = UtcTimestamp(datetime(1998, 10, 8, 18, 0, 0, tzinfo=UTC))
+
+    result = _feature(await use_case(Instrument("GBP", "USD"), as_of, RateSemantics.ANNOUNCED))
+
+    # USD's own current state as of this instant is still the real
+    # 1998-09-29 conservative-bound row (5.25%) -- the not-yet-released
+    # 1998-10-15 row must be neither visible nor able to block.
+    assert result.current.base.rate == Decimal("7.25")  # GBP, 1998-10-08
+    assert result.current.quote.rate == Decimal("5.25")  # USD, still 1998-09-29
+    assert result.current.quote.observation_period.value.date() == date(1998, 9, 29)
+
+
+@pytest.mark.asyncio
 async def test_deterministic_output_for_identical_inputs_real(session: AsyncSession) -> None:
     repo = SqlAlchemyMacroObservationRepository(session)
     use_case = ComputePolicyRateDifferential(repository=repo)

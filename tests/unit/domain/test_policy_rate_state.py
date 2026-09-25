@@ -5,6 +5,7 @@ from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.policy_rate_state import (
     announced_state_as_of,
     effective_state_as_of,
+    known_as_of,
     previous_announced_state,
     previous_effective_state,
 )
@@ -166,7 +167,9 @@ def test_previous_announced_state_returns_none_for_earliest_entry() -> None:
 def test_previous_effective_state_finds_the_prior_entry() -> None:
     vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
 
-    result = previous_effective_state(vintages, _SEP_2026)
+    result = previous_effective_state(
+        vintages, _SEP_2026, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
 
     assert result == _EARLIER
 
@@ -182,9 +185,207 @@ def test_previous_effective_state_returns_none_when_current_has_no_effective_at(
         released_at_is_verified=True,
     )
 
-    result = previous_effective_state([_EARLIER, no_effective_at], no_effective_at)
+    result = previous_effective_state(
+        [_EARLIER, no_effective_at], no_effective_at, UtcTimestamp(datetime(2099, 1, 1, tzinfo=UTC))
+    )
 
     assert result is None
+
+
+def test_announced_state_as_of_includes_a_released_decision_days_before_its_own_period() -> None:
+    # FX-45H section 3's own required preservation: a decision that is
+    # ALREADY RELEASED remains visible under ANNOUNCED even though its
+    # own observation_period/effective_at lies several days in the
+    # future relative to as_of -- only a genuinely NOT-YET-RELEASED
+    # vintage must be excluded, never a released-but-future-effective
+    # one.
+    released_early = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 9, 24),  # 7 days after released_at
+        value=Decimal("4.125"),
+        released_at=_ts(2026, 9, 17),
+        effective_at=_ts(2026, 9, 24),
+        revision_sequence=0,
+        source="ECB_SDW",
+        released_at_is_verified=True,
+    )
+    as_of = UtcTimestamp(datetime(2026, 9, 18, tzinfo=UTC))  # after release, before its own period
+
+    result = announced_state_as_of([_EARLIER, released_early], as_of)
+
+    assert result == released_early
+
+
+# ---------------------------------------------------------------------------
+# known_as_of -- FX-45H section 1/3's shared point-in-time filter
+# ---------------------------------------------------------------------------
+
+
+def test_known_as_of_filters_by_released_at() -> None:
+    vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
+
+    result = known_as_of(vintages, UtcTimestamp(datetime(2025, 12, 15, tzinfo=UTC)))
+
+    assert result == (_STILL_EARLIER, _EARLIER)  # _SEP_2026 not yet released
+
+
+def test_known_as_of_is_inclusive_at_released_at() -> None:
+    result = known_as_of([_SEP_2026], UtcTimestamp(datetime(2026, 9, 16, 18, 0, 0, tzinfo=UTC)))
+
+    assert result == (_SEP_2026,)
+
+
+def test_known_as_of_excludes_strictly_future_released_at() -> None:
+    result = known_as_of([_SEP_2026], UtcTimestamp(datetime(2026, 9, 16, 17, 59, 59, tzinfo=UTC)))
+
+    assert result == ()
+
+
+# ---------------------------------------------------------------------------
+# FX-45H section 1 -- EFFECTIVE must be point-in-time safe: a revision
+# with an OLD effective_at but a released_at still in the future must
+# stay invisible before its own released_at.
+# ---------------------------------------------------------------------------
+
+
+def test_effective_state_as_of_excludes_a_revision_not_yet_released() -> None:
+    # A retroactively-disclosed/corrected effective_at: the value for
+    # the SAME decision (2025-12-11) is corrected, but not published
+    # until much later. Before that publication, the ORIGINAL vintage
+    # must still govern -- the correction must not leak in early.
+    late_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2025, 12, 11),
+        value=Decimal("3.600"),
+        released_at=_ts(2026, 9, 20),
+        effective_at=_ts(2025, 12, 11),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [_EARLIER, late_revision]
+    before_disclosure = UtcTimestamp(datetime(2026, 9, 19, tzinfo=UTC))
+
+    result = effective_state_as_of(vintages, before_disclosure)
+
+    assert result == _EARLIER
+    assert result.value == Decimal("3.625")  # the ORIGINAL value, not the correction
+
+
+def test_effective_state_as_of_reveals_the_revision_once_released() -> None:
+    late_revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2025, 12, 11),
+        value=Decimal("3.600"),
+        released_at=_ts(2026, 9, 20),
+        effective_at=_ts(2025, 12, 11),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [_EARLIER, late_revision]
+
+    result = effective_state_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == late_revision
+
+
+# ---------------------------------------------------------------------------
+# FX-45H section 2 -- fail closed on an intervening decision whose
+# effective timing is unknown, for both effective_state_as_of and
+# previous_effective_state.
+# ---------------------------------------------------------------------------
+
+
+def test_effective_state_as_of_unavailable_when_newer_decision_has_no_effective_at() -> None:
+    # A newer decision has already been released (known) but its own
+    # effective date is not yet established -- reporting the OLD
+    # decision's rate would silently assume the new one has not yet
+    # taken effect, which this code cannot verify either way.
+    newer_unknown_effective = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 9, 17),
+        value=Decimal("3.875"),
+        released_at=_ts(2026, 9, 16, 18, 0, 0),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+        # effective_at deliberately omitted -- unknown
+    )
+    vintages = [_EARLIER, newer_unknown_effective]
+
+    result = effective_state_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result is None  # NOT _EARLIER
+
+
+def test_effective_state_as_of_unblocked_once_the_newer_decision_gets_its_own_effective_at() -> (
+    None
+):
+    # Once a later revision of the SAME newer decision establishes its
+    # own effective_at, the block lifts and normal EFFECTIVE semantics
+    # resumes.
+    newer_resolved = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 9, 17),
+        value=Decimal("3.875"),
+        released_at=_ts(2026, 9, 16, 18, 0, 0),
+        effective_at=_ts(2026, 9, 17),
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [_EARLIER, newer_resolved]
+
+    result = effective_state_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == newer_resolved
+
+
+def test_previous_effective_state_excludes_a_not_yet_released_predecessor() -> None:
+    # Symmetric with effective_state_as_of's own PIT test: a vintage
+    # whose effective_at would otherwise win the "previous" search must
+    # stay invisible before its own released_at.
+    not_yet_released = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 3, 1),
+        value=Decimal("3.750"),
+        released_at=_ts(2026, 9, 20),
+        effective_at=_ts(2026, 3, 1),  # otherwise the latest "previous" candidate
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [_EARLIER, not_yet_released, _SEP_2026]
+    as_of = UtcTimestamp(datetime(2026, 9, 19, tzinfo=UTC))  # before not_yet_released's release
+
+    result = previous_effective_state(vintages, _SEP_2026, as_of)
+
+    assert result == _EARLIER  # NOT not_yet_released, despite its later effective_at
+
+
+def test_previous_effective_state_unavailable_with_unresolved_intervening_decision() -> None:
+    # An intervening decision (between the found predecessor and
+    # current) has been released but its own effective_at is
+    # unestablished -- cannot say whether THAT decision, not the found
+    # predecessor, actually governed immediately before current.
+    intervening_unknown_effective = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 3, 1),  # between _EARLIER and _SEP_2026
+        value=Decimal("3.750"),
+        released_at=_ts(2026, 2, 28, 18, 0, 0),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+        # effective_at deliberately omitted -- unknown
+    )
+    vintages = [_EARLIER, intervening_unknown_effective, _SEP_2026]
+
+    result = previous_effective_state(
+        vintages, _SEP_2026, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
+
+    assert result is None  # NOT _EARLIER
 
 
 def test_announced_and_effective_diverge_around_a_real_verified_observation() -> None:

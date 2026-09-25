@@ -544,6 +544,74 @@ feature** -- every result type carries full per-leg provenance
 (currency, rate, source series/observation, `released_at`,
 `effective_at`, verification tier) instead, by design.
 
+## Policy-rate differential point-in-time & coverage hardening (FX-45H)
+
+Three real point-in-time gaps in FX-45's own state-selection and
+readiness logic, found and fixed without touching any accepted FX-45
+architecture or terminology.
+
+**1. EFFECTIVE state is now point-in-time safe.** `effective_state_
+as_of` originally selected the latest `effective_at <= T` WITHOUT also
+requiring `released_at <= T` -- wrong: a revision can carry an OLD
+`effective_at` but a `released_at` that is itself still in the future
+(a retroactively-disclosed or corrected effective date). New `domain.
+policy_rate_state.known_as_of(vintages, as_of)` is the single shared
+`released_at <= as_of` filter every function in the module now applies
+first, before doing anything else with a vintage -- a fact not yet
+released by `T` cannot affect any point-in-time query evaluated at
+`T`, no matter how favorably its other dates line up.
+
+**2. Fail closed on an intervening decision with unknown effective
+timing.** Even PIT-safe, a second gap remained: an OLD decision with a
+populated `effective_at` could still be reported as "the" effective
+state even when a NEWER decision has already been released with its
+OWN `effective_at` not yet established -- silently assuming the newer
+decision has not yet taken effect, which cannot be verified either
+way. `effective_state_as_of`/`previous_effective_state` both now
+detect this (ordered by `observation_period`, the only axis available
+for a vintage with no `effective_at`) and return `None` instead.
+`previous_effective_state` gained an explicit `as_of` parameter to
+apply the identical PIT filter for the "previous" search (its own
+axis mismatch -- an early `effective_at` can still carry a late
+`released_at` -- means this is NOT, unlike `previous_announced_
+state`, automatically implied by `current` already being PIT-safe).
+
+**3. A not-yet-released observation can no longer block a historical
+query.** The `_AXIS_SAFETY_MARGIN` readiness window previously padded
+`end` forward by 14 days from `as_of` UNCONDITIONALLY -- sweeping in
+any vintage whose `observation_period` fell in that padding zone,
+including ones not yet released as of `as_of`, and blocking the whole
+query if such a vintage happened to be provisional (real example: a
+genuine USD row dated 1998-10-15, released_at == observation_period
+== 1998-10-15 itself, i.e. not yet released as of 1998-10-08, wrongly
+blocked a GBP/USD query at that instant). `ComputePolicyRateDifferential`
+now narrows each currency's full history to `known_as_of(history,
+as_of)` BEFORE either state selection or the readiness check ever
+runs, and `_readiness_window`'s baseline `end` no longer pads
+unconditionally -- it only extends past `as_of` as far as `current`'s
+own `observation_period` actually requires. Confirmed safe for FX-44H's
+carry-in mechanism by direct SQL against the real dataset first: the
+largest `released_at`-vs-`observation_period` gap ever found, in
+either direction, is under six days (EUR) -- far inside both the
+multi-month lookbacks and the margin itself, so a genuine carry-in
+candidate is never excluded by this filter in practice, only a vintage
+that truly was not yet known.
+
+**4. The margin is documentation, not proof.** `_AXIS_SAFETY_MARGIN`'s
+own comment and this module's docstring no longer describe 14 days as
+provably sufficient because the largest observed gap is six -- that
+reasoning does not generalize to a future regime. Correctness now
+rests on `known_as_of`'s exact filter; the margin is explicitly
+documented as defensive padding layered on top of it, for the
+narrower, still-real need of covering `current`/`previous`'s own
+`observation_period` skew.
+
+GBP/CAD's EFFECTIVE-semantics unavailability is described as
+"currently unavailable with present effective-date coverage" from this
+story onward (not "permanently unavailable" -- FX-45's own wording
+overclaimed permanence for what is, in fact, a present data-coverage
+fact that a future backfill could change).
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

@@ -1,6 +1,6 @@
-"""FX-45: reports which historical windows are CURRENTLY usable for
-`ComputePolicyRateDifferential` -- for EUR/USD, GBP/USD, USD/CAD, per
-rate semantics (`ANNOUNCED`/`EFFECTIVE`).
+"""FX-45/FX-45H: reports which historical windows are CURRENTLY usable
+for `ComputePolicyRateDifferential` -- for EUR/USD, GBP/USD, USD/CAD,
+per rate semantics (`ANNOUNCED`/`EFFECTIVE`).
 
 This is a coverage/availability diagnostic ONLY. It does NOT compute,
 report, or imply FX returns, expectancy, correlation, statistical
@@ -14,14 +14,22 @@ unresolved crisis-era observations (FX-44/FX-44H/FX-44H.1's own
 FX-45 section 11) are actually worth individually researching before
 historical rate-differential research begins.
 
-For each pair, every REAL stored change point's own `released_at`
-(across every currency, every confidence tier -- exact, conservative,
-and provisional alike, since probing exactly where the provisional
-ones block things is the point) is used as a candidate `as_of`. Each
-candidate is queried once per `RateSemantics` through the same
-`ComputePolicyRateDifferential` use case FX-45 exercises everywhere
-else -- no bespoke coverage logic that could silently diverge from
-what the real feature actually does.
+FX-45H section 5: candidate `as_of` instants are now SEMANTICS-
+SPECIFIC, sampling the axis each semantics actually governs itself on
+-- ANNOUNCED samples every vintage's own `released_at` (across both
+legs, every confidence tier, since probing exactly where the
+provisional ones block things is the point); EFFECTIVE samples every
+vintage's own POPULATED `effective_at` instead, since sampling
+`released_at` for EFFECTIVE would probe transition instants that
+notion does not actually change on. This also means the two semantics
+scan different numbers of candidate instants for the same pair -- each
+semantics reports its own `candidate_axis` and `candidate_instants_
+scanned` for that reason.
+
+For each pair, every candidate is queried once per `RateSemantics`
+through the same `ComputePolicyRateDifferential` use case FX-45
+exercises everywhere else -- no bespoke coverage logic that could
+silently diverge from what the real feature actually does.
 
 Run:
     uv run python scripts/report_policy_rate_differential_coverage.py
@@ -66,6 +74,15 @@ REPORT_PATH = Path("research_results/fx45/policy_rate_differential_coverage.json
 #: FX-45 section 3's own required first pairs.
 PAIRS: tuple[tuple[str, str], ...] = (("EUR", "USD"), ("GBP", "USD"), ("USD", "CAD"))
 
+#: FX-45H section 5: which field on `MacroObservationVintage` each
+#: semantics' candidate instants are drawn from -- recorded in the
+#: written report alongside each semantics' own results so it is never
+#: ambiguous which axis a given count came from.
+_CANDIDATE_AXIS: dict[RateSemantics, str] = {
+    RateSemantics.ANNOUNCED: "released_at",
+    RateSemantics.EFFECTIVE: "effective_at",
+}
+
 
 async def main() -> None:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
@@ -81,7 +98,9 @@ async def main() -> None:
             report[pair_key] = await _scan_pair(repository, use_case, base, quote)
             for semantics_name, semantics_report in report[pair_key]["rate_semantics"].items():
                 print(
-                    f"  {semantics_name}: {semantics_report['usable_points']} usable, "
+                    f"  {semantics_name} (axis={semantics_report['candidate_axis']}, "
+                    f"{semantics_report['candidate_instants_scanned']} scanned): "
+                    f"{semantics_report['usable_points']} usable, "
                     f"{semantics_report['blocked_points']} blocked, "
                     f"earliest_research_ready={semantics_report['earliest_research_ready']}"
                 )
@@ -101,11 +120,15 @@ async def _scan_pair(
     base_history = await repository.list_all_for_series(base_series.key) if base_series else ()
     quote_history = await repository.list_all_for_series(quote_series.key) if quote_series else ()
 
-    candidates = _candidate_instants(base_history, quote_history)
     instrument = Instrument(base, quote)
 
     semantics_report = {
-        semantics.value: await _scan_semantics(use_case, instrument, candidates, semantics)
+        semantics.value: await _scan_semantics(
+            use_case,
+            instrument,
+            _candidate_instants(base_history, quote_history, semantics),
+            semantics,
+        )
         for semantics in (RateSemantics.ANNOUNCED, RateSemantics.EFFECTIVE)
     }
 
@@ -115,7 +138,6 @@ async def _scan_pair(
         "earliest_available_history": _iso_or_none(
             _earliest_joint_history(base_history, quote_history)
         ),
-        "candidate_instants_scanned": len(candidates),
         "rate_semantics": semantics_report,
     }
 
@@ -164,6 +186,8 @@ async def _scan_semantics(
             earliest_ready = as_of
 
     return {
+        "candidate_axis": _CANDIDATE_AXIS[semantics],
+        "candidate_instants_scanned": len(candidates),
         "earliest_research_ready": _iso_or_none(earliest_ready),
         "usable_points": usable_count,
         "blocked_points": len(blocked),
@@ -174,12 +198,29 @@ async def _scan_semantics(
 def _candidate_instants(
     base_history: tuple[MacroObservationVintage, ...],
     quote_history: tuple[MacroObservationVintage, ...],
+    semantics: RateSemantics,
 ) -> list[UtcTimestamp]:
-    """Every real change point's own `released_at`, across BOTH legs
-    and EVERY confidence tier (exact, conservative, and provisional
-    alike -- probing exactly where the provisional ones block things
-    is this diagnostic's whole purpose), deduplicated and sorted."""
-    seen = {v.released_at.value for v in (*base_history, *quote_history)}
+    """Every real transition instant on the axis `semantics` actually
+    governs itself on (FX-45H section 5), across BOTH legs and EVERY
+    confidence tier (exact, conservative, and provisional alike --
+    probing exactly where the provisional ones block things is this
+    diagnostic's whole purpose), deduplicated and sorted.
+
+    ANNOUNCED samples `released_at` (every vintage has one). EFFECTIVE
+    samples `effective_at` (only where populated -- sampling `released_
+    at` for EFFECTIVE would probe instants that notion does not
+    actually change on, and a vintage with no `effective_at` at all
+    contributes no EFFECTIVE transition instant regardless of how
+    `ANNOUNCED` would treat it).
+    """
+    if semantics is RateSemantics.ANNOUNCED:
+        seen = {v.released_at.value for v in (*base_history, *quote_history)}
+    else:
+        seen = {
+            v.effective_at.value
+            for v in (*base_history, *quote_history)
+            if v.effective_at is not None
+        }
     return [UtcTimestamp(value) for value in sorted(seen)]
 
 
@@ -203,14 +244,17 @@ def _iso_or_none(timestamp: UtcTimestamp | None) -> str | None:
 
 def _write_report(report: dict[str, Any]) -> None:
     payload: dict[str, Any] = {
-        "story": "FX-45",
+        "story": "FX-45H",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "method": (
-            "For each pair, every real stored change point's own released_at (both legs, "
-            "every confidence tier) is used as a candidate as_of and queried once per "
-            "rate_semantics through ComputePolicyRateDifferential -- the same use case the "
-            "real feature uses, not bespoke coverage logic. This report contains no FX "
-            "returns, expectancy, correlation, significance, or trading-performance figures."
+            "For each pair, candidate as_of instants are drawn from the axis the "
+            "requested rate_semantics actually governs itself on (FX-45H section 5): "
+            "ANNOUNCED samples every real stored vintage's own released_at (both legs, "
+            "every confidence tier); EFFECTIVE samples every real stored vintage's own "
+            "POPULATED effective_at instead. Each candidate is queried through "
+            "ComputePolicyRateDifferential -- the same use case the real feature uses, "
+            "not bespoke coverage logic. This report contains no FX returns, "
+            "expectancy, correlation, significance, or trading-performance figures."
         ),
         "pairs": report,
     }

@@ -6515,3 +6515,248 @@ intelligence, no decision engine changes follow this story -- and
 FX-46 (the historical rate-differential experiment) does not start
 automatically. The usable/blocked evidence above is reported so the
 next story can be decided from it.
+
+## 2026-09-24 — FX-45H: policy-rate differential point-in-time & coverage hardening
+
+Three real point-in-time gaps in FX-45's own state-selection and
+readiness logic, found by the same kind of direct scrutiny this whole
+epic applies throughout, fixed WITHOUT touching any accepted FX-45
+architecture or terminology (this story's own explicit constraint).
+
+**Bug 1: EFFECTIVE state was not point-in-time safe.** `effective_
+state_as_of` selected the vintage with the greatest `effective_at <=
+T` among those with a populated `effective_at` -- but never checked
+`released_at <= T` at all. A REVISION can carry an OLD, PIT-safe-
+looking `effective_at` while its own `released_at` is still in the
+future relative to `T` (a retroactively-disclosed or corrected
+effective date, published later than the date it claims to describe)
+-- such a revision must stay invisible before its own `released_at`,
+exactly like ANNOUNCED semantics already required, and did not.
+
+**The fix.** New `domain.policy_rate_state.known_as_of(vintages,
+as_of)` is the single shared point-in-time filter (`released_at <=
+as_of`) every function in the module now applies FIRST, before doing
+anything else with a vintage. `announced_state_as_of` was refactored
+to use it too (no behavior change -- it already filtered correctly);
+`effective_state_as_of` now filters through it before selecting a
+candidate. A fact not yet released by `T` cannot affect ANY point-in-
+time query evaluated at `T`, no matter how favorably its other dates
+happen to line up.
+
+**Bug 2: no fail-closed handling for an intervening decision with
+unknown effective timing.** Even after fixing bug 1, a second gap
+remained: if an OLD decision has a populated, PIT-safe `effective_at`,
+but a NEWER decision has ALREADY been released (`released_at <= T`)
+and its own `effective_at` is not yet established, `effective_state_
+as_of` still silently returned the OLD decision's rate -- effectively
+assuming the newer decision had not yet taken effect, something this
+code has no way to verify either way. The true effective state at `T`
+is genuinely UNRESOLVED until whichever decision actually governs `T`
+gets a defensibly-established `effective_at` of its own.
+
+**The fix.** New private `_has_unresolved_later_decision` checks,
+among the PIT-filtered (`known_as_of`) history, whether any vintage
+represents a genuinely LATER policy decision than the candidate --
+ordered by `observation_period`, the only axis available for a
+vintage that has no `effective_at` to order by at all -- whose own
+`effective_at` is unpopulated. If one exists, `effective_state_as_of`
+returns `None` instead of the old decision's rate. `previous_
+effective_state` needed the identical treatment, applied symmetrically:
+it now takes an explicit `as_of` parameter (a genuine signature change,
+unlike `previous_announced_state`, which needs none -- see below) and
+runs the same PIT filter and the same unresolved-later-decision check,
+bounded to decisions strictly between the found predecessor and
+`current` itself.
+
+**Why `previous_effective_state` needed `as_of` but `previous_
+announced_state` did not.** ANNOUNCED orders entirely on one axis
+(`released_at`); since `current` (passed in by the caller) was itself
+already selected via `released_at <= as_of`, any candidate this
+function finds with `released_at < current.released_at` transitively
+satisfies `released_at <= as_of` too, automatically -- no separate
+filter is needed. EFFECTIVE has TWO axes that do not stand in the same
+transitive relationship: a vintage with an early `effective_at` can
+still have a late `released_at` (the exact shape of bug 1). "Previous"
+must therefore apply the SAME `known_as_of(vintages, as_of)` filter
+`effective_state_as_of` applies for `current`, using the SAME `as_of`
+-- not one derived from `current.effective_at`, which would answer a
+different question entirely (point-in-time safety is about what
+`as_of` could know, not about `current`'s own timeline).
+
+**Bug 3: a not-yet-released observation could still block a historical
+query.** `_readiness_window`'s baseline padded `end` forward by
+`_AXIS_SAFETY_MARGIN` (14 days) from `as_of` UNCONDITIONALLY, before
+ever considering what `current`/`previous` actually needed. This swept
+any vintage whose `observation_period` fell in that 14-day padding
+zone into `require_research_ready_interval`'s candidate set --
+including vintages not yet released as of `as_of` -- and blocked the
+whole query if such a vintage happened to be provisional. Confirmed on
+a REAL, already-committed row: USD's 1998-10-15 change point has
+`released_at_is_verified=false` AND `released_at_is_conservative_
+bound=false` (genuinely provisional) with `released_at == observation_
+period == 1998-10-15` itself -- i.e. not yet released as of
+1998-10-08. Before this fix, a GBP/USD query at 1998-10-08T11:00:00Z
+(GBP's own real, verified 1998-10-08 decision) was wrongly blocked by
+this not-yet-released USD row, a 7-day reach forward the margin made
+possible but which had nothing to do with what the query actually
+needed.
+
+**The fix, and why it is safe for FX-44H's carry-in mechanism.**
+`ComputePolicyRateDifferential` now narrows each currency's full
+stored history to `known_as_of(history, as_of)` BEFORE either state
+selection or `require_research_ready_interval` ever runs -- both now
+operate on the same PIT-filtered view. `domain.research_readiness`'s
+own docstring warns against handing `require_research_ready_interval`
+an "already-interval-filtered" list (it would silently drop the
+carry-in state) -- `known_as_of` filters on a DIFFERENT axis
+(`released_at`, not `observation_period`), so this was verified
+directly against the real dataset BEFORE writing any code: the
+largest `released_at`-vs-`observation_period` gap, in EITHER
+direction, across all four currencies, is under six days (EUR's known
+announcement/effective skew) -- for GBP, USD, and CAD, `released_at`
+never exceeds `observation_period` by more than about 1 day 5 hours
+(CAD/USD's conservative-bound safety margin), and GBP's own exact tier
+shows only a same-day, intraday-time artifact (`observation_period` is
+midnight, `released_at` carries the real announcement time). Both gaps
+are trivially smaller than the 6-month lookback and the margin itself,
+so a genuine carry-in candidate (by construction always well before
+`as_of`, given the lookback) is never excluded by this filter in
+practice -- only a vintage that truly was not yet known. `_readiness_
+window`'s baseline `end` no longer pads forward from `as_of`
+unconditionally either: `end = as_of.value`, extended past that only
+as far as `current`'s own `observation_period` (+ margin) actually
+requires. With `known_as_of` already guaranteeing no not-yet-released
+vintage can ever appear in what gets checked, this tightened baseline
+is a precision improvement, not a second correctness mechanism the fix
+depends on.
+
+**Bug 4 (the story's own point 4): the margin was documented as more
+than it is.** `_AXIS_SAFETY_MARGIN`'s own comment and `compute_policy_
+rate_differential`'s module docstring previously described 14 days as
+making a state-selection result "always provably covered" because the
+largest offset ever found is six days -- reasoning that does not
+generalize to a future currency or regime. Both are rewritten: the
+PRIMARY correctness mechanism is now `known_as_of`'s exact `released_
+at <= as_of` filter, which holds regardless of how large a future
+axis offset becomes; the margin is explicitly documented as defensive
+padding layered on top, for the narrower, still-real need of covering
+`current`/`previous`'s own `observation_period` skew -- and flagged
+for re-examination whenever a new currency or timing regime is added.
+
+**Terminology (the story's own point 7).** Every occurrence of "GBP
+and CAD's EFFECTIVE semantics is ... permanently unavailable" (`docs/
+CURRENT_STATE.md`, `docs/NEXT_STEPS.md`) is replaced with "currently
+unavailable with present effective-date coverage" -- the underlying
+fact (0% `effective_at` coverage for both, confirmed via SQL) has not
+changed and is not being softened; the correction is that "permanently"
+overclaimed a guarantee about the future that this codebase cannot
+make, when what was actually established is a fact about the PRESENT
+data. Related "never ready" wording describing the coverage
+diagnostic's scan results was softened to "not ready in this scan" for
+the same reason.
+
+**`DifferentialUnavailable.reason` wording for EFFECTIVE**, updated to
+cover both of the two distinct causes that now collapse to the same
+`None` at the domain layer: "no {semantics} policy-rate state is
+defensibly established for {missing} as of {as_of} (either effective_
+at has not been populated for the governing vintage, or a newer
+decision has already been released whose own effective_at is not yet
+established)".
+
+**Live diagnostic re-run (point 5: semantics-aware candidate axes).**
+`scripts/report_policy_rate_differential_coverage.py`'s candidate
+instants were previously drawn from `released_at` for BOTH semantics
+-- wrong for EFFECTIVE, which does not change on `released_at`
+transitions at all. Candidates are now drawn from the axis the
+requested semantics actually governs itself on: ANNOUNCED samples
+every real vintage's own `released_at` (unchanged); EFFECTIVE samples
+every real vintage's own POPULATED `effective_at` instead. Each
+semantics now reports its own `candidate_axis` and `candidate_
+instants_scanned` in the written JSON (previously one shared count per
+pair). Regenerated at the same path (`research_results/fx45/policy_
+rate_differential_coverage.json`), same real Postgres:
+
+| Pair | Semantics | Before (FX-45) | After (FX-45H) |
+|---|---|---|---|
+| EUR/USD | ANNOUNCED | 49 usable/105 blocked, ready 2007-03-08 | unchanged |
+| EUR/USD | EFFECTIVE | 43 usable/111 blocked, ready 2016-03-10 | 44 usable/30 blocked, ready 2015-12-17 |
+| GBP/USD | ANNOUNCED | 78 usable/84 blocked, ready 1998-06-04 | 80 usable/82 blocked, ready 1998-06-04 |
+| GBP/USD | EFFECTIVE | 0 usable/162 blocked, not ready | 0 usable/30 blocked, not ready |
+| USD/CAD | ANNOUNCED | 44 usable/79 blocked, ready 2015-12-16 | unchanged |
+| USD/CAD | EFFECTIVE | 0 usable/123 blocked, not ready | 0 usable/30 blocked, not ready |
+
+Every change is individually explainable: EUR/USD and USD/CAD
+ANNOUNCED are byte-for-byte unchanged (neither pair's ANNOUNCED
+candidates were ever affected by bugs 1-3 in practice -- confirming
+the fixes are surgical, not a wholesale behavior change). GBP/USD
+ANNOUNCED gained exactly 2 previously-wrong blocks lifted -- diffed
+directly: `1998-10-08T11:00:00Z` (this story's own worked example) and
+`1999-08-25T03:59:59Z` (the same bug class, a GBP row blocked by
+GBP's own not-yet-released future row), both confirmed via a before/
+after diff of the written JSON's `blocked` lists. All three EFFECTIVE
+scans now sample far fewer, far more relevant candidates (154→74,
+162→30, 123→30) since `released_at` transitions are no longer wastefully
+sampled for a semantics they do not govern; EUR/USD EFFECTIVE's
+earliest-ready date moved from 2016-03-10 to 2015-12-17, which is
+FX-44H.1's own real, individually-verified "liftoff" effective date --
+not a coincidence, but the first point at which both legs have clean,
+PIT-safe, populated `effective_at` coverage once measured on the
+correct axis. GBP/USD and USD/CAD EFFECTIVE remain at 0 usable, now
+established over a much smaller and more honest candidate set (30
+instead of 162/123) -- still a genuine, present data-coverage fact
+(point 7), not a bug.
+
+**Regression-proof discipline applied to all three new mechanisms**,
+each deliberately broken, confirmed to fail its dedicated tests for
+the right reason, then restored:
+- Bug 1's PIT filter (`known = known_as_of(...)` reverted to `known =
+  vintages`): `test_effective_state_as_of_excludes_a_revision_not_yet_
+  released` failed correctly.
+- Bug 2's blocking check, broken and verified as TWO SEPARATE,
+  independently load-bearing mechanisms (matching the two distinct
+  call sites): `effective_state_as_of`'s own check broke `test_
+  effective_state_as_of_unavailable_when_newer_decision_has_no_
+  effective_at` at the domain layer AND `test_effective_unavailable_
+  when_newer_decision_has_no_effective_at` at the application layer;
+  `previous_effective_state`'s own check (a differently-shaped call
+  site, verified in a separate pass) broke `test_previous_effective_
+  state_unavailable_with_unresolved_intervening_decision`.
+- Bug 3's fix, broken by reverting BOTH the PIT pre-filter (`base_
+  known = base_history`) and the readiness window's tightened baseline
+  (`end = as_of.value + _AXIS_SAFETY_MARGIN` restored) at once: broke
+  `test_future_unreleased_provisional_observation_does_not_block` (unit)
+  AND `test_future_unreleased_provisional_observation_does_not_block_
+  real` (integration, live Postgres) -- the latter reproducing the
+  EXACT real `ResearchIntervalNotReadyError` citing `USD_POLICY_
+  RATE@1998-10-15` that this story's own worked example describes,
+  directly against the real database.
+
+All breaks restored; full suite (1145 passing) reconfirmed after each
+restore.
+
+**Tests**: 10 new domain tests (`known_as_of` direct coverage; bug 1
+for both `effective_state_as_of` and, symmetrically, `previous_
+effective_state`; bug 2 for both functions, including an "unblocked
+once resolved" companion; the point-3 preservation case -- a released,
+future-observation_period decision stays visible under ANNOUNCED); 3
+new application-layer tests (future unreleased provisional does not
+block; released future-effective observation remains visible; EFFECTIVE
+unavailable with the new two-cause reason wording); 1 new integration
+test against real Postgres reproducing the exact 1998-10-08/1998-10-15
+scenario with real GBP (7.25%) and USD (5.25%) rates. Every pre-
+existing FX-45 test (three-state regression, orientation, crisis-
+crossing rejection, carry-in, GBP/CAD-EFFECTIVE-unavailable, JPY-raises,
+determinism) re-confirmed passing unchanged -- this story's own point 6
+("preserve fail-closed behavior") and the story's own required
+confirmation that the mandatory 2026 USD three-state regression and
+the real 2008-01-22 crisis-crossing rejection both stay green.
+
+**Verification**: `pytest` (1145 passed, full suite, up from 1131),
+`ruff`, `ruff format`, `mypy --strict`, `pre-commit run --all-files`,
+all clean. Diagnostic re-run live against real Postgres as tabulated
+above.
+
+Per this story's own explicit stop instruction: no FX-return research,
+no strategy/backtest, no carry, no JPY ingestion, no news, no event-
+surprise work, no technical gating follow this story -- and FX-46 (the
+historical rate-differential experiment) does not start automatically.

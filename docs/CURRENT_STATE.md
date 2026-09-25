@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-23 (FX-45)_
+_Last updated: 2026-09-24 (FX-45H)_
 
 ## What exists
 
@@ -807,8 +807,9 @@ _Last updated: 2026-09-23 (FX-45)_
   needing no special-case currency list); `DifferentialUnavailable` is
   RETURNED for a structurally unsupported request (XAU has no
   canonical policy rate; GBP and CAD's EFFECTIVE semantics is
-  genuinely, permanently unavailable today -- GBP's exact tier has
-  never had `effective_at` populated by FX-44's original resolver,
+  currently unavailable with present effective-date coverage --
+  GBP's exact tier has never had `effective_at` populated by FX-44's
+  original resolver,
   CAD is 100% conservative-tier with zero `effective_at` coverage
   either -- confirmed directly via SQL before any code was written,
   and reconfirmed live by both the integration tests and the coverage
@@ -830,9 +831,11 @@ _Last updated: 2026-09-23 (FX-45)_
   coverage.json`: EUR/USD 49 usable/105 blocked ANNOUNCED (earliest
   ready 2007-03-08), 43 usable/111 blocked EFFECTIVE (earliest ready
   2016-03-10); GBP/USD 78 usable/84 blocked ANNOUNCED (earliest ready
-  1998-06-04), 0 usable/162 blocked EFFECTIVE (never ready); USD/CAD
-  44 usable/79 blocked ANNOUNCED (earliest ready 2015-12-16), 0
-  usable/123 blocked EFFECTIVE (never ready). A real 2008-01-22
+  1998-06-04), 0 usable/162 blocked EFFECTIVE (not ready in this scan);
+  USD/CAD 44 usable/79 blocked ANNOUNCED (earliest ready 2015-12-16), 0
+  usable/123 blocked EFFECTIVE (not ready in this scan; FX-45H below
+  revisits these same numbers with corrected point-in-time semantics
+  and a semantics-aware diagnostic axis). A real 2008-01-22
   emergency-cut crisis observation is proven to still correctly block
   an interval that crosses it (integration test, live Postgres). The
   mandatory three-state regression against the real, FX-44H.1-verified
@@ -846,6 +849,61 @@ _Last updated: 2026-09-23 (FX-45)_
   SQLAlchemy in the domain layer; no new FastAPI endpoints (none
   required). 1131 tests pass (full suite, up from 1068). Full details
   in `docs/DECISIONS.md`'s FX-45 entry.
+- **FX-45H: policy-rate differential point-in-time & coverage
+  hardening (complete)**. Three real point-in-time gaps found in FX-45
+  itself, fixed without touching accepted FX-45 architecture or
+  terminology. (1) `effective_state_as_of` selected the latest
+  `effective_at <= T` without also requiring `released_at <= T` --
+  wrong: a revision can carry an OLD `effective_at` but a `released_
+  at` still in the future. New `domain.policy_rate_state.known_as_of`
+  is the shared `released_at <= as_of` filter every function in the
+  module now applies first. (2) Even PIT-safe, an OLD decision with a
+  populated `effective_at` could still be reported as "the" effective
+  state when a NEWER decision was already released with its own
+  `effective_at` unestablished -- `effective_state_as_of`/`previous_
+  effective_state` now both detect this (ordered by `observation_
+  period`, the only axis a vintage without `effective_at` can be
+  ordered by) and return `None` instead of silently keeping the old
+  rate; `previous_effective_state` gained an explicit `as_of`
+  parameter to apply the same PIT filter (its own axis mismatch means
+  this is not automatically implied by `current` alone, unlike
+  `previous_announced_state`). (3) The readiness window's `end` bound
+  previously padded 14 days forward from `as_of` UNCONDITIONALLY,
+  letting a genuinely not-yet-released vintage block a historical
+  query -- confirmed on a real committed row (USD, 1998-10-15,
+  released_at == observation_period == itself, wrongly blocked a
+  GBP/USD query at 1998-10-08). `ComputePolicyRateDifferential` now
+  narrows history to `known_as_of(history, as_of)` before state
+  selection AND the readiness check both run, and the window's
+  baseline no longer pads unconditionally. Verified safe for FX-44H's
+  carry-in mechanism by direct SQL first: the largest real `released_
+  at`-vs-`observation_period` gap, either direction, is under six days
+  (EUR) -- far inside the multi-month lookbacks and the margin itself.
+  (4) `_AXIS_SAFETY_MARGIN`'s documentation no longer claims 14 days is
+  provably sufficient merely because six is the largest gap seen --
+  correctness now rests on `known_as_of`'s exact filter, with the
+  margin as defensive padding layered on top, not the sole mechanism.
+  Terminology: GBP/CAD's EFFECTIVE-semantics unavailability is now
+  described as "currently unavailable with present effective-date
+  coverage," not "permanently unavailable." Live diagnostic re-run
+  (same `research_results/fx45/policy_rate_differential_coverage.json`
+  path, now semantics-aware -- ANNOUNCED samples `released_at`
+  transitions, EFFECTIVE samples populated `effective_at` transitions,
+  each reporting its own `candidate_axis`): GBP/USD ANNOUNCED improved
+  78→80 usable (2 previously-wrong blocks lifted, one of them the
+  exact real 1998-10-08 case above); EUR/USD EFFECTIVE
+  improved 43→44 usable with earliest-ready moving from 2016-03-10 to
+  2015-12-17 (FX-44H.1's own "liftoff" effective date) once sampled on
+  the correct axis; EUR/USD ANNOUNCED and USD/CAD ANNOUNCED unchanged
+  (confirming the fixes are surgical). Regression-proof discipline
+  applied to all three mechanisms (4 tests across domain/application/
+  integration layers for the PIT filter and the intervening-decision
+  block, including a SEPARATE break confirming `previous_effective_
+  state`'s own check is independently load-bearing; 2 tests, including
+  the real 1998-10-15 integration test, for the readiness-window fix),
+  each deliberately broken, confirmed to fail for the right reason,
+  then restored. 1145 tests pass (full suite, up from 1131). Full
+  details in `docs/DECISIONS.md`'s FX-45H entry.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

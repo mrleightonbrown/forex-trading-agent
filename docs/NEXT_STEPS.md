@@ -988,19 +988,22 @@ Two kinds of "no answer" are deliberately not conflated:
 `ResearchIntervalNotReadyError` RAISED for unsafe/insufficient data
 (JPY, via the gate's own `no_baseline` case); `DifferentialUnavailable`
 RETURNED for a structurally unsupported request (XAU has no canonical
-policy rate; GBP and CAD's EFFECTIVE semantics is genuinely,
-permanently unavailable today — confirmed directly via SQL before any
-code was written). Full details in `docs/DECISIONS.md`'s FX-45 entry.
+policy rate; GBP and CAD's EFFECTIVE semantics is currently
+unavailable with present effective-date coverage — confirmed directly
+via SQL before any code was written). Full details in `docs/
+DECISIONS.md`'s FX-45 entry.
 
 **This story's own real diagnostic finding, via `scripts/report_
 policy_rate_differential_coverage.py`** (live against real Postgres,
 `research_results/fx45/policy_rate_differential_coverage.json`):
 EUR/USD 49 usable/105 blocked ANNOUNCED, 43 usable/111 blocked
 EFFECTIVE; GBP/USD 78 usable/84 blocked ANNOUNCED, 0 usable/162
-blocked EFFECTIVE (never ready — not a bug, GBP's exact tier has never
-had `effective_at` populated); USD/CAD 44 usable/79 blocked ANNOUNCED,
-0 usable/123 blocked EFFECTIVE (never ready — CAD is 100%
-conservative-tier). These blocked windows are the evidence a future
+blocked EFFECTIVE (not ready in this scan — not a bug, GBP's exact
+tier has never had `effective_at` populated); USD/CAD 44 usable/79
+blocked ANNOUNCED, 0 usable/123 blocked EFFECTIVE (not ready in this
+scan — CAD is 100% conservative-tier). FX-45H (below) revisits these
+same numbers with corrected point-in-time semantics and a semantics-
+aware diagnostic axis. These blocked windows are the evidence a future
 decision about which irregular dates are worth researching
 individually should be made from — this story deliberately did not
 resolve or delete any of them (its own point 11), and deliberately did
@@ -1015,24 +1018,67 @@ ingestion work, no actual broker financing/roll/forward-points/OIS
 logic, no event-surprise logic, no news intelligence, no decision
 engine changes follow this story.
 
+## FX-45H: policy-rate differential point-in-time & coverage hardening (complete)
+
+Three real point-in-time gaps found in FX-45 itself, fixed without
+touching accepted FX-45 architecture or terminology. (1) `effective_
+state_as_of` selected the latest `effective_at <= T` without also
+requiring `released_at <= T` -- a revision can carry an OLD `effective_
+at` but a `released_at` still in the future; new `domain.policy_rate_
+state.known_as_of` is the shared PIT filter every function in the
+module now applies first. (2) An OLD decision with a populated
+`effective_at` could still be reported as the effective state when a
+NEWER decision was already released with its own `effective_at`
+unestablished -- both `effective_state_as_of` and `previous_effective_
+state` now detect this and return `None` instead of silently keeping
+the old rate. (3) The readiness window previously padded 14 days
+forward from `as_of` unconditionally, letting a genuinely not-yet-
+released vintage block a historical query -- confirmed on a real
+committed row (USD, 1998-10-15, wrongly blocked a GBP/USD query at
+1998-10-08, per this story's own example). `ComputePolicyRateDifferential`
+now narrows history to `known_as_of(history, as_of)` before state
+selection AND the readiness check both run; the window's baseline no
+longer pads unconditionally. (4) `_AXIS_SAFETY_MARGIN`'s documentation
+no longer claims 14 days is provably sufficient merely because six is
+the largest gap seen -- correctness now rests on `known_as_of`'s exact
+filter, the margin is defensive padding only. Terminology: GBP/CAD's
+EFFECTIVE-semantics unavailability is now described as "currently
+unavailable with present effective-date coverage," not "permanently
+unavailable." Full details in `docs/DECISIONS.md`'s FX-45H entry.
+
+**Live diagnostic re-run, same path, now semantics-aware** (ANNOUNCED
+samples `released_at` transitions, EFFECTIVE samples populated
+`effective_at` transitions): GBP/USD ANNOUNCED improved 78→80 usable
+(2 previously-wrong blocks lifted); EUR/USD EFFECTIVE improved 43→44
+usable with earliest-ready moving from 2016-03-10 to 2015-12-17
+(FX-44H.1's own "liftoff" effective date) once sampled on the correct
+axis; EUR/USD ANNOUNCED and USD/CAD ANNOUNCED unchanged, confirming
+the fixes are surgical. 1145 tests pass (full suite, up from 1131).
+
+**Per this story's own explicit stop instruction**: no historical
+rate-differential experiment, no trading rules, no backtest
+performance research, no optimized thresholds, no technical-signal
+gating, no JPY ingestion, no news, no event-surprise work follows this
+story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-46's historical rate-differential
-experiment (now with real usable/blocked coverage evidence for all
-three pairs), the future declassification-mechanism need noted above
-(not yet needed, not yet built), the 18 still-provisional pre-2006 EUR
-change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
-unresolved, JPY provider mapping, the pre-2009 CAD gap, or any carry-
-strategy work.
+experiment (now with corrected coverage evidence for all three pairs),
+the future declassification-mechanism need noted above (not yet
+needed, not yet built), the 18 still-provisional pre-2006 EUR change
+points, the 8 USD/6 GBP/3 CAD known-irregular dates left unresolved,
+JPY provider mapping, the pre-2009 CAD gap, or any carry-strategy work.
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry strategies, or live trading — out of scope until explicitly
 assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45 above are the explicitly-
-scoped exceptions (domain model, storage-integrity hardening, canonical
-registry/provider-mapping definitions, real policy-rate ingestion,
-hardening and correction rounds, genuine release-timing verification,
-and a deterministic, auditable, scoring-free policy-rate differential
-feature — still no strategy, no decision logic, no "carry" framing)
+FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H above are the
+explicitly-scoped exceptions (domain model, storage-integrity
+hardening, canonical registry/provider-mapping definitions, real
+policy-rate ingestion, hardening and correction rounds, genuine
+release-timing verification, and a deterministic, auditable, scoring-
+free policy-rate differential feature plus its own point-in-time
+hardening -- still no strategy, no decision logic, no "carry" framing)
 and do not open the door to the rest of this phase. The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow

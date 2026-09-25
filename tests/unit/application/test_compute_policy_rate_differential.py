@@ -306,6 +306,98 @@ async def test_three_state_regression_around_the_real_2026_09_17_observation() -
 
 
 # ---------------------------------------------------------------------------
+# FX-45H section 3 -- a future, not-yet-released observation must not
+# block a query evaluated before it existed; a released-but-future-
+# effective observation must still remain visible under ANNOUNCED.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_future_unreleased_provisional_observation_does_not_block() -> None:
+    # Mirrors the real 1998-10-08/1998-10-15 USD finding: a provisional
+    # observation whose own observation_period/released_at lies a few
+    # days in the FUTURE relative to as_of -- well inside the 14-day
+    # axis-safety margin -- must not block a query evaluated before it
+    # was ever released.
+    fake = FakeMacroObservationRepository()
+    await _seed_exact(fake, "USD_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 18, 0, 0), "5.375")
+    # Not yet released as of as_of below.
+    await _seed_provisional(fake, "USD_POLICY_RATE", (2024, 6, 8), (2024, 6, 8), "5.625")
+    await _seed_exact(fake, "EUR_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 11, 45, 0), "4.00")
+    use_case = ComputePolicyRateDifferential(repository=fake)
+
+    result = _feature(
+        await use_case(Instrument("USD", "EUR"), _ts(2024, 6, 1), RateSemantics.ANNOUNCED)
+    )
+
+    assert result.current.base.rate == Decimal("5.375")  # the not-yet-released row is invisible
+
+
+@pytest.mark.asyncio
+async def test_already_announced_future_effective_observation_remains_visible() -> None:
+    # The other side of the same preservation: a decision that IS
+    # already released must remain fully visible under ANNOUNCED even
+    # though its own observation_period/effective_at falls a few days
+    # in the future relative to as_of -- only a genuinely unreleased
+    # event must be excluded.
+    fake = FakeMacroObservationRepository()
+    await _seed_exact(fake, "USD_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 18, 0, 0), "5.375")
+    await _seed_exact(
+        fake,
+        "USD_POLICY_RATE",
+        (2024, 6, 5),
+        (2024, 5, 29, 18, 0, 0),
+        "5.625",
+        effective_at=(2024, 6, 5),
+    )
+    await _seed_exact(fake, "EUR_POLICY_RATE", (2024, 1, 1), (2023, 12, 31, 11, 45, 0), "4.00")
+    use_case = ComputePolicyRateDifferential(repository=fake)
+
+    result = _feature(
+        await use_case(Instrument("USD", "EUR"), _ts(2024, 6, 1), RateSemantics.ANNOUNCED)
+    )
+
+    assert result.current.base.rate == Decimal("5.625")  # already announced, must be visible
+
+
+# ---------------------------------------------------------------------------
+# FX-45H section 2 -- fail closed on an intervening decision whose
+# effective timing is unknown, at the full use-case level.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_effective_unavailable_when_newer_decision_has_no_effective_at() -> None:
+    fake = FakeMacroObservationRepository()
+    await _seed_exact(
+        fake,
+        "USD_POLICY_RATE",
+        (2024, 1, 1),
+        (2023, 12, 31, 18, 0, 0),
+        "5.375",
+        effective_at=(2024, 1, 1),
+    )
+    # A newer decision, already released, but its own effective date is
+    # not yet established.
+    await _seed_exact(fake, "USD_POLICY_RATE", (2024, 5, 1), (2024, 4, 30, 18, 0, 0), "5.625")
+    await _seed_exact(
+        fake,
+        "EUR_POLICY_RATE",
+        (2024, 1, 1),
+        (2023, 12, 31, 11, 45, 0),
+        "4.00",
+        effective_at=(2024, 1, 1),
+    )
+    use_case = ComputePolicyRateDifferential(repository=fake)
+
+    result = await use_case(Instrument("USD", "EUR"), _ts(2024, 6, 1), RateSemantics.EFFECTIVE)
+
+    assert isinstance(result, DifferentialUnavailable)
+    assert "USD" in result.reason
+    assert "effective_at" in result.reason
+
+
+# ---------------------------------------------------------------------------
 # Research readiness -- carry-in, in-interval, no-baseline
 # ---------------------------------------------------------------------------
 
