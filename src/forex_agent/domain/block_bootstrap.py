@@ -36,6 +36,14 @@ a CI that excludes zero is evidence the population mean is likely
 non-zero even after accounting for the relevant dependence structure --
 NOT proof of a durable, tradeable edge, and not evidence about any
 period other than the one tested.
+
+FX-46 addition: `calendar_year_cluster_bootstrap_differences` extends
+the same segment-block idea (resample whole clusters with replacement,
+take the pooled mean) to a two-group DIFFERENCE-OF-MEANS contrast
+clustered by calendar year -- the standard `NUM_RESAMPLES = 10_000`
+convention this module's own callers already use (FX-39) is reused
+unchanged, per FX-46's own instruction to reuse an existing project-
+wide bootstrap standard rather than invent a competing one.
 """
 
 import random
@@ -234,6 +242,63 @@ def segment_block_bootstrap_means(
     return means
 
 
+def calendar_year_cluster_bootstrap_differences(
+    group_a_by_year: dict[int, list[Decimal]],
+    group_b_by_year: dict[int, list[Decimal]],
+    num_resamples: int,
+    seed: int,
+) -> list[Decimal]:
+    """FX-46: `num_resamples` resampled `mean(group_a) - mean(group_b)`
+    differences via a calendar-year cluster bootstrap -- the natural
+    two-group extension of `segment_block_bootstrap_means` above (same
+    "resample whole clusters with replacement, pool, take the pooled
+    mean" shape), specialized for a DIFFERENCE-OF-MEANS contrast
+    between two groups that share one clustering variable (here,
+    calendar year) rather than one group's own mean.
+
+    Resamples over the UNION of years present in either group -- one
+    single draw of years per replication, applied to BOTH groups
+    jointly, so within-year dependence BETWEEN the two groups (e.g. a
+    volatile year affecting both) is preserved exactly as it would be
+    by resampling one shared cluster variable, not two independent
+    ones. A drawn year missing from one group simply contributes
+    nothing to that group's pool for that replication -- expected when
+    the two groups' own year coverage differs, not an error.
+
+    Pooled-mean convention (weight by observation count, not a naive
+    mean-of-year-means) matches `segment_block_bootstrap_means`'s own.
+    A replication where a group's pool is empty (both groups' data
+    happen to share no years in common with the drawn set for that
+    group) contributes a difference against a zero mean for that
+    side -- deliberately not skipped or reweighted, so `num_resamples`
+    always stays exactly what was requested; this is only possible when
+    a group's own year coverage is a strict subset of the other's,
+    itself worth surfacing rather than silently smoothing over.
+
+    Deterministic for a fixed `seed`. Raises `ValueError` if both
+    groups are entirely empty (no years to resample at all).
+    """
+    all_years = sorted(set(group_a_by_year) | set(group_b_by_year))
+    if not all_years:
+        raise ValueError("group_a_by_year and group_b_by_year must not both be empty")
+    if num_resamples < 1:
+        raise ValueError(f"num_resamples must be at least 1, got {num_resamples}")
+    rng = random.Random(seed)
+    k = len(all_years)
+    differences: list[Decimal] = []
+    for _ in range(num_resamples):
+        drawn_years = [all_years[rng.randrange(k)] for _ in range(k)]
+        pooled_a: list[Decimal] = []
+        pooled_b: list[Decimal] = []
+        for year in drawn_years:
+            pooled_a.extend(group_a_by_year.get(year, []))
+            pooled_b.extend(group_b_by_year.get(year, []))
+        mean_a = sum(pooled_a, Decimal(0)) / len(pooled_a) if pooled_a else Decimal(0)
+        mean_b = sum(pooled_b, Decimal(0)) / len(pooled_b) if pooled_b else Decimal(0)
+        differences.append(mean_a - mean_b)
+    return differences
+
+
 def percentile_ci(means: list[Decimal], confidence: Decimal) -> tuple[Decimal, Decimal]:
     """Percentile-method confidence interval: e.g. `confidence=0.90`
     gives the `[5th, 95th]` percentile of `means`. Linear interpolation
@@ -248,12 +313,22 @@ def percentile_ci(means: list[Decimal], confidence: Decimal) -> tuple[Decimal, D
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
     ordered = sorted(means)
     alpha = (Decimal(1) - confidence) / 2
-    lower = _interpolated_percentile(ordered, alpha)
-    upper = _interpolated_percentile(ordered, Decimal(1) - alpha)
+    lower = interpolated_percentile(ordered, alpha)
+    upper = interpolated_percentile(ordered, Decimal(1) - alpha)
     return lower, upper
 
 
-def _interpolated_percentile(ordered: list[Decimal], p: Decimal) -> Decimal:
+def interpolated_percentile(ordered: list[Decimal], p: Decimal) -> Decimal:
+    """The `p`-th percentile (`p` in `[0, 1]`) of an ALREADY-SORTED
+    `ordered` list, via linear interpolation between the two nearest
+    order statistics (the standard percentile-method convention `percentile_
+    ci` itself uses) -- not nearest-rank, so results aren't overly
+    sensitive to list length. Public (FX-46 reuses this exact
+    convention for descriptive-statistics percentiles, e.g. median/p25/
+    p75, rather than risk a second, subtly different percentile
+    definition existing side by side). `ordered` must be non-empty and
+    already sorted ascending; this does not sort or validate it.
+    """
     n = len(ordered)
     if n == 1:
         return ordered[0]

@@ -26,6 +26,15 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-added-large-files
+        # FX-46: per-row research sample CSVs (full disposition/exclusion-
+        # reason detail per observation, per that story's own reproducibility
+        # requirement) legitimately exceed the default 500KB -- every OTHER
+        # research artifact this project has ever committed stays well under
+        # it (largest before FX-46: 148KB), so this is a narrow, scoped
+        # exception for exactly this file shape, not a blanket size increase
+        # that would also admit an accidentally-committed large binary
+        # anywhere else in the repo.
+        exclude: ^research_results/.*\.csv$
       - id: check-merge-conflict
       - id: check-yaml
       - id: detect-private-key

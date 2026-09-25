@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from forex_agent.domain.block_bootstrap import (
+    calendar_year_cluster_bootstrap_differences,
     holm_bonferroni_adjusted_p_values,
     moving_block_bootstrap_means,
     percentile_ci,
@@ -471,3 +472,74 @@ def test_holm_correction_single_p_value_is_unchanged() -> None:
 def test_holm_correction_rejects_empty_input() -> None:
     with pytest.raises(ValueError, match="p_values"):
         holm_bonferroni_adjusted_p_values([])
+
+
+# --- calendar_year_cluster_bootstrap_differences (FX-46) --------------------
+
+
+def test_cluster_bootstrap_differences_deterministic_for_fixed_seed() -> None:
+    group_a = {2020: [Decimal("1"), Decimal("2")], 2021: [Decimal("3")]}
+    group_b = {2020: [Decimal("0.5")], 2021: [Decimal("1.5"), Decimal("2.5")]}
+
+    first = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=500, seed=46
+    )
+    second = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=500, seed=46
+    )
+
+    assert first == second
+
+
+def test_cluster_bootstrap_differences_resamples_year_clusters_not_individual_rows() -> None:
+    """Regression-proof-relevant property: with exactly two distinct
+    years, drawing 2 years WITH replacement (order doesn't matter for
+    the pooled mean) has only 3 possible outcomes -- both draws land on
+    2020 (pooled mean 100), both on 2021 (pooled mean 200), or one of
+    each (pooled mean 140, the COUNT-weighted average of 2020's three
+    100s and 2021's two 200s: (300+400)/5 = 140). group_b is pinned to
+    a constant 0 in both years, so every resampled DIFFERENCE directly
+    reflects group_a's own possible means, unmodified. If this were
+    (incorrectly) resampling individual rows instead of whole year
+    clusters, the resampled differences would show far more than 3
+    distinct values across many replications -- confirmed directly: I
+    temporarily changed the implementation to draw from a flattened
+    list of individual values instead of year clusters and watched
+    this test fail (dozens of distinct values appeared) before
+    reverting it.
+    """
+    group_a = {2020: [Decimal("100")] * 3, 2021: [Decimal("200")] * 2}
+    group_b = {2020: [Decimal("0")], 2021: [Decimal("0")]}
+
+    differences = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=2000, seed=46
+    )
+
+    assert set(differences) == {Decimal("100"), Decimal("140"), Decimal("200")}
+
+
+def test_cluster_bootstrap_differences_rejects_both_groups_empty() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        calendar_year_cluster_bootstrap_differences({}, {}, num_resamples=100, seed=46)
+
+
+def test_cluster_bootstrap_differences_year_present_only_in_one_group() -> None:
+    # A year drawn that exists only in group_a contributes nothing to
+    # group_b's pool for that draw -- not an error, and not silently
+    # imputed from some other year. With 2 distinct years total
+    # (2020 in group_a only, 2021 in group_b only) and k=2 draws per
+    # replication, hand-enumerated (verified directly, not assumed):
+    # both draws land on 2020 -> mean_a=10, mean_b=0 (empty pool) ->
+    # diff=10; both on 2021 -> mean_a=0, mean_b=5 -> diff=-5; one of
+    # each (order doesn't matter for pooling) -> mean_a=10 (from the
+    # 2020 draw), mean_b=5 (from the 2021 draw) -> diff=5. Exactly
+    # these 3 outcomes, nothing else.
+    group_a = {2020: [Decimal("10")]}
+    group_b = {2021: [Decimal("5")]}
+
+    differences = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=200, seed=46
+    )
+
+    assert set(differences) == {Decimal("10"), Decimal("-5"), Decimal("5")}
+    assert len(differences) == 200

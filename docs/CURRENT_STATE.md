@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-45H.1)_
+_Last updated: 2026-09-25 (FX-46)_
 
 ## What exists
 
@@ -944,6 +944,47 @@ _Last updated: 2026-09-25 (FX-45H.1)_
   1150 tests pass (full suite, up from 1145; 2 unrelated live-OANDA
   transient failures confirmed via re-run, not a regression). Full
   details in `docs/DECISIONS.md`'s FX-45H.1 entry.
+- **FX-46: historical policy-rate differential research (complete)**.
+  The first real research EXPERIMENT against the hardened feature --
+  not a trading strategy. Two pre-registered hypotheses (LEVEL: sign
+  of the differential vs. subsequent return, one ISO-week sample;
+  CHANGE: INCREASED vs. DECREASED vs. subsequent return, every D-bar,
+  no change inferred across a blocked/unavailable gap), run separately
+  per pair (EUR/USD, GBP/USD, USD/CAD) and semantics (ANNOUNCED/
+  EFFECTIVE), never pooled or cross-falling-back. New `src/forex_agent/
+  research/policy_rate_differential_research.py` (pure functions,
+  one async seam -- `evaluate_feature`, the only place FX-46 touches
+  `ComputePolicyRateDifferential`) plus `scripts/run_fx46_policy_rate_
+  differential_research.py` (real orchestration: DB reads, ~41,000
+  feature evaluations across all pairs/semantics/experiments via a
+  read-through cache over the 4 distinct currencies' history, per-cell
+  statistics, primary-contrast bootstrap, artifact writers). No native
+  `D`-granularity candles existed anywhere -- `scripts/aggregate_d_
+  candles.py` (new) materializes them via the EXISTING `AggregateCandles`
+  use case (FX-7) from native `H4`; real coverage is 2005-01-02 onward
+  for all three pairs. `domain/block_bootstrap.py` (FX-39) gained
+  `calendar_year_cluster_bootstrap_differences`, reusing FX-39's own
+  `NUM_RESAMPLES = 10_000` convention (seed=46). Real results: GBP/USD
+  and USD/CAD EFFECTIVE are entirely unavailable (0 usable, confirming
+  FX-45H's coverage diagnostic at full scale); EUR/USD EFFECTIVE has
+  real usable coverage (427 LEVEL weeks, all `NEGATIVE` -- EUR's
+  effective rate never exceeded USD's in the covered window); the
+  large majority of ANNOUNCED contrasts have a 95% CI including zero
+  (cannot distinguish from noise); one adverse result (USD/CAD
+  ANNOUNCED/CHANGE, 20d: CI excludes zero in the direction OPPOSITE the
+  pre-registered hypothesis, small n) reported honestly, not
+  reinterpreted. A real bug (summary aggregation grouping by a raw,
+  per-row-unique `DifferentialUnavailable` reason string, inflating
+  the first-run JSON/markdown to several MB) was found after seeing
+  results, fixed (summary-reporting code only, CSV detail untouched),
+  and ALL artifacts regenerated from a clean run. Regression-proof
+  discipline applied to all 5 named mechanisms (next-bar entry,
+  return orientation, gap suppression, change classification, cluster-
+  bootstrap grouping), each genuinely broken, confirmed to fail,
+  restored. 32 new tests; 1182 pass (full suite, up from 1150). Full
+  details, complete results table, and limitations in `docs/
+  DECISIONS.md`'s FX-46 entry and `research_results/fx46/
+  policy_rate_differential_summary.md`.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

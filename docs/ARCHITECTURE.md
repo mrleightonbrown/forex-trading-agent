@@ -667,6 +667,85 @@ silently pruned from consideration -- the verdict for each was already
 blocked for an unrelated reason, so no usable/blocked count changed,
 but the reported reason is now complete rather than silently partial.
 
+## Historical policy-rate differential research (FX-46)
+
+The first real research EXPERIMENT run against the FX-45/FX-45H/
+FX-45H.1 feature -- deliberately a thin layer ON TOP of that feature,
+never a reimplementation of it.
+
+**A pure module plus exactly one async seam.**
+`src/forex_agent/research/policy_rate_differential_research.py` holds
+every classification, sampling, event-detection, return-computation,
+and descriptive-statistics function as a plain synchronous function
+over domain values -- no database, no HTTP, fully unit-testable
+without infrastructure, matching this project's own domain-layer
+boundary rules even though this module lives under `research/` rather
+than `domain/` (it is FX-46-specific, not a general domain concept,
+so it is kept separate rather than widening `domain/`'s own surface).
+Exactly one function, `evaluate_feature`, is async and touches
+`ComputePolicyRateDifferential` -- the single place anywhere in FX-46
+that reads policy-rate state, normalizing that use case's raise
+(`ResearchIntervalNotReadyError`) vs. return (`DifferentialUnavailable`)
+split (FX-45H) into one `Disposition` enum the rest of the pipeline
+can classify and count uniformly, without ever falling back between
+`ANNOUNCED`/`EFFECTIVE` or imputing a value around a non-`USABLE`
+result.
+
+**Orchestration owns aggregation; the pure module does not.**
+`scripts/run_fx46_policy_rate_differential_research.py` holds the real
+DB/candle-repository wiring, the per-cell statistics, the primary-
+contrast bootstrap, the era breakdown, and the JSON/CSV/markdown
+writers -- mirroring FX-39's own script (`run_fx39_significance_
+testing.py`), which established the precedent that script-specific
+shaping/reporting logic belongs in the script, not a second pure
+module competing with the first. This keeps the pure module's public
+surface small and independently testable, while the script stays the
+one place that can change (a new output format, a new grouping) without
+touching tested domain-shaped logic.
+
+**A read-through cache wraps the repository port, never bypasses it.**
+`_CachingMacroObservationRepository` (script-local) implements the
+full `MacroObservationRepository` Protocol, memoizing only `list_all_
+for_series` -- every other method (including all three write methods,
+never actually called by this read-only script) delegates unchanged.
+This is safe specifically because the script never writes: a series'
+stored history cannot change out from under the cache mid-run. It
+exists purely because `ComputePolicyRateDifferential`'s own FX-45H.1
+correctness contract requires being handed each currency's COMPLETE
+history on every call -- with ~41,000 feature evaluations across this
+experiment's full scope but only 4 distinct currencies in play, caching
+that repeated, unchanging read is a pure performance optimization at
+the orchestration layer; it does not alter what the use case sees or
+weaken any point-in-time guarantee.
+
+**One daily sweep serves both experiments.** The LEVEL experiment's
+weekly samples are, by construction, a subset of the CHANGE
+experiment's "every canonical D-bar open" evaluation set. The
+orchestration script evaluates the feature once per D-bar per (pair,
+semantics) and derives both experiments' samples from that one set of
+results, rather than evaluating the feature twice. Safe because
+`evaluate_feature` is a pure function of `(instrument, as_of,
+semantics)` -- reusing a result changes nothing about what would have
+been computed evaluating it again.
+
+**No native daily candles exist; the existing aggregation use case
+materializes them.** `scripts/aggregate_d_candles.py` calls the
+existing `AggregateCandles` use case (FX-7) to build `D` bars from
+native `H4` (already 17:00 America/New_York-aligned, FX-24/FX-25H) --
+not a new data-access path. `aggregate_candles` drops any bucket whose
+source candles don't exactly tile it, so a `D` bar is never fabricated
+from a partial, gappy, or DST-shortened `H4` set.
+
+**The bootstrap gains a two-group contrast primitive, in place.**
+`domain/block_bootstrap.py` (FX-39) gained `calendar_year_cluster_
+bootstrap_differences` rather than a new, parallel bootstrap module --
+the natural extension of the file's own existing `segment_block_
+bootstrap_means` shape (resample whole clusters with replacement, pool,
+take the pooled mean) to a difference-of-means contrast between two
+groups sharing one clustering variable. `NUM_RESAMPLES = 10_000`
+(FX-39's own convention) is reused unchanged rather than introducing a
+second, competing default.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

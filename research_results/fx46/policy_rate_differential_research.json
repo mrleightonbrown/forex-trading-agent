@@ -1,0 +1,4823 @@
+{
+  "story": "FX-46",
+  "generated_at": "2026-09-25T06:52:47+00:00",
+  "git_commit": "09e59954a2a9c9456fecf547a469c7d8f6b8d528",
+  "config_hash": "96aa1f732ceb9a8e5ec36cece32d77d970a7375b1813bc73bba74d577500ea48",
+  "config": {
+    "instruments": [
+      "EUR_USD",
+      "GBP_USD",
+      "USD_CAD"
+    ],
+    "rate_semantics": [
+      "ANNOUNCED",
+      "EFFECTIVE"
+    ],
+    "forward_horizons_trading_days": [
+      1,
+      5,
+      20
+    ],
+    "eras": [
+      {
+        "label": "2005-2011",
+        "start": "2005-01-01",
+        "end": "2011-12-31"
+      },
+      {
+        "label": "2012-2018",
+        "start": "2012-01-01",
+        "end": "2018-12-31"
+      },
+      {
+        "label": "2019-cutoff",
+        "start": "2019-01-01",
+        "end": null
+      }
+    ],
+    "sparse_era_threshold": 10,
+    "num_resamples": 10000,
+    "seed": 46,
+    "bootstrap_method": "calendar_year_cluster_bootstrap_differences",
+    "confidence_level": "0.95",
+    "return_definition": "mid_open-to-mid_open, entry = next D-bar open strictly after as_of",
+    "weekly_sampling": "one ISO-calendar-week observation, first available D-bar open",
+    "candle_start_bound": "2000-01-01T00:00:00+00:00",
+    "candle_end_bound": "2026-09-25T06:52:41.886789+00:00"
+  },
+  "pairs": {
+    "EUR_USD": {
+      "ANNOUNCED": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 651,
+              "USABLE": 483
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "provisional_timing": 651
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 8,
+                  "mean": "0.0003935607861479393184511870625",
+                  "median": "-0.00165508740862337987558742475",
+                  "stdev": "0.007302673292711776912569298077",
+                  "p25": "-0.002876981090150558145143963475",
+                  "p75": "0.00480032388909296121510136750",
+                  "min": "-0.0094501505443300865762575139",
+                  "max": "0.013913658881811748053786270",
+                  "positive_fraction": "0.375"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "0.0003935607861479393184511870625",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 8,
+                  "mean": "-0.00987839938767532197159643425",
+                  "median": "-0.00869059452399252950658107815",
+                  "stdev": "0.02436196247488176262352706639",
+                  "p25": "-0.02894898656645361923738122430",
+                  "p75": "0.000438526454929418761451735150",
+                  "min": "-0.0379931324963989978632916231",
+                  "max": "0.036709129511677282377919321",
+                  "positive_fraction": "0.25"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "-0.00987839938767532197159643425",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 8,
+                  "mean": "-0.05014406472291336915306537132",
+                  "median": "-0.04105569536876210755876929725",
+                  "stdev": "0.03623435689193122433714195341",
+                  "p25": "-0.05856510854352064946658989280",
+                  "p75": "-0.03450243436299952923449818205",
+                  "min": "-0.1082280338869660789011994238",
+                  "max": "-0.0003173335790109428901923451",
+                  "positive_fraction": "0"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "-0.05014406472291336915306537132",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 475,
+                  "mean": "0.00004694087181758193230139798189",
+                  "median": "-0.00002573560950501844385347860",
+                  "stdev": "0.004487643117240574612100716808",
+                  "p25": "-0.002648220785689803305120374050",
+                  "p75": "0.00297062896002831772929138650",
+                  "min": "-0.0182171695221538531921220578",
+                  "max": "0.017098792002857430693568033",
+                  "positive_fraction": "0.4947368421052631578947368421"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 48,
+                    "mean": "0.0002893916105853680670113342542",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.0002967432188509474971165556671",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 269,
+                    "mean": "-0.0001430457686735909067576051978",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 474,
+                  "mean": "0.0006431862454632901018288632764",
+                  "median": "0.0000693438675131343800463240",
+                  "stdev": "0.009558075090777449203755369477",
+                  "p25": "-0.005359608995101452152223845200",
+                  "p75": "0.00661068668035576504121101900",
+                  "min": "-0.0280531600979024178237298991",
+                  "max": "0.034215900869135169293610162",
+                  "positive_fraction": "0.5105485232067510548523206751"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 48,
+                    "mean": "0.002305711274351835291316453129",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.0003505102894455402951914019930",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 268,
+                    "mean": "0.0005179683337623733121024251313",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 471,
+                  "mean": "0.002620097408437532506197416174",
+                  "median": "0.0007350824753680947636444150",
+                  "stdev": "0.01803120510561963190621317714",
+                  "p25": "-0.009621153997915250039367113700",
+                  "p75": "0.01399885712928730051028678650",
+                  "min": "-0.0431534028917103763749363549",
+                  "max": "0.058310172317954419121734297",
+                  "positive_fraction": "0.5159235668789808917197452229"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 48,
+                    "mean": "0.009207437998890809705894757969",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.001598066387803029262468935263",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 265,
+                    "mean": "0.002036280626997888004022425906",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 8,
+                "n_b": 475,
+                "observed_diff": "0.0003466199143303573861497890806",
+                "lower_95": "-0.0002764392390091221760684939956",
+                "upper_95": "0.0006640418199729771136191779717",
+                "fraction_le_zero": "0.2498",
+                "note": null
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 8,
+                "n_b": 474,
+                "observed_diff": "-0.01052158563313861207342529754",
+                "lower_95": "-0.01143671079134158555841057114",
+                "upper_95": "0.00004773090175799866097957205058",
+                "fraction_le_zero": "0.9696",
+                "note": null
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 8,
+                "n_b": 471,
+                "observed_diff": "-0.05276416213135090165926278749",
+                "lower_95": "-0.05658343070816160685953196868",
+                "upper_95": "0.0001787683456223824034017990167",
+                "fraction_le_zero": "0.9706",
+                "note": null
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 3304,
+              "GAP": 4,
+              "USABLE": 2391,
+              "NO_ENTRY_AVAILABLE": 1
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "provisional_timing": 3304
+              },
+              "GAP": {
+                "transition_unknown_due_to_gap": 4
+              },
+              "NO_ENTRY_AVAILABLE": {
+                "no D-bar available strictly after as_of": 1
+              }
+            },
+            "total": 5700
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 24,
+                  "mean": "-0.001433132877641565557090457754",
+                  "median": "-0.00142586667354425113607555105",
+                  "stdev": "0.004607361835225840748859839569",
+                  "p25": "-0.003394861251757550136945031350",
+                  "p75": "0.00169435906083241657734387875",
+                  "min": "-0.0164987409844579058317873237",
+                  "max": "0.006440066378511886384686632",
+                  "positive_fraction": "0.375"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 5,
+                    "mean": "-0.00302389925276873794421444554",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 19,
+                    "mean": "-0.001014510147344941244689408337",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 23,
+                  "mean": "-0.002426820549187244580314609152",
+                  "median": "-0.00157171760195932275583005000",
+                  "stdev": "0.009291306115358903035326134648",
+                  "p25": "-0.009490267145388916573057599900",
+                  "p75": "0.00534834301510961577164965900",
+                  "min": "-0.0208139014448783521075271021",
+                  "max": "0.013355656177466610859556333",
+                  "positive_fraction": "0.3913043478260869565217391304"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 5,
+                    "mean": "0.00199831418451153177051999598",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 18,
+                    "mean": "-0.003656024641881349122213110578",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.002018486751155841085359227930",
+                  "median": "0.0025027448064803368115290520",
+                  "stdev": "0.01941910616806913698513832427",
+                  "p25": "-0.01404590035876174085291188950",
+                  "p75": "0.01707924363265296086572399750",
+                  "min": "-0.0298211982227318331661172424",
+                  "max": "0.042401655482782175432956965",
+                  "positive_fraction": "0.5217391304347826086956521739"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 5,
+                    "mean": "0.015655303429330276314140526",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 18,
+                    "mean": "-0.001769517881670390922635577089",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.0008857749485671433817918572391",
+                  "median": "0.0009352753159959320063925610",
+                  "stdev": "0.005999251939821802020702038322",
+                  "p25": "-0.003110463875366663332046985800",
+                  "p75": "0.00393426176231214678447334950",
+                  "min": "-0.0114898278129912508650598324",
+                  "max": "0.015943648686058791563707949",
+                  "positive_fraction": "0.5652173913043478260869565217"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "-0.0003881965949446038533843238778",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.001704756655110409461547973671",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.001997875658366725273133361152",
+                  "median": "0.0005472545316712345972520650",
+                  "stdev": "0.01191508635937493385634602764",
+                  "p25": "-0.004265266281139217235013424600",
+                  "p75": "0.00569835597379564926580919700",
+                  "min": "-0.0157062783865660218247148167",
+                  "max": "0.046467277070880027888568763",
+                  "positive_fraction": "0.5652173913043478260869565217"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.001669167647784043154959050367",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.002209187950884163777673989514",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.004270442841996203911996004374",
+                  "median": "0.0037965936344051054835169300",
+                  "stdev": "0.02622437045873297561910556758",
+                  "p25": "-0.01639668606419898952684050855",
+                  "p75": "0.01857565638884628047554634500",
+                  "min": "-0.0304609421394012769934032749",
+                  "max": "0.078939004008981759645651126",
+                  "positive_fraction": "0.5652173913043478260869565217"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.008441223712600740884930378456",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.001589226568036144429395335321",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 2343,
+                  "mean": "0.0001106120708828702944286924230",
+                  "median": "0.0",
+                  "stdev": "0.004584202511442128540542071900",
+                  "p25": "-0.002606651860970633725970246350",
+                  "p75": "0.00270006008866604817309478450",
+                  "min": "-0.0328544078126921117805139374",
+                  "max": "0.024797462385871661880063440",
+                  "positive_fraction": "0.4989329918907383696116090482"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 270,
+                    "mean": "0.0001800013898974691347637734626",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 776,
+                    "mean": "0.00007294282766633692272565207552",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1297,
+                    "mean": "0.0001187047590880269710293766378",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 2340,
+                  "mean": "0.0005244790455405108231795116295",
+                  "median": "0.0002599554978690815531526245",
+                  "stdev": "0.01012677699155547055716062921",
+                  "p25": "-0.005749741325786596046975602125",
+                  "p75": "0.00640868098831115085642296950",
+                  "min": "-0.0646112377613171005494848147",
+                  "max": "0.043043416829824596814888077",
+                  "positive_fraction": "0.5089743589743589743589743590"
+                },
+                "censored_count": 3,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 270,
+                    "mean": "0.0005279433637804716565623162152",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 776,
+                    "mean": "0.0003162148904031694197942364276",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1294,
+                    "mean": "0.0006486503117397283687850883868",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 2325,
+                  "mean": "0.001682229117434366021986195425",
+                  "median": "0.0008252046193519452853458910",
+                  "stdev": "0.01963373181403205362335638291",
+                  "p25": "-0.01043998797038423165602936750",
+                  "p75": "0.01402467253070450151139674800",
+                  "min": "-0.1371374397164095024800428683",
+                  "max": "0.065936507642598576097321619",
+                  "positive_fraction": "0.5178494623655913978494623656"
+                },
+                "censored_count": 18,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 270,
+                    "mean": "0.0002241102990186877047987039556",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 776,
+                    "mean": "0.001282140918275543885745246236",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1279,
+                    "mean": "0.002232784647942168307649681949",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 24,
+                "n_b": 23,
+                "observed_diff": "-0.002318907826208708938882314993",
+                "lower_95": "-0.005518230662174711447360602873",
+                "upper_95": "0.0003704916673827873388188162809",
+                "fraction_le_zero": "0.9474",
+                "note": null
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 23,
+                "n_b": 23,
+                "observed_diff": "-0.004424696207553969853447970304",
+                "lower_95": "-0.01049540707411322882595745750",
+                "upper_95": "-0.0001253362242349212293933878424",
+                "fraction_le_zero": "0.9778",
+                "note": null
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 23,
+                "n_b": 23,
+                "observed_diff": "-0.002251956090840362826636776444",
+                "lower_95": "-0.01392182637770653676003181791",
+                "upper_95": "0.007652803097129696595437219548",
+                "fraction_le_zero": "0.6986",
+                "note": null
+              }
+            }
+          }
+        }
+      },
+      "EFFECTIVE": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 307,
+              "UNAVAILABLE": 400,
+              "USABLE": 427
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "provisional_timing": 307
+              },
+              "UNAVAILABLE": {
+                "no_effective_state_established": 400
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 427,
+                  "mean": "0.00001968645621839285861035128150",
+                  "median": "-0.00005159692482328053248026420",
+                  "stdev": "0.004544153134629431781564396453",
+                  "p25": "-0.002762072256039933392677249300",
+                  "p75": "0.00286500823798813752080595150",
+                  "min": "-0.0182171695221538531921220578",
+                  "max": "0.017098792002857430693568033",
+                  "positive_fraction": "0.4894613583138173302107728337"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.0002967432188509474971165556671",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 269,
+                    "mean": "-0.0001430457686735909067576051978",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 426,
+                  "mean": "0.0004558594816448624748443461174",
+                  "median": "-0.00017046931125200693482757270",
+                  "stdev": "0.009651851809789122216889966390",
+                  "p25": "-0.005620714108601115920649737900",
+                  "p75": "0.00648336581129239662370639150",
+                  "min": "-0.0280531600979024178237298991",
+                  "max": "0.034215900869135169293610162",
+                  "positive_fraction": "0.4929577464788732394366197183"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.0003505102894455402951914019930",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 268,
+                    "mean": "0.0005179683337623733121024251313",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 423,
+                  "mean": "0.001872597766967657079281405757",
+                  "median": "-0.00021112635912593687321862130",
+                  "stdev": "0.01788274728312423718292145473",
+                  "p25": "-0.009847388951393731939595142350",
+                  "p75": "0.01285298586744462219233477700",
+                  "min": "-0.0431534028917103763749363549",
+                  "max": "0.058310172317954419121734297",
+                  "positive_fraction": "0.4964539007092198581560283688"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 158,
+                    "mean": "0.001598066387803029262468935263",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 265,
+                    "mean": "0.002036280626997888004022425906",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 427,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 426,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 423,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 1523,
+              "UNAVAILABLE": 2059,
+              "GAP": 2,
+              "USABLE": 2115,
+              "NO_ENTRY_AVAILABLE": 1
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "provisional_timing": 1523
+              },
+              "UNAVAILABLE": {
+                "no_effective_state_established": 2059
+              },
+              "GAP": {
+                "transition_unknown_due_to_gap": 2
+              },
+              "NO_ENTRY_AVAILABLE": {
+                "no D-bar available strictly after as_of": 1
+              }
+            },
+            "total": 5700
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 18,
+                  "mean": "0.0002258665005146387428826710889",
+                  "median": "-0.00153521796148204367507369085",
+                  "stdev": "0.005867946508425698741335522096",
+                  "p25": "-0.004107990797222676389903140950",
+                  "p75": "0.00318857686239243949715632325",
+                  "min": "-0.0055469798504010223665587197",
+                  "max": "0.015943648686058791563707949",
+                  "positive_fraction": "0.3888888888888888888888888889"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 18,
+                    "mean": "0.0002258665005146387428826710889",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 18,
+                  "mean": "-0.00001020035527701254818367197778",
+                  "median": "-0.00287310645041994104884192905",
+                  "stdev": "0.01345840726773868672122756119",
+                  "p25": "-0.007645484681055627728988005275",
+                  "p75": "0.00305887772378774073187996150",
+                  "min": "-0.0133521439008414369929964226",
+                  "max": "0.046467277070880027888568763",
+                  "positive_fraction": "0.3333333333333333333333333333"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 18,
+                    "mean": "-0.00001020035527701254818367197778",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 18,
+                  "mean": "0.001817395756502658383755092611",
+                  "median": "-0.00657751140656430543924998145",
+                  "stdev": "0.02317954139312668453160913683",
+                  "p25": "-0.01015499646863003525103228650",
+                  "p75": "0.01067165919397135693256291675",
+                  "min": "-0.0269959150034041638298634751",
+                  "max": "0.078939004008981759645651126",
+                  "positive_fraction": "0.3333333333333333333333333333"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 18,
+                    "mean": "0.001817395756502658383755092611",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 23,
+                  "mean": "-0.0002705097317924791363097708217",
+                  "median": "-0.00175994048861028204407108710",
+                  "stdev": "0.004774123943595025255864244906",
+                  "p25": "-0.003583856373083711360854292050",
+                  "p75": "0.00291884392339765214810044700",
+                  "min": "-0.0089834196691636657744227696",
+                  "max": "0.011051006196637264598429647",
+                  "positive_fraction": "0.4347826086956521739130434783"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.000005865433053902333373015188889",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "-0.0004481794806222957953915618286",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.0018470966722018374779650277",
+                  "median": "0.0011958936505661459079833740",
+                  "stdev": "0.01162314108961233053480556370",
+                  "p25": "-0.005525878072141047924201391200",
+                  "p75": "0.00651453038777244843399786950",
+                  "min": "-0.0152225780406600684018107429",
+                  "max": "0.043043416829824596814888077",
+                  "positive_fraction": "0.5652173913043478260869565217"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.001373307760483113537656894267",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.002151675258306731439591684907",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 23,
+                  "mean": "0.005538055611640295604685473083",
+                  "median": "0.0046600030873726458783575180",
+                  "stdev": "0.02540427705398197952062038301",
+                  "p25": "-0.01268965483094914393724327025",
+                  "p75": "0.02288223171629110726736071100",
+                  "min": "-0.0325585476578627738035311015",
+                  "max": "0.063288456492339987485618554",
+                  "positive_fraction": "0.5217391304347826086956521739"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.006667631646652054748206631167",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.004811899589132736155279014314",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 2073,
+                  "mean": "0.0001004975971101295409422306792",
+                  "median": "0.0",
+                  "stdev": "0.004482849561933297085075867733",
+                  "p25": "-0.002604727862155552848803980200",
+                  "p75": "0.00264131742066796188361550600",
+                  "min": "-0.0328544078126921117805139374",
+                  "max": "0.022225671838046624601645467",
+                  "positive_fraction": "0.4983116256632899179932465027"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 775,
+                    "mean": "0.00006138274862024137338319487871",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1298,
+                    "mean": "0.0001238519943209641556250139894",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 2069,
+                  "mean": "0.0004891941580275965680976275655",
+                  "median": "-0.00003751008083422419775314620",
+                  "stdev": "0.009599829346232530502772471178",
+                  "p25": "-0.005831079607921361605796751900",
+                  "p75": "0.00614695446347037149775792900",
+                  "min": "-0.0308873256189359569081239061",
+                  "max": "0.040917516641859870517655438",
+                  "positive_fraction": "0.4978250362493958434026099565"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 775,
+                    "mean": "0.0003065920890718487687554383299",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1294,
+                    "mean": "0.0005985578392027932794501752253",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 2054,
+                  "mean": "0.001826848894906258730624419146",
+                  "median": "0.0003669438517927101003174280",
+                  "stdev": "0.01779839634872202382286398307",
+                  "p25": "-0.01049910541446020030108287280",
+                  "p75": "0.01285946113559945663498279275",
+                  "min": "-0.0458900207286965165284080119",
+                  "max": "0.065936507642598576097321619",
+                  "positive_fraction": "0.5087633885102239532619279455"
+                },
+                "censored_count": 19,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 775,
+                    "mean": "0.001298448946066953985672280178",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1279,
+                    "mean": "0.002147028691896455116346004421",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 18,
+                "n_b": 23,
+                "observed_diff": "0.0004963762323071178791924419106",
+                "lower_95": "-0.002009468477412933658153961660",
+                "upper_95": "0.004194500818405567521501801804",
+                "fraction_le_zero": "0.351",
+                "note": null
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 18,
+                "n_b": 23,
+                "observed_diff": "-0.001857297027478850026148699678",
+                "lower_95": "-0.005883317199624372110741857714",
+                "upper_95": "0.004584595514265414651687514007",
+                "fraction_le_zero": "0.8084",
+                "note": null
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 18,
+                "n_b": 23,
+                "observed_diff": "-0.003720659855137637220930380472",
+                "lower_95": "-0.01452645152531986160004920262",
+                "upper_95": "0.007543067348073636142991269962",
+                "fraction_le_zero": "0.7438",
+                "note": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "GBP_USD": {
+      "ANNOUNCED": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "USABLE": 596,
+              "BLOCKED": 538
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "provisional_timing": 538
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 215,
+                  "mean": "-0.0002583667636109805561868416228",
+                  "median": "-0.00049948663873241390792796290",
+                  "stdev": "0.005271867007247173072194890422",
+                  "p25": "-0.003709858634853715933349447450",
+                  "p75": "0.00294649875798616807211877500",
+                  "min": "-0.0160264193094070224855519402",
+                  "max": "0.018893841280520281445350826",
+                  "positive_fraction": "0.4465116279069767441860465116"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 103,
+                    "mean": "-0.00009548369467689234622262356796",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 33,
+                    "mean": "0.0005297584142681337047078402697",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 79,
+                    "mean": "-0.0007999501429808774705645500038",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 214,
+                  "mean": "-0.001324783505303946513582328935",
+                  "median": "-0.00163043914505538757665025375",
+                  "stdev": "0.01361162301273302205564831421",
+                  "p25": "-0.008633441657333810545633576675",
+                  "p75": "0.00745418239095588041770758200",
+                  "min": "-0.0896715024633903347754288756",
+                  "max": "0.038454853811005522383875760",
+                  "positive_fraction": "0.4626168224299065420560747664"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 103,
+                    "mean": "-0.001596856943183958142303175208",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 33,
+                    "mean": "-0.003815395712301994428499619909",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 78,
+                    "mean": "0.00008821350665216603706533472692",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 211,
+                  "mean": "-0.004475948296754478689022753877",
+                  "median": "-0.00122857396607359602119660140",
+                  "stdev": "0.02604908058864868595805998659",
+                  "p25": "-0.01752822143827346042482810395",
+                  "p75": "0.01174530128858964495750191650",
+                  "min": "-0.1065711878685762426284751474",
+                  "max": "0.047519819509290884592485821",
+                  "positive_fraction": "0.4928909952606635071090047393"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 103,
+                    "mean": "-0.006515882132070312110989458340",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 33,
+                    "mean": "-0.01350011491724976019339259738",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 75,
+                    "mean": "0.002296194150097189739067584605",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 356,
+                  "mean": "0.0003023511361105166543396945143",
+                  "median": "0.0003574889685968450214702645",
+                  "stdev": "0.004872062355114157705052693055",
+                  "p25": "-0.002554744177013481474082077475",
+                  "p75": "0.00328912218821237262276602975",
+                  "min": "-0.0155643540338231217077904075",
+                  "max": "0.019905177028370421350462644",
+                  "positive_fraction": "0.5337078651685393258426966292"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 41,
+                    "mean": "-0.0005939086835184472875613066805",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 125,
+                    "mean": "0.0005669493643968716494278719472",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 190,
+                    "mean": "0.0003216767891052174292445306716",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 356,
+                  "mean": "0.0007223178041113380773474749775",
+                  "median": "-0.00037074307145220108349120475",
+                  "stdev": "0.01150178857870894289412880289",
+                  "p25": "-0.006213417748119495798965032200",
+                  "p75": "0.00842119268693549638515043600",
+                  "min": "-0.0473335114659792842211150056",
+                  "max": "0.046404661745208125317139443",
+                  "positive_fraction": "0.4915730337078651685393258427"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 41,
+                    "mean": "0.002537398824095610394488209049",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 125,
+                    "mean": "-0.0001486084261272435952757347944",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 190,
+                    "mean": "0.0009036202091664304145850071974",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 356,
+                  "mean": "0.002487811620608114205997663216",
+                  "median": "0.0021973675105315530136981535",
+                  "stdev": "0.02281690014160199122851665539",
+                  "p25": "-0.01140454833608064000669896850",
+                  "p75": "0.01655064292777170699262536050",
+                  "min": "-0.0957195691120047363848158884",
+                  "max": "0.067055393586005830903790087",
+                  "positive_fraction": "0.5308988764044943820224719101"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 41,
+                    "mean": "0.01051926526630614513875894972",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 125,
+                    "mean": "0.000050417155629899484498107348",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 190,
+                    "mean": "0.002358257455601048795177830271",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 25,
+                  "mean": "0.000369300895985335488148605408",
+                  "median": "0.0008256123291441152187872670",
+                  "stdev": "0.003022639491777594531706346851",
+                  "p25": "-0.001059777160370062727350843500",
+                  "p75": "0.00164175235461850859759785700",
+                  "min": "-0.0058396002624539443799525564",
+                  "max": "0.008079303526027889776316803",
+                  "positive_fraction": "0.56"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 25,
+                    "mean": "0.000369300895985335488148605408",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 25,
+                  "mean": "0.000767210784136187764395348152",
+                  "median": "0.0008876671534518798499556170",
+                  "stdev": "0.007947946985395566449725608710",
+                  "p25": "-0.002803684842936430737540767900",
+                  "p75": "0.00446824964912783203964139400",
+                  "min": "-0.0155847068056957057966139702",
+                  "max": "0.017208606837823453379628456",
+                  "positive_fraction": "0.52"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 25,
+                    "mean": "0.000767210784136187764395348152",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 25,
+                  "mean": "0.003445137456795789150672940452",
+                  "median": "0.0018039687312086590499098020",
+                  "stdev": "0.01327381437526054938933892544",
+                  "p25": "-0.007357064923676187174336436600",
+                  "p75": "0.01253735879641355554429866800",
+                  "min": "-0.0199848806944733357348337637",
+                  "max": "0.026107413357815010328207482",
+                  "positive_fraction": "0.6"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 25,
+                    "mean": "0.003445137456795789150672940452",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 215,
+                "n_b": 356,
+                "observed_diff": "-0.0005607178997214972105265361371",
+                "lower_95": "-0.001698835412514209463442157883",
+                "upper_95": "0.0001642761164383009262810268932",
+                "fraction_le_zero": "0.9192",
+                "note": null
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 214,
+                "n_b": 356,
+                "observed_diff": "-0.002047101309415284590929803917",
+                "lower_95": "-0.004407514841232622768967452153",
+                "upper_95": "0.0001648693653665801119265185329",
+                "fraction_le_zero": "0.9664",
+                "note": null
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 211,
+                "n_b": 356,
+                "observed_diff": "-0.006963759917362592895020417134",
+                "lower_95": "-0.01698718037090652563285435962",
+                "upper_95": "0.002079509695953215115147104724",
+                "fraction_le_zero": "0.9364",
+                "note": null
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "NO_PRIOR_DAY": 1,
+              "USABLE": 2947,
+              "BLOCKED": 2749,
+              "GAP": 3,
+              "NO_ENTRY_AVAILABLE": 1
+            },
+            "by_disposition_and_reason": {
+              "NO_PRIOR_DAY": {
+                "no_prior_day": 1
+              },
+              "BLOCKED": {
+                "provisional_timing": 2749
+              },
+              "GAP": {
+                "transition_unknown_due_to_gap": 3
+              },
+              "NO_ENTRY_AVAILABLE": {
+                "no D-bar available strictly after as_of": 1
+              }
+            },
+            "total": 5701
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 25,
+                  "mean": "0.000570257611500192810023522144",
+                  "median": "-0.00033027522935779816513761470",
+                  "stdev": "0.005835478890673238000342052655",
+                  "p25": "-0.001543357761425134539438843200",
+                  "p75": "0.00263381338257478958345355200",
+                  "min": "-0.0131031104579965711486651972",
+                  "max": "0.018106926772353016568920788",
+                  "positive_fraction": "0.48"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "-0.001658003697890860977249432938",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 2,
+                    "mean": "0.0012888723798475123191673652",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "0.001662848340729112228683252447",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 25,
+                  "mean": "-0.000941856705884961901529131624",
+                  "median": "-0.00123903064535796185358984550",
+                  "stdev": "0.01368844234118804503144960784",
+                  "p25": "-0.008339570191382444135571474400",
+                  "p75": "0.00692202964617337963317067200",
+                  "min": "-0.0281998530492285084496693608",
+                  "max": "0.044164637353215449004936646",
+                  "positive_fraction": "0.4"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "-0.002818660317047056984335427312",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 2,
+                    "mean": "-0.0066605671256060352483557175",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "0.0008215999426976319222111041933",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 25,
+                  "mean": "0.004602682958913800027283393732",
+                  "median": "0.0034460354143878146871838740",
+                  "stdev": "0.02323891998533963996424529324",
+                  "p25": "-0.007596950460351373368788330600",
+                  "p75": "0.01370795787213527040661640100",
+                  "min": "-0.0419054616703404359539554249",
+                  "max": "0.085346073444205297281530228",
+                  "positive_fraction": "0.52"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 8,
+                    "mean": "-0.002265921470652554160040250338",
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 2,
+                    "mean": "0.0099308542890300773394084382",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "0.007555515810667018618905997973",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 34,
+                  "mean": "-0.001649087866416644195393716515",
+                  "median": "-0.00088439708391102824502163615",
+                  "stdev": "0.006376783855293210182415461537",
+                  "p25": "-0.006620240282787179226332693175",
+                  "p75": "0.00278581009836638775804995025",
+                  "min": "-0.0155929874495466869502275766",
+                  "max": "0.013668375026879793563185435",
+                  "positive_fraction": "0.4411764705882352941176470588"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 14,
+                    "mean": "-0.003323476328315971669287338686",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "-0.0005627397120886594395087011889",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 11,
+                    "mean": "-0.0004068783139040331197986644727",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 34,
+                  "mean": "-0.001694917367274098915338858868",
+                  "median": "-0.00406301207836944874495851535",
+                  "stdev": "0.01380694421340037871738705044",
+                  "p25": "-0.009441048334451752836802085025",
+                  "p75": "0.00371172130932901049045101275",
+                  "min": "-0.0220425125656361441046808750",
+                  "max": "0.048957064009748405132248584",
+                  "positive_fraction": "0.3235294117647058823529411765"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 14,
+                    "mean": "-0.006153673146170464531075951407",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "-0.003201311861276781204274821789",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 11,
+                    "mean": "0.005212367300959833741092319482",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 34,
+                  "mean": "0.005735415952244099949280835632",
+                  "median": "0.0048988618517879956325444260",
+                  "stdev": "0.02697380117039939559548641988",
+                  "p25": "-0.01334640072083684187208831230",
+                  "p75": "0.01939863595023640623114456675",
+                  "min": "-0.0478113771669857588712003986",
+                  "max": "0.098465163787542111676582324",
+                  "positive_fraction": "0.5882352941176470588235294118"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 14,
+                    "mean": "-0.0006057276811229342432416994",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 9,
+                    "mean": "0.003723456677092622487841378878",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 11,
+                    "mean": "0.01545211089256244320821452665",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 2887,
+                  "mean": "0.00002192758248782474553888448563",
+                  "median": "-0.00004116462970357350150456720",
+                  "stdev": "0.005516730579577344350647470513",
+                  "p25": "-0.003015882785792176442740331400",
+                  "p75": "0.00304383691200011147994692050",
+                  "min": "-0.0970277250897937769885790387",
+                  "max": "0.030313964489230159952476293",
+                  "positive_fraction": "0.4960166262556286802909594735"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 809,
+                    "mean": "0.00002671913521525468027903681681",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 774,
+                    "mean": "-0.0001898673382624877363192246889",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1304,
+                    "mean": "0.0001446675383959927238773762423",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 2883,
+                  "mean": "0.0001247361982236037351016689448",
+                  "median": "0.0000196737308476230198389900",
+                  "stdev": "0.01208610654552427393115404624",
+                  "p25": "-0.006973678813744154889447653100",
+                  "p75": "0.00746451964313542765206099400",
+                  "min": "-0.1044802722735649810995870159",
+                  "max": "0.051014055895940499983617837",
+                  "positive_fraction": "0.5005202913631633714880332986"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 809,
+                    "mean": "0.00003933190197487274851883219048",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 774,
+                    "mean": "-0.0008637023909595610810533950491",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1300,
+                    "mean": "0.0007663850779874444549859262013",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 2868,
+                  "mean": "-0.0001161946324118768128337856803",
+                  "median": "0.0007640302896235082348630110",
+                  "stdev": "0.02373739622098762487042174377",
+                  "p25": "-0.01308471312832431117941359592",
+                  "p75": "0.01529716817394059255492077725",
+                  "min": "-0.1401722917680364488875127173",
+                  "max": "0.081205967084058301719957785",
+                  "positive_fraction": "0.5146443514644351464435146444"
+                },
+                "censored_count": 19,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 809,
+                    "mean": "-0.0007775551736881000611535519308",
+                    "sparse": false
+                  },
+                  "2012-2018": {
+                    "count": 774,
+                    "mean": "-0.003024976088784606693173616903",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1285,
+                    "mean": "0.002052239239280697144577669831",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 25,
+                "n_b": 34,
+                "observed_diff": "0.002219345477916837005417238659",
+                "lower_95": "-0.0006589881848375503850018356347",
+                "upper_95": "0.004887620038168901207238878067",
+                "fraction_le_zero": "0.0638",
+                "note": null
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 25,
+                "n_b": 34,
+                "observed_diff": "0.000753060661389137013809727244",
+                "lower_95": "-0.005231264081278333109047915304",
+                "upper_95": "0.005905309467657393453594436012",
+                "fraction_le_zero": "0.4075",
+                "note": null
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 25,
+                "n_b": 34,
+                "observed_diff": "-0.001132732993330299921997441900",
+                "lower_95": "-0.01045552658552327626990573198",
+                "upper_95": "0.008028251293483593434945934277",
+                "fraction_le_zero": "0.5843",
+                "note": null
+              }
+            }
+          }
+        }
+      },
+      "EFFECTIVE": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "UNAVAILABLE": 939,
+              "BLOCKED": 195
+            },
+            "by_disposition_and_reason": {
+              "UNAVAILABLE": {
+                "no_effective_state_established": 939
+              },
+              "BLOCKED": {
+                "provisional_timing": 195
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "UNAVAILABLE": 4727,
+              "BLOCKED": 974
+            },
+            "by_disposition_and_reason": {
+              "UNAVAILABLE": {
+                "no_effective_state_established": 4727
+              },
+              "BLOCKED": {
+                "provisional_timing": 974
+              }
+            },
+            "total": 5701
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              }
+            }
+          }
+        }
+      }
+    },
+    "USD_CAD": {
+      "ANNOUNCED": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 707,
+              "USABLE": 427
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "missing_baseline": 169,
+                "provisional_timing": 538
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 350,
+                  "mean": "0.00002328100917394581202407365629",
+                  "median": "0.0002631824730419499389611645",
+                  "stdev": "0.004268880347516240834901530140",
+                  "p25": "-0.002260923348711940887192425950",
+                  "p75": "0.00277537760299296918805820575",
+                  "min": "-0.0141097989591371737246138823",
+                  "max": "0.017557848895158940702007268",
+                  "positive_fraction": "0.5142857142857142857142857143"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 106,
+                    "mean": "-0.0004314341850921248354093387472",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 244,
+                    "mean": "0.0002208212165190420768926872414",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 349,
+                  "mean": "0.00003491805637551397167005890258",
+                  "median": "0.0002394785998238911219756620",
+                  "stdev": "0.008108261058947377492291975390",
+                  "p25": "-0.005261010230551750269608557500",
+                  "p75": "0.00585125239672634817048300500",
+                  "min": "-0.0276231097895329537885172359",
+                  "max": "0.022271005063765194283642564",
+                  "positive_fraction": "0.5157593123209169054441260745"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 106,
+                    "mean": "0.00002594229063020483209091421415",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 243,
+                    "mean": "0.00003883341098046363749470637119",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 346,
+                  "mean": "0.0003243705901149518880078493844",
+                  "median": "0.0016951021760907892404018095",
+                  "stdev": "0.01589158356952912512947751921",
+                  "p25": "-0.009348262310532976972011687425",
+                  "p75": "0.01121416541385392854477699275",
+                  "min": "-0.0520897665660082825305290438",
+                  "max": "0.035961861211782161360153723",
+                  "positive_fraction": "0.5231213872832369942196531792"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 106,
+                    "mean": "0.00009646754024265068368095098396",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 240,
+                    "mean": "0.0004250277704752182532522295258",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 77,
+                  "mean": "-0.0006641036940455575990411701948",
+                  "median": "0.0000606570676857054037865170",
+                  "stdev": "0.005912215193316156195063881960",
+                  "p25": "-0.003546976506989294372409698600",
+                  "p75": "0.00264541109611532146743414300",
+                  "min": "-0.0194451166564648607097609930",
+                  "max": "0.011999908046681634623489475",
+                  "positive_fraction": "0.5064935064935064935064935065"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 52,
+                    "mean": "-0.001116928614710791903698805283",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 25,
+                    "mean": "0.000277772140938129754646710788",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 77,
+                  "mean": "0.0003064407315367454560592963416",
+                  "median": "0.0006736610030659230878170700",
+                  "stdev": "0.01223034327503016749168561283",
+                  "p25": "-0.005039602514670886725363368400",
+                  "p75": "0.00646654567725887600088675500",
+                  "min": "-0.0314414494762045237817553151",
+                  "max": "0.025621196328300998621431694",
+                  "positive_fraction": "0.5324675324675324675324675325"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 52,
+                    "mean": "-0.0005279314693226948292016201308",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 25,
+                    "mean": "0.002041934909324381249402002604",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 77,
+                  "mean": "0.0001383913993673416149986497390",
+                  "median": "0.0010052088092844740930275060",
+                  "stdev": "0.02558884829791142195672547177",
+                  "p25": "-0.02036380447466827727881112960",
+                  "p75": "0.01512262251826353321176599900",
+                  "min": "-0.0535724646089579948944070550",
+                  "max": "0.089227953774377087514638490",
+                  "positive_fraction": "0.5064935064935064935064935065"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 52,
+                    "mean": "-0.004001476494300964462649116962",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 25,
+                    "mean": "0.008749316618197418256506004476",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 350,
+                "n_b": 77,
+                "observed_diff": "0.0006873847032195034110652438511",
+                "lower_95": "-0.001216969598400068371109527671",
+                "upper_95": "0.001376095439194008075862768732",
+                "fraction_le_zero": "0.2093",
+                "note": null
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 349,
+                "n_b": 77,
+                "observed_diff": "-0.0002715226751612314843892374450",
+                "lower_95": "-0.005706029733698145434949976756",
+                "upper_95": "0.001151478603745393366093977585",
+                "fraction_le_zero": "0.6315",
+                "note": null
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 346,
+                "n_b": 77,
+                "observed_diff": "0.0001859791907476102730091996555",
+                "lower_95": "-0.02669684558243634161036830950",
+                "upper_95": "0.007909821805895600686160951131",
+                "fraction_le_zero": "0.49",
+                "note": null
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 3582,
+              "GAP": 2,
+              "USABLE": 2116,
+              "NO_ENTRY_AVAILABLE": 1
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "missing_baseline": 833,
+                "provisional_timing": 2749
+              },
+              "GAP": {
+                "transition_unknown_due_to_gap": 2
+              },
+              "NO_ENTRY_AVAILABLE": {
+                "no D-bar available strictly after as_of": 1
+              }
+            },
+            "total": 5701
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 23,
+                  "mean": "-0.0002744727828863099488799232348",
+                  "median": "0.0013424664473850852339546310",
+                  "stdev": "0.006266665311209996564420792849",
+                  "p25": "-0.001743846462363801327147435650",
+                  "p75": "0.00342850921566319611181733500",
+                  "min": "-0.0148689622391990156356011791",
+                  "max": "0.007388940618147959030426816",
+                  "positive_fraction": "0.6956521739130434782608695652"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 8,
+                    "mean": "-0.0000573821895839780870597335375",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "-0.00039025443264755360851735774",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 23,
+                  "mean": "-0.00002949318877548127063357008261",
+                  "median": "-0.00028546541842642677812017360",
+                  "stdev": "0.009805714136351494674805241211",
+                  "p25": "-0.003630287250571554210968467450",
+                  "p75": "0.00810459826855657875093724000",
+                  "min": "-0.0295472909523705531654691970",
+                  "max": "0.016561764043528545091587815",
+                  "positive_fraction": "0.4782608695652173913043478261"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 8,
+                    "mean": "0.002423944914037420421825465988",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "-0.001337993510275695506611722653",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 23,
+                  "mean": "-0.006943963737909004884685868743",
+                  "median": "-0.00643083253609724925847809790",
+                  "stdev": "0.01734916676770606423939496305",
+                  "p25": "-0.02018699389415323634309366145",
+                  "p75": "0.00460022877961938990907216700",
+                  "min": "-0.0408739371645661219320991377",
+                  "max": "0.026634309345066642474276685",
+                  "positive_fraction": "0.4347826086956521739130434783"
+                },
+                "censored_count": 1,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 8,
+                    "mean": "-0.01386689568107673686519347546",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 15,
+                    "mean": "-0.00325173336821954782841514516",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 19,
+                  "mean": "-0.001120307620013669586022700168",
+                  "median": "-0.00119582548195390636324104940",
+                  "stdev": "0.002702947523438430214188840041",
+                  "p25": "-0.002256964533383232839314260750",
+                  "p75": "0.00040118151884507399110179450",
+                  "min": "-0.0064344873858382615518297042",
+                  "max": "0.003910141856309205636297503",
+                  "positive_fraction": "0.3684210526315789473684210526"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 5,
+                    "mean": "-0.00010308155110831716006221956",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "-0.001483602644622724023865728957",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 19,
+                  "mean": "-0.0005579837438299234488667342737",
+                  "median": "0.0002323622527520404310319790",
+                  "stdev": "0.007021812205424208561624643045",
+                  "p25": "-0.004427016646900628266782794300",
+                  "p75": "0.00192504964181199818253380400",
+                  "min": "-0.0130670502766880777691848421",
+                  "max": "0.012811528578872657358992327",
+                  "positive_fraction": "0.5789473684210526315789473684"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 5,
+                    "mean": "-0.0042107544297271378774465788",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.0007465772154190817041974959143",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 19,
+                  "mean": "0.006114617619350137922193142863",
+                  "median": "0.0067198538221422589447785890",
+                  "stdev": "0.01206489708975888074011788721",
+                  "p25": "-0.002584194849549354376351934150",
+                  "p75": "0.01577316251220592035403780200",
+                  "min": "-0.0154537688497483033851636486",
+                  "max": "0.030697930716847057275389019",
+                  "positive_fraction": "0.7368421052631578947368421053"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 5,
+                    "mean": "0.0100317856432033872195187066",
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 14,
+                    "mean": "0.004715629039402548887434012957",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 2073,
+                  "mean": "0.00001581002522589841772788991027",
+                  "median": "0.0001967488185790280608362200",
+                  "stdev": "0.004042632259697849638607222147",
+                  "p25": "-0.002109673840044383449645224400",
+                  "p75": "0.00233945652625313196472819400",
+                  "min": "-0.0205205698083094215325059001",
+                  "max": "0.022827254691310587109776276",
+                  "positive_fraction": "0.5238784370477568740955137482"
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 772,
+                    "mean": "-0.00001941000315652407505190032124",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1301,
+                    "mean": "0.00003670922730985703757877235911",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 2069,
+                  "mean": "0.00004948248914167546624081498695",
+                  "median": "0.0002078886310904872389791180",
+                  "stdev": "0.009027513936912898634308343903",
+                  "p25": "-0.005691909762590936116549710500",
+                  "p75": "0.00575667039818514756796429600",
+                  "min": "-0.0314640667417522790993834536",
+                  "max": "0.034762132822477650063856960",
+                  "positive_fraction": "0.5103914934751087481875302078"
+                },
+                "censored_count": 4,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 772,
+                    "mean": "-0.0001697985058562907245032299325",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1297,
+                    "mean": "0.0001800028655012975936536158184",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 2054,
+                  "mean": "0.0002863565582937979042456679907",
+                  "median": "0.0014176532905949097417240380",
+                  "stdev": "0.01792641043718966898749564187",
+                  "p25": "-0.01089156679326708805372672375",
+                  "p75": "0.01127233662041043741740447650",
+                  "min": "-0.0571990070335126189491104675",
+                  "max": "0.097573706008056128141606309",
+                  "positive_fraction": "0.5321324245374878286270691334"
+                },
+                "censored_count": 19,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 772,
+                    "mean": "-0.001149554865163512584918032390",
+                    "sparse": false
+                  },
+                  "2019-cutoff": {
+                    "count": 1282,
+                    "mean": "0.001151039568363254766674979027",
+                    "sparse": false
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 23,
+                "n_b": 19,
+                "observed_diff": "0.0008458348371273596371427769332",
+                "lower_95": "-0.0008779439358943213899559171140",
+                "upper_95": "0.002280053457954145170340537974",
+                "fraction_le_zero": "0.1631",
+                "note": null
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 23,
+                "n_b": 19,
+                "observed_diff": "0.0005284905550544421782331641911",
+                "lower_95": "-0.003650047177548094998238569890",
+                "upper_95": "0.004671016739208409366434992530",
+                "fraction_le_zero": "0.3999",
+                "note": null
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 23,
+                "n_b": 19,
+                "observed_diff": "-0.01305858135725914280687901161",
+                "lower_95": "-0.02201893503114056966450084071",
+                "upper_95": "-0.006714672096216950678623611758",
+                "fraction_le_zero": "1",
+                "note": null
+              }
+            }
+          }
+        }
+      },
+      "EFFECTIVE": {
+        "LEVEL": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 363,
+              "UNAVAILABLE": 771
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "missing_baseline": 169,
+                "provisional_timing": 194
+              },
+              "UNAVAILABLE": {
+                "no_effective_state_established": 771
+              }
+            },
+            "total": 1134
+          },
+          "groups": {
+            "POSITIVE": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "NEGATIVE": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "ZERO": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "POSITIVE",
+            "group_b": "NEGATIVE",
+            "by_horizon": {
+              "1": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "5": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "20": {
+                "group_a": "POSITIVE",
+                "group_b": "NEGATIVE",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              }
+            }
+          }
+        },
+        "CHANGE": {
+          "disposition_counts": {
+            "by_disposition": {
+              "BLOCKED": 1801,
+              "UNAVAILABLE": 3900
+            },
+            "by_disposition_and_reason": {
+              "BLOCKED": {
+                "missing_baseline": 833,
+                "provisional_timing": 968
+              },
+              "UNAVAILABLE": {
+                "no_effective_state_established": 3900
+              }
+            },
+            "total": 5701
+          },
+          "groups": {
+            "INCREASED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "DECREASED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            },
+            "UNCHANGED": {
+              "1": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "5": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              },
+              "20": {
+                "stats": {
+                  "count": 0,
+                  "mean": null,
+                  "median": null,
+                  "stdev": null,
+                  "p25": null,
+                  "p75": null,
+                  "min": null,
+                  "max": null,
+                  "positive_fraction": null
+                },
+                "censored_count": 0,
+                "by_era": {
+                  "2005-2011": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2012-2018": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "2019-cutoff": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  },
+                  "pre-2005": {
+                    "count": 0,
+                    "mean": null,
+                    "sparse": true
+                  }
+                }
+              }
+            }
+          },
+          "primary_contrast": {
+            "group_a": "INCREASED",
+            "group_b": "DECREASED",
+            "by_horizon": {
+              "1": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "5": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              },
+              "20": {
+                "group_a": "INCREASED",
+                "group_b": "DECREASED",
+                "n_a": 0,
+                "n_b": 0,
+                "observed_diff": null,
+                "lower_95": null,
+                "upper_95": null,
+                "fraction_le_zero": null,
+                "note": "not computable: one or both groups have zero usable observations at this horizon"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "secondary_pooled": {
+    "ANNOUNCED": {
+      "LEVEL": {
+        "1": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "0.0001577622392761211955628322649"
+        },
+        "5": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.004280069872571709382914779633"
+        },
+        "20": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.01984731428598862809375800165"
+        }
+      },
+      "CHANGE": {
+        "1": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "0.0002487574962784959012259001997"
+        },
+        "5": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.001047714997036796887135026290"
+        },
+        "20": {
+          "pairs_contributing": 3,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.005481090147143268518504409983"
+        }
+      }
+    },
+    "EFFECTIVE": {
+      "LEVEL": {
+        "1": {
+          "pairs_contributing": 0,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": null
+        },
+        "5": {
+          "pairs_contributing": 0,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": null
+        },
+        "20": {
+          "pairs_contributing": 0,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": null
+        }
+      },
+      "CHANGE": {
+        "1": {
+          "pairs_contributing": 1,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "0.0004963762323071178791924419106"
+        },
+        "5": {
+          "pairs_contributing": 1,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.001857297027478850026148699678"
+        },
+        "20": {
+          "pairs_contributing": 1,
+          "pairs_total": 3,
+          "equal_weighted_mean_diff": "-0.003720659855137637220930380472"
+        }
+      }
+    }
+  },
+  "total_sample_rows": 41008
+}

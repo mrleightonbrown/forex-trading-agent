@@ -1099,26 +1099,71 @@ macro providers, no news/event-surprise logic, no technical gating, no
 decision-engine changes, no broad macro-vintage-model redesign follow
 this story.
 
+## FX-46: historical policy-rate differential research (complete)
+
+The first real research EXPERIMENT against the hardened feature -- not
+a trading strategy, no thresholds, no scoring, no signal, no execution
+logic. Two pre-registered hypotheses (LEVEL: differential sign vs.
+subsequent base-currency return, one ISO-calendar-week sample;
+CHANGE: INCREASED vs. DECREASED vs. subsequent return, every D-bar,
+no change inferred across a blocked/unavailable gap), run separately
+per pair (EUR/USD, GBP/USD, USD/CAD) and semantics (ANNOUNCED/
+EFFECTIVE), reading policy-rate state through EXACTLY one seam
+(`evaluate_feature` -> `ComputePolicyRateDifferential`, never
+reconstructed from raw macro rows). New `scripts/aggregate_d_candles.py`
+materialized real daily candles (none existed natively) via the
+existing FX-7 `AggregateCandles` use case; `domain/block_bootstrap.py`
+gained a calendar-year cluster-bootstrap contrast primitive, reusing
+FX-39's own resample-count convention. Full details, architecture, and
+the complete results table in `docs/DECISIONS.md`'s FX-46 entry and
+`docs/ARCHITECTURE.md`'s own FX-46 section.
+
+**Real results, honestly reported, not graded on direction.** GBP/USD
+and USD/CAD EFFECTIVE are entirely unavailable (0 usable observations,
+confirming FX-45H's coverage diagnostic at full experimental scale --
+not a new finding). EUR/USD EFFECTIVE has real usable coverage and
+every usable LEVEL observation is `NEGATIVE` (EUR's effective rate
+never exceeded USD's in the covered window). The large majority of
+ANNOUNCED contrasts have a 95% CI including zero -- this data does not
+establish a reliable association between the raw differential (level
+or change) and subsequent return at these three pairs/horizons over
+this period. One result (USD/CAD ANNOUNCED/CHANGE, 20d) has a 95% CI
+excluding zero in the direction OPPOSITE the pre-registered hypothesis
+at a small sample size -- reported as exactly that, not reinterpreted.
+A real bug in the script's own summary-reporting code (not the
+pre-registered analysis) was found after seeing results, fixed, and
+every artifact regenerated from a clean run, per this story's own
+explicit instruction never to regenerate selectively. Regression-proof
+discipline applied to all 5 named mechanisms. 1182 tests pass (full
+suite, up from 1150).
+
+**Per this story's own explicit, doubly-emphasized stop instruction**:
+no FX-47, no trading rules, no execution logic, no threshold/parameter
+tuning of anything this story reported, no re-running this analysis
+with a different configuration follows this story.
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-46's historical rate-differential
-experiment (now with re-verified coverage evidence for all three
-pairs), the future declassification-mechanism need noted above (not
-yet needed, not yet built), the 18 still-provisional pre-2006 EUR
-change points, the 8 USD/6 GBP/3 CAD known-irregular dates left
-unresolved, JPY provider mapping, the pre-2009 CAD gap, or any
-carry-strategy work.
+new here or elsewhere — including FX-47 (not yet defined), the future
+declassification-mechanism need noted above (not yet needed, not yet
+built), the 18 still-provisional pre-2006 EUR change points, the 8
+USD/6 GBP/3 CAD known-irregular dates left unresolved, JPY provider
+mapping, the pre-2009 CAD gap, or any carry-strategy/tradability work
+(explicitly out of scope for FX-46's own research, per its own section
+14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
-carry strategies, or live trading — out of scope until explicitly
-assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/
-FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1 above are
-the explicitly-scoped exceptions (domain model, storage-integrity
-hardening, canonical registry/provider-mapping definitions, real
-policy-rate ingestion, hardening and correction rounds, genuine
-release-timing verification, and a deterministic, auditable, scoring-
-free policy-rate differential feature plus two rounds of its own
-point-in-time hardening -- still no strategy, no decision logic, no
-"carry" framing) and do not open the door to the rest of this phase.
+carry TRADING strategies, execution logic, or live trading — out of
+scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
+FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
+FX-45H/FX-45H.1/FX-46 above are the explicitly-scoped exceptions
+(domain model, storage-integrity hardening, canonical registry/
+provider-mapping definitions, real policy-rate ingestion, hardening
+and correction rounds, genuine release-timing verification, a
+deterministic, auditable, scoring-free policy-rate differential
+feature plus two rounds of its own point-in-time hardening, and one
+pre-registered, honestly-reported RESEARCH experiment against it --
+still no strategy, no decision logic, no "carry" framing, no
+tradability claim) and do not open the door to the rest of this phase.
 The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow
