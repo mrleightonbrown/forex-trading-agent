@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-46H)_
+_Last updated: 2026-09-25 (FX-47)_
 
 ## What exists
 
@@ -1025,6 +1025,50 @@ _Last updated: 2026-09-25 (FX-46H)_
   suite, up from 1182). Full details in `docs/DECISIONS.md`'s FX-46H
   entry and the regenerated `research_results/fx46/
   policy_rate_differential_summary.md`.
+- **FX-47: rate differential x existing technical/regime evidence
+  (complete)**. ATTRIBUTION, not gating, of the policy-rate differential
+  (FX-42-FX-46H) against trades TWO EXISTING, already-committed
+  strategies -- `MultiTimeframeTrendStrategy` (the "H1/H4 trend trade"
+  pattern) and `CloseChannelBreakoutStrategy` -- generate
+  UNCONDITIONALLY on EUR/USD, GBP/USD, USD/CAD (the three pairs with
+  real differential coverage; USD/JPY, these candidates' original
+  FX-38/39 holdout pair, has zero ingested policy-rate data, FX-42H.1's
+  provider mapping left unresolved). Exactly FX-21/FX-21H's own
+  `segment_trades_by_regime` shape: no strategy parameter changed, no
+  trade gated/suppressed, every trade bucketed after the fact by two
+  independent axes -- LEVEL (does the differential's sign at entry
+  SUPPORT/OPPOSE/sit NEUTRAL relative to the trade's direction, one
+  fresh `evaluate_feature` call per trade at its exact `entry_time`) and
+  CHANGE (FX-46's own per-D-bar INCREASED/DECREASED/UNCHANGED
+  classification for whichever D-bar governs the trade's entry, reused
+  unmodified). New `research/rate_differential_attribution.py` (pure)
+  + `scripts/run_fx47_rate_differential_attribution.py` (real
+  orchestration over ~138,000 native H1 candles/pair). New
+  `IncrementalCloseChannelBreakoutStrategy` (O(n) sibling to the
+  existing O(n^2) strategy, parity-tested), needed for this story's
+  own full-history backtest scale -- the same performance fix FX-29
+  already applied to every other strategy in this suite. **Real
+  result**: level/change bucket totals match each strategy's own trade
+  count exactly in every one of the 12 (strategy, instrument,
+  semantics) cells -- no trade silently dropped. Across roughly 150
+  bucket-level 95% CIs computed, the large majority include zero (no
+  reliable interaction established), consistent with a handful
+  excluding zero by chance alone at that rate -- no multiple-comparison
+  correction was applied (unlike FX-39's own small, pre-registered
+  candidate set), so this is reported as a caveat, not suppressed. The
+  one substantial-n exception: EUR/USD `CloseChannelBreakoutStrategy`
+  ANNOUNCED/LEVEL's `SUPPORTS` bucket (n=957) has a 95% CI entirely
+  below zero -- trades where the differential's sign matched the
+  trade's own direction performed WORSE than trades where it didn't,
+  opposite the naive "carry supports direction" intuition -- reported
+  factually, not treated as a signal to act on. Regression-proof
+  discipline applied to both new safety-relevant mechanisms (the
+  SUPPORTS/OPPOSES sign mapping, the look-ahead-safe D-bar join) plus
+  the incremental strategy's own window ordering. 25 new tests, 1210
+  pass (full suite, up from 1185). Full results: `research_results/
+  fx47/`. Full details in `docs/DECISIONS.md`'s FX-47 entry. **Stop
+  after FX-47 -- do not start FX-48 (tradable carry/financing
+  feasibility) without an explicit new story.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

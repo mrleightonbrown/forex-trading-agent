@@ -7687,3 +7687,225 @@ regenerated-artifacts step above).
 **Verification**: `pytest` (1185/1185), `ruff check .`, `ruff format
 --check .`, `mypy .` (268 source files), `pre-commit run --all-files`
 -- all clean, both before and after the artifact regeneration run.
+
+## 2026-09-25 — FX-47: rate differential x existing technical/regime evidence
+
+Cross-references the policy-rate differential (FX-42-FX-46H) against
+the outcomes of TWO EXISTING, already-committed technical strategies --
+`MultiTimeframeTrendStrategy` (the literal "H1/H4 trend trade" pattern:
+H1 EMA-crossover entry confirmed by H4 trend state) and
+`CloseChannelBreakoutStrategy` -- as pure ATTRIBUTION, exactly the same
+shape as FX-21/FX-21H's own `domain.regime_segmentation.segment_
+trades_by_regime`: trades a strategy already takes unconditionally are
+bucketed after the fact by a classification external to the strategy;
+no strategy logic or parameter changes, no trade is gated, suppressed,
+delayed, or resized. FX-28 later built an actual gated strategy only
+after FX-21 observed a real interaction -- FX-47 is deliberately the
+FX-21 stage, not the FX-28 stage.
+
+**Scope decision, made explicit before any code was written**: these
+two candidates were originally holdout-tested in FX-38/FX-38H/FX-39
+on USD/JPY and XAU/USD. Neither has usable policy-rate data today --
+USD/JPY has a registry definition (FX-42H) but zero ingested rows
+(FX-42H.1 left its provider mapping deliberately unresolved); XAU/USD
+has no canonical policy rate at all (out of scope entirely, per FX-46).
+Rather than block this story on JPY ingestion, both candidates -- same
+strategy code, same already-committed default parameters, no
+modification -- were run instead on EUR/USD, GBP/USD, and USD/CAD, the
+three pairs with real differential coverage. This is a genuine scope
+substitution (different instruments than these candidates' original
+FX-38/39 evaluation), decided with the user before implementation, not
+a silent one.
+
+**Two axes, evaluated separately, never combined into one bucket**:
+
+- **LEVEL**: does the differential's sign at the trade's own
+  `entry_time` SUPPORT the trade's own direction (LONG + differential
+  POSITIVE i.e. base rate > quote rate, or SHORT + NEGATIVE -- the
+  classic "long the higher-yielding currency" carry logic), OPPOSE it,
+  or sit NEUTRAL (differential exactly zero)? Evaluated fresh per trade
+  at its EXACT `entry_time` (an H1 timestamp, not snapped to any candle
+  grid) via FX-46's own single seam (`evaluate_feature` ->
+  `ComputePolicyRateDifferential`) -- already a plain point-in-time
+  query, so no D-bar alignment was needed for this axis at all.
+- **CHANGE**: reuses FX-46's own precomputed per-D-bar `ChangeEvent`
+  classification (INCREASED/DECREASED/UNCHANGED, or GAP/NO_PRIOR_DAY
+  when a transition can't be inferred) for whichever D-bar governs the
+  trade's entry -- the most recent D-bar at or before `entry_time`.
+  Policy rates are daily data; the governing day's own change status
+  was already fully determined at that D-bar's own open, strictly
+  before any H1 entry later that same trading day or after it, so this
+  join introduces no look-ahead (the same class of look-ahead question
+  FX-21H's own fix addressed for regime classification).
+
+Every branch that cannot classify a trade -- the differential BLOCKED/
+UNAVAILABLE at entry, or no D-bar exists yet at all before entry (a
+real, expected case: native H1 candles for these three pairs go back to
+2002, but D-candle aggregation only covers 2005-01-02 onward) -- is its
+own explicit, reported bucket, never silently dropped or folded into
+NEUTRAL.
+
+**New code**: `research/rate_differential_attribution.py` (pure,
+synchronous -- consumes already-computed `FeatureEvaluation`/
+`ChangeEvent` results, never re-derives policy-rate state itself,
+exactly FX-46's own division of labour) plus `scripts/run_fx47_rate_
+differential_attribution.py` (real orchestration: native H1/H4 candle
+reads for all three pairs, backtest execution, per-bucket
+`compute_metrics` (FX-17) + FX-39's own ACF-selected-block-length
+moving-block bootstrap (seed=47) + FX-46's own fixed-era breakdown).
+
+**A real performance prerequisite, not a strategy change**: this
+story's own full-history backtest runs over ~138,000 native H1 candles
+per pair -- `CloseChannelBreakoutStrategy`'s existing `evaluate()`
+re-derives its whole close history every call, making the existing
+`run_backtest` (which reslices `candles[:i+1]` per bar) O(n^2) and
+intractable at that scale. Every other strategy in this position
+(`EmaCrossoverStrategy`, `EmaCrossoverTrendRegimeGatedStrategy`,
+`MultiTimeframeTrendStrategy`, `VolatilityExpansionBreakoutStrategy`)
+already has an `IncrementalStrategy` sibling for exactly this reason
+(FX-29/FX-36/FX-37) -- `CloseChannelBreakoutStrategy` was the one
+strategy that didn't yet, so `IncrementalCloseChannelBreakoutStrategy`
+was added following the identical established pattern (same
+`strategy_key`/parameters/logic, O(1)-per-bar rolling window instead of
+full re-slicing), parity-tested against the slow, unchanged reference.
+
+**Real result (16,936 total trades across both strategies x three
+pairs -- 13,975 `CloseChannelBreakoutStrategy` + 2,961
+`MultiTimeframeTrendStrategy`, each evaluated once per trade against
+BOTH semantics, not duplicated; full detail in
+`research_results/fx47/`)**. Level/change bucket
+totals match each strategy's own trade count exactly in every one of
+the 12 (strategy, instrument, semantics) cells -- confirmed
+programmatically, no trade silently dropped anywhere. Primary LEVEL
+contrast (mean expectancy, SUPPORTS vs. OPPOSES, 95% CI, seed=47,
+10,000 resamples):
+
+| Pair | Strategy | Semantics | SUPPORTS n | SUPPORTS PF | SUPPORTS 95% CI | OPPOSES n | OPPOSES PF | OPPOSES 95% CI |
+|---|---|---|---|---|---|---|---|---|
+| EUR/USD | CloseChannelBreakout | ANNOUNCED | 957 | 0.807 | **[-0.00074, -0.00010]** | 957 | 1.027 | [-0.00034, 0.00046] |
+| EUR/USD | CloseChannelBreakout | EFFECTIVE | 836 | 0.843 | [-0.00066, 0.00001] | 836 | 0.956 | [-0.00047, 0.00030] |
+| EUR/USD | MultiTimeframeTrend | ANNOUNCED | 173 | 0.767 | [-0.00134, 0.00033] | 223 | 1.041 | [-0.00096, 0.00124] |
+| EUR/USD | MultiTimeframeTrend | EFFECTIVE | 160 | 0.718 | [-0.00144, 0.00011] | 182 | 0.842 | [-0.00138, 0.00063] |
+| GBP/USD | CloseChannelBreakout | ANNOUNCED | 1153 | 0.907 | [-0.00087, 0.00020] | 1156 | 1.052 | [-0.00038, 0.00071] |
+| GBP/USD | MultiTimeframeTrend | ANNOUNCED | 238 | 0.823 | [-0.00177, 0.00070] | 237 | 1.293 | [-0.00057, 0.00291] |
+| USD/CAD | CloseChannelBreakout | ANNOUNCED | 848 | 0.902 | [-0.00060, 0.00015] | 853 | 0.868 | [-0.00066, 0.00009] |
+| USD/CAD | MultiTimeframeTrend | ANNOUNCED | 196 | 0.855 | [-0.00125, 0.00062] | 171 | 0.889 | [-0.00143, 0.00092] |
+
+(GBP/USD and USD/CAD EFFECTIVE both have zero usable LEVEL observations
+at all -- entirely `BLOCKED`/`UNAVAILABLE`, confirming FX-45H/FX-46's
+own coverage diagnostic yet again, not a new finding.)
+
+**The one substantial-n exception, reported factually, not
+over-interpreted**: EUR/USD `CloseChannelBreakoutStrategy` ANNOUNCED's
+`SUPPORTS` bucket (n=957) is the only cell in this table whose 95% CI
+sits entirely below zero. Trades where the differential's sign matched
+the trade's own direction performed WORSE (PF 0.807, expectancy
+negative with a CI excluding zero) than trades where it didn't (PF
+1.027, CI including zero) -- opposite the naive "carry supports
+direction" intuition this story set out to test. This is evidence of
+an association in this specific sample (one pair, one strategy, one
+semantics, LEVEL axis) -- not proof of a durable inverse-carry effect,
+not a signal to build a gated strategy from, and not replicated in any
+other cell (including the very similar `MultiTimeframeTrendStrategy`
+on the same pair, whose CIs both include zero).
+
+**Multiplicity, addressed honestly rather than selectively**: across
+roughly 150 bucket-level 95% CIs computed in this story (12 cells x 2
+axes x several buckets each), 13 individually exclude zero -- consistent
+with the false-positive rate expected by chance alone at a 95% level
+across this many tests, not evidence of pervasive real interactions.
+Unlike FX-39's own small, pre-registered four-candidate set (which
+received an explicit Holm-Bonferroni correction), no multiple-comparison
+correction is applied here -- this is attribution/observation across a
+larger, exploratory bucket space, not a hypothesis test selecting among
+candidates. Reported as an explicit limitation (both in the generated
+`research_results/fx47/rate_differential_attribution_summary.md` and
+here) rather than silently omitted. Most of the 13 exclusions are tiny-n
+buckets (n=1, 2, 3, 6, 19) -- degenerate or near-degenerate bootstraps,
+not meaningful evidence; several others are `BLOCKED`/`UNAVAILABLE`
+buckets, which describe a strategy's own unconditional performance
+during a data-unavailable period, not a rate-differential interaction
+at all.
+
+**CHANGE axis**: dominated by `UNCHANGED` in every cell (policy rates
+move only a handful of times per year, so most trading days show no
+day-over-day change) -- `INCREASED`/`DECREASED` bucket sizes are
+correspondingly tiny (typically single digits to low tens per cell),
+too small for this axis to say anything reliable given the current
+policy-rate change frequency and this story's own two-strategy,
+three-pair scope. `UNCHANGED` itself never shows a CI meaningfully
+different from the corresponding LEVEL result for the same cell.
+
+**Overall finding**: the large majority of buckets across both axes,
+all three pairs, and both strategies show 95% CIs including zero -- this
+data does not establish a reliable interaction between the raw
+policy-rate differential (level or day-over-day change) and these two
+existing strategies' own trade outcomes, at these pairs, over the
+available history. That is itself the honest primary finding, per this
+story's own explicit instruction that a null result is valid and not a
+reason to try a different strategy, parameter, or bucketing scheme. The
+one EUR/USD exception above is reported as exactly that -- one
+association in one sample -- not elevated into a conclusion the rest of
+the data doesn't support.
+
+**No gating, no strategy modification, no significance fishing**:
+confirmed by construction (both strategies' own default parameters,
+unchanged; the bucketing scheme was fixed in source before the first
+real run) and by the fact that every trade a strategy would generate on
+the full available history was kept -- level/change bucket totals
+matching trade counts exactly, in every cell, is the load-bearing proof
+of this, not merely an assertion.
+
+**Regression-proof discipline applied to all 3 new mechanisms**, each
+deliberately broken, confirmed to fail its dedicated test(s) for the
+right reason, then restored, full suite reconfirmed green:
+  1. LEVEL sign mapping (`classify_level_attribution`: `is_long ==
+     is_positive` flipped to `!=`) -- correctly broke all 4 parametrized
+     `test_classify_level_attribution` cases plus the dependent
+     `test_attribute_trade_level_usable_long_positive_supports` and
+     end-to-end test.
+  2. CHANGE look-ahead-safe D-bar join (`find_governing_daily_
+     evaluation`: `bisect_right(...) - 1` weakened to `bisect_right(...)`,
+     an off-by-one that both breaks exact/nearest-before matching AND
+     can index past the end of the array) -- correctly broke every
+     `find_governing_daily_evaluation`/`attribute_trade_change` test
+     with either a wrong result or an `IndexError`.
+  3. Incremental strategy's strictly-before window ordering
+     (`IncrementalCloseChannelBreakoutStrategy.on_candle`: append moved
+     to before the read, mirroring the exact shape of a real look-ahead
+     bug) -- correctly broke both parity tests: the broken version
+     produces ZERO hypotheses (a bar can never exceed a window that
+     already includes itself), a stark, unambiguous failure.
+
+**Tests**: 25 new -- 3 for `IncrementalCloseChannelBreakoutStrategy`
+(exact parity against the slow reference on a fixture exercising both
+LONG and SHORT breakouts, default-parameter parity, reset-between-runs
+parity) and 22 for `rate_differential_attribution` (sign-mapping
+matrix, disposition pass-through for BLOCKED/UNAVAILABLE/mismatched
+`as_of`, D-bar join exact/nearest-before/before-all/non-ascending-input
+cases, change attribution across admissible/gap/blocked/no-governing-day
+outcomes, and one end-to-end join). 1210 tests pass (full suite, up
+from 1185).
+
+**Verification**: `pytest` (1210/1210), `ruff check .`, `ruff format
+--check .`, `mypy .` (273 source files), `pre-commit run --all-files`
+-- all clean. The real script runs live against real Postgres/candle
+data (not mocked), completing in about 4 minutes across all 3 pairs x
+2 strategies x 2 semantics (dominated by ~138,000-candle-per-pair
+native H1 fetches and per-trade differential evaluations, not by any
+inefficiency introduced by this story -- FX-46's own D-bar-scale run
+completed in ~17 seconds by comparison).
+
+**Artifacts** (`research_results/fx47/`, each recording git SHA/dirty
+flag, run timestamp, and a SHA-256 config hash): `rate_differential_
+attribution.json` (full per-cell, per-axis, per-bucket stats),
+`rate_differential_attribution_trades.csv` (one row per trade with its
+own level/change bucket labels, for audit), `rate_differential_
+attribution_summary.md` (human-readable tables plus Limitations,
+including the multiplicity caveat above).
+
+Per this story's own explicit stop instruction: no FX-48 (tradable
+carry/financing feasibility, already scoped and awaiting this story's
+own close), no gated/filtered strategy built from any bucket above, no
+threshold/parameter tuning of anything reported here, no JPY
+substitution attempted without real policy-rate ingestion first.

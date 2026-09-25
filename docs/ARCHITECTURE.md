@@ -751,6 +751,48 @@ calendar-year clusters in either arm reports `NOT_ESTIMABLE` instead of
 attempting a bootstrap at all -- see `docs/DECISIONS.md`'s FX-46H
 entry.
 
+## Rate differential x existing technical/regime evidence (FX-47)
+
+ATTRIBUTION of the policy-rate differential against trades TWO
+EXISTING strategies (`MultiTimeframeTrendStrategy`,
+`CloseChannelBreakoutStrategy`) generate unconditionally -- never a
+new or gated strategy. Same two-layer shape FX-46 already established:
+a pure module (`research/rate_differential_attribution.py`) that only
+classifies and joins already-computed `FeatureEvaluation`/`ChangeEvent`
+results (never re-derives policy-rate state itself), plus an
+orchestration script that does the real DB/candle work and calls it.
+
+**Exactly FX-21/FX-21H's own entry-regime-attribution shape, applied to
+a different classification.** `domain/regime_segmentation.py::segment_
+trades_by_regime` buckets unconditionally-generated trades by
+`TrendRegime` at entry; `research/rate_differential_attribution.py::
+attribute_trades` buckets the same kind of unconditionally-generated
+trades by the policy-rate differential's LEVEL and CHANGE state at
+entry instead. Neither module changes a strategy's own trades -- both
+are external classifiers applied after the fact, the same "observe an
+interaction before building anything conditional on it" discipline
+FX-28 only later built a gated strategy on top of.
+
+**LEVEL needs no candle-grid alignment; CHANGE reuses FX-46's own D-bar
+grid.** LEVEL evaluates the feature at each trade's own exact
+`entry_time` via FX-46's single seam (`evaluate_feature` ->
+`ComputePolicyRateDifferential`) -- already a plain point-in-time query.
+CHANGE instead joins each trade to FX-46's own precomputed per-D-bar
+`ChangeEvent` sequence via the most recent D-bar at or before
+`entry_time` (`find_governing_daily_evaluation`) -- safe against
+look-ahead because policy rates are daily data, so the governing day's
+change status was already fully determined at that D-bar's own open,
+strictly before any later same-day or subsequent H1 entry.
+
+**A real performance prerequisite: one more incremental strategy, not a
+strategy change.** This story's own full-history backtest (~138,000
+native H1 candles/pair) made `CloseChannelBreakoutStrategy`'s existing
+O(n^2) `evaluate()`/`run_backtest` path intractable -- the same problem
+FX-29 already solved for every other strategy in this position.
+`IncrementalCloseChannelBreakoutStrategy` follows that exact established
+pattern (same `strategy_key`/parameters/logic, O(1)-per-bar rolling
+window), parity-tested against the unchanged slow reference.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
