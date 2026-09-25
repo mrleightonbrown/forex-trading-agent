@@ -1135,12 +1135,42 @@ pre-registered analysis) was found after seeing results, fixed, and
 every artifact regenerated from a clean run, per this story's own
 explicit instruction never to regenerate selectively. Regression-proof
 discipline applied to all 5 named mechanisms. 1182 tests pass (full
-suite, up from 1150).
+suite, up from 1150). **Superseded in part by FX-46H below**: the
+"large majority of ANNOUNCED contrasts have a 95% CI including zero"
+claim above turned out to include a contrast (EUR/USD ANNOUNCED/LEVEL)
+whose reported CI was actually computed from a bootstrap bug -- see
+FX-46H for the corrected result (that contrast has no CI at all).
 
 **Per this story's own explicit, doubly-emphasized stop instruction**:
 no FX-47, no trading rules, no execution logic, no threshold/parameter
 tuning of anything this story reported, no re-running this analysis
 with a different configuration follows this story.
+
+## FX-46H: bootstrap validity & research artifact reproducibility (complete)
+
+An external review of FX-46 found a real statistical defect (the
+calendar-year cluster bootstrap fabricated a zero mean for an empty
+resampled arm -- material for EUR/USD ANNOUNCED/LEVEL, whose
+`POSITIVE` group is a single calendar-year cluster) and a real
+provenance defect (the committed artifacts recorded a stale
+`git_commit` and a query bound mislabeled as the data cutoff). Fixed:
+`calendar_year_cluster_bootstrap_differences` now redraws a
+replication whose drawn years would leave an arm empty, and reports a
+whole contrast `NOT_ESTIMABLE` -- never fabricating a value -- when an
+arm has fewer than 2 distinct calendar-year clusters, or the redraw
+cap is exhausted. The script now also records `git_commit_dirty`
+(scoped to the actual dependency paths, not repo-wide), the real max
+D-candle timestamp used per pair, and a deterministic fingerprint of
+the policy-rate vintage history read. Full FX-46 experiment re-run
+from the clean, corrected commit: 41,008 rows, identical to the
+original; exactly the 3 EUR/USD ANNOUNCED/LEVEL cells changed (point
+estimates unchanged, CIs now `NOT_ESTIMABLE`) -- no other contrast
+affected. Full details in `docs/DECISIONS.md`'s FX-46H entry. 1185
+tests pass (full suite, up from 1182).
+
+**Per this story's own explicit stop instruction**: no FX-47, no
+trading rules, no execution logic, no re-running this analysis with a
+different configuration follows this story.
 
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-47 (not yet defined), the future
@@ -1148,22 +1178,24 @@ declassification-mechanism need noted above (not yet needed, not yet
 built), the 18 still-provisional pre-2006 EUR change points, the 8
 USD/6 GBP/3 CAD known-irregular dates left unresolved, JPY provider
 mapping, the pre-2009 CAD gap, or any carry-strategy/tradability work
-(explicitly out of scope for FX-46's own research, per its own section
-14).
+(explicitly out of scope for FX-46/FX-46H's own research, per FX-46's
+own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry TRADING strategies, execution logic, or live trading — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46 above are the explicitly-scoped exceptions
+FX-45H/FX-45H.1/FX-46/FX-46H above are the explicitly-scoped exceptions
 (domain model, storage-integrity hardening, canonical registry/
 provider-mapping definitions, real policy-rate ingestion, hardening
 and correction rounds, genuine release-timing verification, a
 deterministic, auditable, scoring-free policy-rate differential
-feature plus two rounds of its own point-in-time hardening, and one
-pre-registered, honestly-reported RESEARCH experiment against it --
-still no strategy, no decision logic, no "carry" framing, no
-tradability claim) and do not open the door to the rest of this phase.
+feature plus two rounds of its own point-in-time hardening, one
+pre-registered, honestly-reported RESEARCH experiment against it, and
+a correction to that experiment's own bootstrap validity and artifact
+reproducibility -- still no strategy, no decision logic, no "carry"
+framing, no tradability claim) and do not open the door to the rest of
+this phase.
 The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow

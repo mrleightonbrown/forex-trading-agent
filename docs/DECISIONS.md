@@ -7513,3 +7513,177 @@ FX-47, no trading rules, no execution logic, no threshold/parameter
 tuning of anything reported here, no re-running this analysis with a
 different configuration -- this experiment's protocol was fixed before
 the real run and is not reopened by its own results.
+
+## 2026-09-25 — FX-46H: bootstrap validity & research artifact reproducibility
+
+An external review of FX-46 (not a fourth hardening pass on the
+feature itself -- this story never touches `ComputePolicyRateDifferential`
+or the pure `policy_rate_differential_research.py` module) found one
+statistical defect and one provenance defect in FX-46's own new code,
+both independently verified against the committed artifacts before any
+fix was written.
+
+**Blocker 1: the cluster bootstrap fabricated a zero mean for an empty
+resampled arm.** `calendar_year_cluster_bootstrap_differences`
+(`domain/block_bootstrap.py`) resamples calendar years jointly for
+both groups per replication; if the drawn years happened to contain no
+observations from one group, the original FX-46 code scored that
+group's mean as exactly `Decimal(0)` for that replication -- a
+fabricated statistic (`0` is not "no observations"), and one that
+FX-46's own unit test explicitly locked in as expected behavior. This
+was not a theoretical concern: for the real EUR/USD ANNOUNCED/LEVEL
+contrast, `POSITIVE` is 8 observations, ALL in calendar year 2008 (a
+single cluster); `NEGATIVE` is 475 observations across 13 clusters.
+With seed=46, 3,603 of the 10,000 bootstrap replications omitted 2008
+entirely, and every one of those was scored against a fabricated
+`POSITIVE` mean of 0 -- directly producing the reported CI
+`[-0.00028, 0.00066]` (1d), which is why FX-46's own completion claim
+("every ANNOUNCED CI includes zero") could not actually be relied on
+for this contrast.
+
+**Fix.** `calendar_year_cluster_bootstrap_differences` now returns a
+`ClusterBootstrapOutcome` (`estimable`, `differences`,
+`group_a_cluster_count`, `group_b_cluster_count`, `reason`) instead of
+a bare `list[Decimal]`, so a caller cannot accidentally treat a
+not-estimable contrast as a valid result:
+
+  - If a replication's drawn years would leave either arm's pool
+    empty, that replication's year sample is REDRAWN (never scored
+    against a fabricated value) up to `max_redraw_attempts` times
+    (default 1000).
+  - If EITHER group has fewer than 2 distinct calendar-year clusters
+    with at least one observation in the FULL (unresampled) sample,
+    the whole contrast is reported `estimable=False` before any
+    resampling is attempted -- a single cluster cannot support a
+    between-year uncertainty estimate no matter how it is resampled.
+    This is exactly the EUR/USD ANNOUNCED/LEVEL case above
+    (`group_a_cluster_count=1`).
+  - If every redraw attempt for some replication still leaves an arm
+    empty (a structurally pathological cluster imbalance), the WHOLE
+    contrast is reported `estimable=False` rather than looping
+    forever, silently under-filling `num_resamples`, or raising past
+    the caller.
+
+`scripts/run_fx46_policy_rate_differential_research.py`'s own
+`_contrast` surfaces `estimable=False` as `NOT_ESTIMABLE: <reason>` in
+the same `note` field it already used for "zero usable observations"
+-- both JSON and markdown report the observed point estimate and each
+arm's cluster count (`n_years_a`/`n_years_b`, new fields) alongside a
+`NOT_ESTIMABLE` contrast, so the reader sees why, never a silently
+wide-but-computed CI.
+
+**Regression-proof discipline**: reverted
+`calendar_year_cluster_bootstrap_differences` to the original
+fabricated-zero-mean formula (backed up first), confirmed 2 new tests
+fail for the right reason --
+`test_cluster_bootstrap_differences_redraws_rather_than_fabricating_zero_mean`
+(asserts every returned difference stays >= 90, i.e. computed from a
+genuinely non-empty arm whose real values are 100/200; the reverted
+code produced differences down to -3 on the same seed/data) and
+`test_cluster_bootstrap_differences_redraw_cap_exhaustion_is_not_estimable`
+(asserts `estimable=False` when the cap is exhausted; the reverted
+code has no such cap or outcome) -- then restored the fix and
+reconfirmed the full suite green. FX-46's own single-cluster-arm test
+(`test_cluster_bootstrap_differences_year_present_only_in_one_group`)
+was rewritten, not deleted: it is FX-46's own original scenario
+(exactly the bug being fixed here), now asserting `estimable=False`
+with `INSUFFICIENT_CLUSTERS_REASON` instead of asserting the 3
+fabricated-zero outcomes it previously locked in.
+
+**Blocker 2: the committed research artifacts didn't identify the code
+that produced them.** `scripts/run_fx46_policy_rate_differential_
+research.py` records `git_commit` via `git rev-parse HEAD` at run
+time; the originally-committed `research_results/fx46/
+policy_rate_differential_research.json` recorded `git_commit:
+09e59954a2a9c9456fecf547a469c7d8f6b8d528` -- the FX-45H.1 parent commit
+-- because FX-46 was run against its own uncommitted working tree, not
+`0eb8cc7` (the commit FX-46 actually shipped as). Separately,
+`candle_end_bound` was stamped from `datetime.now(UTC)` (a query
+bound) rather than the actual max D-candle timestamp used, and no
+macro-data cutoff or fingerprint was recorded at all -- so a rerun
+months later against the same source commit could not be checked for
+whether the underlying data (a later backfill, remediation, or
+correction) had changed.
+
+**Fix.** The script now records, alongside the existing `git_commit`:
+
+  - `git_commit_dirty` / `git_dirty_paths`: `git status --porcelain`
+    scoped to `src/forex_agent` and the script itself -- NOT a bare
+    repo-wide check, which reads dirty forever in this project
+    (`.claude/` stays untracked by convention, and this script's own
+    regenerated `research_results/fx46/` artifacts are themselves
+    modified relative to HEAD until committed as the follow-up
+    artifacts commit). Caught during this story's own verification: an
+    earlier, unscoped version of this check read `git_commit_dirty:
+    true` immediately after a clean commit, flagged only by `.claude/`.
+  - `candle_end_actual_by_instrument`: the real max D-candle timestamp
+    actually used per pair (`_collect_pair_records` now returns it
+    alongside its records), distinct from `candle_end_bound`, which
+    remains only the query bound passed to `get_range`.
+  - `macro_data_fingerprint`: `_CachingMacroObservationRepository`
+    (already memoizing every series it reads) gained a
+    `macro_data_fingerprint()` method -- a SHA-256 hash per series over
+    every vintage's `(observation_period, value, released_at,
+    revision_sequence, source, effective_at,
+    released_at_is_verified, released_at_is_conservative_bound)`,
+    combined into one overall fingerprint, plus the max `released_at`
+    read and a total vintage count.
+
+Established provenance pattern going forward for this kind of story:
+commit the code+test fix against a clean working tree first, run the
+experiment from that exact clean commit, then commit the regenerated
+artifacts referencing that same commit SHA -- no self-referential gap
+between "code that ran" and "commit the artifact claims" (this
+story's own two commits, `e8dffdc` then `79a2e1e` for the dirty-check
+scoping correction, followed by a third artifacts commit, follow
+exactly this pattern).
+
+**Regenerated results.** Re-ran the full FX-46 experiment from the
+clean, corrected commit (`79a2e1e`) against the same real Postgres data
+(D-candles unchanged, max timestamp 2026-09-17T21:00:00Z for all three
+pairs; 258 macro vintages, max `released_at` 2026-09-16T18:00:00Z).
+41,008 total sample rows, identical to FX-46's original run (sampling
+logic untouched by this story) -- `policy_rate_differential_samples.csv`
+came back byte-identical. Comparing every contrast's `observed_diff`/
+`lower_95`/`upper_95` against the original artifact: exactly 3 cells
+changed, all EUR/USD ANNOUNCED/LEVEL (1d/5d/20d) -- `observed_diff`
+unchanged in all 3 (the point estimate never depended on the
+bootstrap), `lower_95`/`upper_95` now `None` (`NOT_ESTIMABLE`) where
+they previously held a distorted CI. No other contrast in the entire
+report changed -- confirming the defect's blast radius was exactly the
+one contrast the review identified, not a broader distortion.
+
+**FX-46's own headline claim is corrected, not merely softened**:
+"every ANNOUNCED CI includes zero" is no longer true as stated -- the
+EUR/USD ANNOUNCED/LEVEL contrast has no CI at all (`NOT_ESTIMABLE`,
+1 vs. 13 calendar-year clusters), and must be read as "this data
+cannot distinguish POSITIVE from NEGATIVE with a bootstrap CI at all,
+not merely that the CI happens to include zero." Every other ANNOUNCED
+contrast's CI is unchanged from FX-46's original report. The single
+adverse result (USD/CAD ANNOUNCED/CHANGE, 20d, CI excluding zero
+opposite the pre-registered direction) is also unchanged -- it was
+never affected by this defect (both its arms have multiple calendar-
+year clusters).
+
+**Not reopened, per the review's own explicit list and this story's
+own scope**: weekly LEVEL cadence, 1/5/20-day horizons, next-bar entry,
+mid-open return definition, pair orientation, ANNOUNCED/EFFECTIVE
+separation, gap suppression, disposition accounting, fixed eras,
+FX-46's own already-shipped summary-reporting fix, or the overall
+research architecture. This story touched only the bootstrap primitive
+FX-46 calls and the script's own provenance metadata.
+
+**Tests**: 3 new (`tests/unit/domain/test_block_bootstrap.py`) --
+redraw-vs-fabricated-zero, redraw-cap-exhaustion, and
+non-positive-`max_redraw_attempts` rejection -- plus 1 rewritten
+(single-cluster-arm is now `NOT_ESTIMABLE`, not 3 fabricated-zero
+outcomes). 1185 tests pass (full suite, up from 1182). No unit tests
+were added directly for `run_fx46_policy_rate_differential_research.py`
+itself, consistent with this project's existing convention: no file
+under `scripts/` has ever had dedicated pytest coverage (all are
+verified by running them live against real data, per this story's own
+regenerated-artifacts step above).
+
+**Verification**: `pytest` (1185/1185), `ruff check .`, `ruff format
+--check .`, `mypy .` (268 source files), `pre-commit run --all-files`
+-- all clean, both before and after the artifact regeneration run.

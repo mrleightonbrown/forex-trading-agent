@@ -744,7 +744,12 @@ bootstrap_means` shape (resample whole clusters with replacement, pool,
 take the pooled mean) to a difference-of-means contrast between two
 groups sharing one clustering variable. `NUM_RESAMPLES = 10_000`
 (FX-39's own convention) is reused unchanged rather than introducing a
-second, competing default.
+second, competing default. **FX-46H correction**: an empty-arm
+resampled draw is now redrawn (bounded) rather than scored against a
+fabricated zero mean, and a contrast with fewer than 2 distinct
+calendar-year clusters in either arm reports `NOT_ESTIMABLE` instead of
+attempting a bootstrap at all -- see `docs/DECISIONS.md`'s FX-46H
+entry.
 
 ## Current state
 

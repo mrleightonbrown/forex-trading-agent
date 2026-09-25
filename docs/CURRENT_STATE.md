@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-46)_
+_Last updated: 2026-09-25 (FX-46H)_
 
 ## What exists
 
@@ -984,6 +984,46 @@ _Last updated: 2026-09-25 (FX-46)_
   restored. 32 new tests; 1182 pass (full suite, up from 1150). Full
   details, complete results table, and limitations in `docs/
   DECISIONS.md`'s FX-46 entry and `research_results/fx46/
+  policy_rate_differential_summary.md`. **Superseded in part by
+  FX-46H below** -- the EUR/USD ANNOUNCED/LEVEL contrast reported here
+  as a CI including zero was actually computed from a bootstrap bug;
+  see FX-46H for the corrected result.
+- **FX-46H: bootstrap validity & research artifact reproducibility
+  (complete)**. An external review of FX-46 found `calendar_year_
+  cluster_bootstrap_differences` (`domain/block_bootstrap.py`)
+  fabricated a zero mean for whichever arm of a two-group contrast was
+  empty in a given bootstrap replication -- real for EUR/USD ANNOUNCED/
+  LEVEL, whose `POSITIVE` group is 8 observations all in one calendar
+  year (2008): 3,603 of 10,000 replications at seed=46 omitted 2008
+  and were scored against a fabricated `POSITIVE` mean of 0, directly
+  producing the reported (distorted) CI. Fixed: the function now
+  returns a `ClusterBootstrapOutcome` and either REDRAWS a
+  replication's year sample (bounded by `max_redraw_attempts`) when a
+  draw would leave an arm empty, or reports the whole contrast
+  `NOT_ESTIMABLE` -- never fabricating a value -- when an arm has
+  fewer than 2 distinct calendar-year clusters to begin with, or when
+  the redraw cap is exhausted. Separately, the committed FX-46
+  artifacts recorded a stale `git_commit` (the script reads `git
+  rev-parse HEAD` at run time; FX-46 ran against its own uncommitted
+  working tree) and a `candle_end_bound` that was a query bound, not
+  the actual data cutoff -- the script now also records
+  `git_commit_dirty`/`git_dirty_paths` (scoped to `src/forex_agent`
+  and itself, not repo-wide, which would read dirty forever due to
+  `.claude/` staying untracked by convention),
+  `candle_end_actual_by_instrument` (the real max D-candle timestamp
+  used per pair), and `macro_data_fingerprint` (a deterministic hash
+  of the exact policy-rate vintage history read). Regression-proof
+  discipline applied (reverted to the fabricated-zero-mean formula,
+  confirmed 2 new tests fail for the right reason, restored). Full
+  FX-46 experiment re-run from the clean, corrected commit against the
+  same real data: 41,008 sample rows, identical to the original run;
+  exactly 3 cells changed (EUR/USD ANNOUNCED/LEVEL, all 3 horizons) --
+  point estimates unchanged, CIs now `NOT_ESTIMABLE`; no other contrast
+  in the report changed. FX-46's "every ANNOUNCED CI includes zero"
+  claim is corrected: that contrast has no CI at all, not a CI that
+  happens to include zero. 3 new tests, 1 rewritten; 1185 pass (full
+  suite, up from 1182). Full details in `docs/DECISIONS.md`'s FX-46H
+  entry and the regenerated `research_results/fx46/
   policy_rate_differential_summary.md`.
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle

@@ -1,8 +1,9 @@
 # FX-46: Historical Policy-Rate Differential Research
 
-Generated: 2026-09-25T06:52:47+00:00
-Git commit: 09e59954a2a9c9456fecf547a469c7d8f6b8d528
-Config hash: 96aa1f732ceb9a8e5ec36cece32d77d970a7375b1813bc73bba74d577500ea48
+Generated: 2026-09-25T14:18:35+00:00
+Git commit: 79a2e1e480ce681ff5f4966db6df400d5bf46c25 (clean)
+Config hash: 88d2054d7df82607684dc1da8afa53ea65c9324481baf0336200a58843e76569
+Macro data fingerprint: 1d488d1b91acd06b34516410b3881ef23e09b6b245de692c6dc34c6a47075dde (258 vintages, max released_at 2026-09-16T18:00:00+00:00)
 
 Research experiment only -- no thresholds, scoring, signal, execution logic, or tradability claim. Returns are mid_open-to-mid_open RESEARCH returns, not executable P&L. A positive result below is evidence of statistical association at the tested horizon, era, and pair -- never proof of a durable, tradeable edge, and CI crossing zero does not prove the feature useless (see Limitations).
 
@@ -35,11 +36,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 8 | 475 | 0.0003466199143303573861497890806 | [-0.0002764392390091221760684939956, 0.0006640418199729771136191779717] | 0.2498 |  |
-| 5d | 8 | 474 | -0.01052158563313861207342529754 | [-0.01143671079134158555841057114, 0.00004773090175799866097957205058] | 0.9696 |  |
-| 20d | 8 | 471 | -0.05276416213135090165926278749 | [-0.05658343070816160685953196868, 0.0001787683456223824034017990167] | 0.9706 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 8 | 475 | 1 | 13 | 0.0003466199143303573861497890806 | n/a | n/a | NOT_ESTIMABLE: at least one group has fewer than 2 distinct calendar-year clusters in the full sample -- a cluster bootstrap cannot estimate between-year uncertainty from a single cluster, no matter how it is resampled |
+| 5d | 8 | 474 | 1 | 13 | -0.01052158563313861207342529754 | n/a | n/a | NOT_ESTIMABLE: at least one group has fewer than 2 distinct calendar-year clusters in the full sample -- a cluster bootstrap cannot estimate between-year uncertainty from a single cluster, no matter how it is resampled |
+| 20d | 8 | 471 | 1 | 13 | -0.05276416213135090165926278749 | n/a | n/a | NOT_ESTIMABLE: at least one group has fewer than 2 distinct calendar-year clusters in the full sample -- a cluster bootstrap cannot estimate between-year uncertainty from a single cluster, no matter how it is resampled |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -86,11 +87,11 @@ Total attempted observations: 5700
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 24 | 23 | -0.002318907826208708938882314993 | [-0.005518230662174711447360602873, 0.0003704916673827873388188162809] | 0.9474 |  |
-| 5d | 23 | 23 | -0.004424696207553969853447970304 | [-0.01049540707411322882595745750, -0.0001253362242349212293933878424] | 0.9778 |  |
-| 20d | 23 | 23 | -0.002251956090840362826636776444 | [-0.01392182637770653676003181791, 0.007652803097129696595437219548] | 0.6986 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 24 | 23 | 7 | 7 | -0.002318907826208708938882314993 | [-0.005518230662174711447360602873, 0.0003704916673827873388188162809] | 0.9474 |  |
+| 5d | 23 | 23 | 7 | 7 | -0.004424696207553969853447970304 | [-0.01049540707411322882595745750, -0.0001253362242349212293933878424] | 0.9778 |  |
+| 20d | 23 | 23 | 7 | 7 | -0.002251956090840362826636776444 | [-0.01392182637770653676003181791, 0.007652803097129696595437219548] | 0.6986 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -135,11 +136,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 0 | 427 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 5d | 0 | 426 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 20d | 0 | 423 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 0 | 427 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 5d | 0 | 426 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 20d | 0 | 423 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -188,11 +189,11 @@ Total attempted observations: 5700
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 18 | 23 | 0.0004963762323071178791924419106 | [-0.002009468477412933658153961660, 0.004194500818405567521501801804] | 0.351 |  |
-| 5d | 18 | 23 | -0.001857297027478850026148699678 | [-0.005883317199624372110741857714, 0.004584595514265414651687514007] | 0.8084 |  |
-| 20d | 18 | 23 | -0.003720659855137637220930380472 | [-0.01452645152531986160004920262, 0.007543067348073636142991269962] | 0.7438 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 18 | 23 | 6 | 7 | 0.0004963762323071178791924419106 | [-0.002009468477412933658153961660, 0.004194500818405567521501801804] | 0.351 |  |
+| 5d | 18 | 23 | 6 | 7 | -0.001857297027478850026148699678 | [-0.005883317199624372110741857714, 0.004584595514265414651687514007] | 0.8084 |  |
+| 20d | 18 | 23 | 6 | 7 | -0.003720659855137637220930380472 | [-0.01452645152531986160004920262, 0.007543067348073636142991269962] | 0.7438 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -237,11 +238,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 215 | 356 | -0.0005607178997214972105265361371 | [-0.001698835412514209463442157883, 0.0001642761164383009262810268932] | 0.9192 |  |
-| 5d | 214 | 356 | -0.002047101309415284590929803917 | [-0.004407514841232622768967452153, 0.0001648693653665801119265185329] | 0.9664 |  |
-| 20d | 211 | 356 | -0.006963759917362592895020417134 | [-0.01698718037090652563285435962, 0.002079509695953215115147104724] | 0.9364 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 215 | 356 | 9 | 11 | -0.0005607178997214972105265361371 | [-0.001698835412514209463442157883, 0.0001642761164383009262810268932] | 0.9192 |  |
+| 5d | 214 | 356 | 9 | 11 | -0.002047101309415284590929803917 | [-0.004407514841232622768967452153, 0.0001648693653665801119265185329] | 0.9664 |  |
+| 20d | 211 | 356 | 9 | 11 | -0.006963759917362592895020417134 | [-0.01698718037090652563285435962, 0.002079509695953215115147104724] | 0.9364 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -290,11 +291,11 @@ Total attempted observations: 5701
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 25 | 34 | 0.002219345477916837005417238659 | [-0.0006589881848375503850018356347, 0.004887620038168901207238878067] | 0.0638 |  |
-| 5d | 25 | 34 | 0.000753060661389137013809727244 | [-0.005231264081278333109047915304, 0.005905309467657393453594436012] | 0.4075 |  |
-| 20d | 25 | 34 | -0.001132732993330299921997441900 | [-0.01045552658552327626990573198, 0.008028251293483593434945934277] | 0.5843 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 25 | 34 | 9 | 10 | 0.002219345477916837005417238659 | [-0.0006589881848375503850018356347, 0.004887620038168901207238878067] | 0.0638 |  |
+| 5d | 25 | 34 | 9 | 10 | 0.000753060661389137013809727244 | [-0.005231264081278333109047915304, 0.005905309467657393453594436012] | 0.4075 |  |
+| 20d | 25 | 34 | 9 | 10 | -0.001132732993330299921997441900 | [-0.01045552658552327626990573198, 0.008028251293483593434945934277] | 0.5843 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -338,11 +339,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 5d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 20d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 5d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 20d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -386,11 +387,11 @@ Total attempted observations: 5701
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 5d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 20d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 5d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 20d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -436,11 +437,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 350 | 77 | 0.0006873847032195034110652438511 | [-0.001216969598400068371109527671, 0.001376095439194008075862768732] | 0.2093 |  |
-| 5d | 349 | 77 | -0.0002715226751612314843892374450 | [-0.005706029733698145434949976756, 0.001151478603745393366093977585] | 0.6315 |  |
-| 20d | 346 | 77 | 0.0001859791907476102730091996555 | [-0.02669684558243634161036830950, 0.007909821805895600686160951131] | 0.49 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 350 | 77 | 9 | 6 | 0.0006873847032195034110652438511 | [-0.001216969598400068371109527671, 0.001376095439194008075862768732] | 0.2091 |  |
+| 5d | 349 | 77 | 9 | 6 | -0.0002715226751612314843892374450 | [-0.005706029733698145434949976756, 0.001151478603745393366093977585] | 0.6316 |  |
+| 20d | 346 | 77 | 9 | 6 | 0.0001859791907476102730091996555 | [-0.02669684558243634161036830950, 0.007909821805895600686160951131] | 0.4901 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -488,11 +489,11 @@ Total attempted observations: 5701
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 23 | 19 | 0.0008458348371273596371427769332 | [-0.0008779439358943213899559171140, 0.002280053457954145170340537974] | 0.1631 |  |
-| 5d | 23 | 19 | 0.0005284905550544421782331641911 | [-0.003650047177548094998238569890, 0.004671016739208409366434992530] | 0.3999 |  |
-| 20d | 23 | 19 | -0.01305858135725914280687901161 | [-0.02201893503114056966450084071, -0.006714672096216950678623611758] | 1 |  |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 23 | 19 | 7 | 7 | 0.0008458348371273596371427769332 | [-0.0008779439358943213899559171140, 0.002280053457954145170340537974] | 0.1631 |  |
+| 5d | 23 | 19 | 7 | 7 | 0.0005284905550544421782331641911 | [-0.003650047177548094998238569890, 0.004671016739208409366434992530] | 0.3999 |  |
+| 20d | 23 | 19 | 7 | 7 | -0.01305858135725914280687901161 | [-0.02201893503114056966450084071, -0.006714672096216950678623611758] | 1 |  |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -537,11 +538,11 @@ Total attempted observations: 1134
 
 **Primary contrast: mean(POSITIVE) - mean(NEGATIVE)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 5d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 20d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 5d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 20d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -586,11 +587,11 @@ Total attempted observations: 5701
 
 **Primary contrast: mean(INCREASED) - mean(DECREASED)** (deterministic calendar-year cluster bootstrap, 95% CI, seed=46, resamples=10000)
 
-| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |
-|---|---|---|---|---|---|---|
-| 1d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 5d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
-| 20d | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|---|
+| 1d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 5d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
+| 20d | 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero usable observations at this horizon |
 
 Time stability by era (mean return, count; "sparse" if n<10):
 
@@ -632,4 +633,5 @@ Simple unweighted mean of the 3 pairs' own observed contrast point estimates -- 
 - A positive point estimate or a CI excluding zero is evidence of association in the tested sample -- not proof of alpha, profitability, or causation.
 - EFFECTIVE-semantics coverage is smaller than ANNOUNCED by construction (FX-45/FX-45H): GBP and CAD currently have no verified effective-date coverage at all, so EFFECTIVE results for any pair involving them are UNAVAILABLE for the whole history, not a weak or noisy result -- see disposition counts above.
 - No imputation, no EFFECTIVE->ANNOUNCED fallback, and no post-hoc changes to instruments, horizons, eras, or grouping were made after this script was run against real data.
-- 10,000-resample bootstraps drawn from a small number of distinct calendar-year clusters (see each contrast's own n_a/n_b and the era table's own per-era counts) are not 10,000 independent historical years -- interpret CI width accordingly, the same caveat this project's own FX-39 bootstrap work already carries.
+- 10,000-resample bootstraps drawn from a small number of distinct calendar-year clusters (see each contrast's own n_years_a/n_years_b and the era table's own per-era counts) are not 10,000 independent historical years -- interpret CI width accordingly, the same caveat this project's own FX-39 bootstrap work already carries.
+- A contrast reporting NOT_ESTIMABLE (see its own note) means the calendar-year cluster bootstrap could not compute a confidence interval at all -- either an arm has fewer than 2 distinct year clusters in the full sample, or the bootstrap's redraw cap was exhausted for a structurally pathological cluster imbalance (FX-46H). This is reported explicitly rather than as a wide-but-computed CI or a fabricated value -- do not read the observed point estimate alone as evidence of association when its own contrast is NOT_ESTIMABLE.
