@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from forex_agent.domain.block_bootstrap import (
+    INSUFFICIENT_CLUSTERS_REASON,
     calendar_year_cluster_bootstrap_differences,
     holm_bonferroni_adjusted_p_values,
     moving_block_bootstrap_means,
@@ -488,6 +489,7 @@ def test_cluster_bootstrap_differences_deterministic_for_fixed_seed() -> None:
         group_a, group_b, num_resamples=500, seed=46
     )
 
+    assert first.estimable and second.estimable
     assert first == second
 
 
@@ -511,11 +513,13 @@ def test_cluster_bootstrap_differences_resamples_year_clusters_not_individual_ro
     group_a = {2020: [Decimal("100")] * 3, 2021: [Decimal("200")] * 2}
     group_b = {2020: [Decimal("0")], 2021: [Decimal("0")]}
 
-    differences = calendar_year_cluster_bootstrap_differences(
+    outcome = calendar_year_cluster_bootstrap_differences(
         group_a, group_b, num_resamples=2000, seed=46
     )
 
-    assert set(differences) == {Decimal("100"), Decimal("140"), Decimal("200")}
+    assert outcome.estimable
+    assert outcome.differences is not None
+    assert set(outcome.differences) == {Decimal("100"), Decimal("140"), Decimal("200")}
 
 
 def test_cluster_bootstrap_differences_rejects_both_groups_empty() -> None:
@@ -523,23 +527,93 @@ def test_cluster_bootstrap_differences_rejects_both_groups_empty() -> None:
         calendar_year_cluster_bootstrap_differences({}, {}, num_resamples=100, seed=46)
 
 
-def test_cluster_bootstrap_differences_year_present_only_in_one_group() -> None:
-    # A year drawn that exists only in group_a contributes nothing to
-    # group_b's pool for that draw -- not an error, and not silently
-    # imputed from some other year. With 2 distinct years total
-    # (2020 in group_a only, 2021 in group_b only) and k=2 draws per
-    # replication, hand-enumerated (verified directly, not assumed):
-    # both draws land on 2020 -> mean_a=10, mean_b=0 (empty pool) ->
-    # diff=10; both on 2021 -> mean_a=0, mean_b=5 -> diff=-5; one of
-    # each (order doesn't matter for pooling) -> mean_a=10 (from the
-    # 2020 draw), mean_b=5 (from the 2021 draw) -> diff=5. Exactly
-    # these 3 outcomes, nothing else.
+def test_cluster_bootstrap_differences_rejects_non_positive_max_redraw_attempts() -> None:
+    group_a = {2020: [Decimal("1")], 2021: [Decimal("1")]}
+    group_b = {2020: [Decimal("1")], 2021: [Decimal("1")]}
+    with pytest.raises(ValueError, match="max_redraw_attempts"):
+        calendar_year_cluster_bootstrap_differences(
+            group_a, group_b, num_resamples=10, seed=46, max_redraw_attempts=0
+        )
+
+
+def test_cluster_bootstrap_differences_single_cluster_arm_is_not_estimable() -> None:
+    """FX-46H regression test: this is FX-46's own original scenario (a
+    year present in only one group) -- before FX-46H, this silently
+    scored the missing arm's mean as 0 for every replication. Each arm
+    here has exactly ONE distinct calendar-year cluster in the full
+    sample (2020 for group_a, 2021 for group_b), which can never
+    support a between-year uncertainty estimate no matter how it is
+    resampled -- so no bootstrap is attempted at all, and no
+    fabricated value is produced or returned.
+    """
     group_a = {2020: [Decimal("10")]}
     group_b = {2021: [Decimal("5")]}
 
-    differences = calendar_year_cluster_bootstrap_differences(
+    outcome = calendar_year_cluster_bootstrap_differences(
         group_a, group_b, num_resamples=200, seed=46
     )
 
-    assert set(differences) == {Decimal("10"), Decimal("-5"), Decimal("5")}
-    assert len(differences) == 200
+    assert outcome.estimable is False
+    assert outcome.differences is None
+    assert outcome.reason == INSUFFICIENT_CLUSTERS_REASON
+    assert outcome.group_a_cluster_count == 1
+    assert outcome.group_b_cluster_count == 1
+
+
+def test_cluster_bootstrap_differences_redraws_rather_than_fabricating_zero_mean() -> None:
+    """FX-46H's core regression test for the real EUR/USD ANNOUNCED/
+    LEVEL bug: group_a has 2 distinct year clusters (clearing the
+    estimability bar) but its years are a small subset of the union of
+    years in play, so many bootstrap replications' drawn years leave
+    group_a's pool empty and must be redrawn. group_a's real values
+    (100, 200) mean its true pooled mean can NEVER be below 100 when
+    its pool is non-empty; group_b's values are all <= 3. If the old
+    (pre-FX-46H) fabricated-zero-mean bug were still present, a
+    replication that missed both of group_a's years would score
+    mean_a=0 and yield a small NEGATIVE difference (0 minus group_b's
+    small positive mean) -- verified directly by temporarily reverting
+    to the old formula on this exact seed/data and observing 101 of
+    2000 replications go negative, down to -3 exactly.
+    With the fix, every returned difference stays >= 90 (i.e.
+    mean_a - mean_b for a genuinely non-empty group_a pool), and the
+    full requested resample count is still produced -- proving the
+    redraw mechanism is actually exercised by this data, not merely
+    inert.
+    """
+    group_a = {2020: [Decimal("100")], 2021: [Decimal("200")]}
+    group_b = {2020: [Decimal("1")], 2022: [Decimal("2")], 2023: [Decimal("3")]}
+
+    outcome = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=2000, seed=46
+    )
+
+    assert outcome.estimable
+    assert outcome.differences is not None
+    assert len(outcome.differences) == 2000
+    assert all(d >= Decimal("90") for d in outcome.differences)
+    assert outcome.group_a_cluster_count == 2
+    assert outcome.group_b_cluster_count == 3
+
+
+def test_cluster_bootstrap_differences_redraw_cap_exhaustion_is_not_estimable() -> None:
+    """When every redraw attempt for some replication still leaves an
+    arm empty, the WHOLE contrast fails closed as not estimable rather
+    than raising past the caller or silently under-filling
+    `num_resamples` -- hand-verified directly for this exact data/seed/
+    cap combination (disjoint 2-cluster-each groups, cap=1 attempt):
+    replication 2/50 has no non-empty-both-groups draw on its single
+    attempt.
+    """
+    group_a = {2020: [Decimal("1")], 2021: [Decimal("1")]}
+    group_b = {2022: [Decimal("1")], 2023: [Decimal("1")]}
+
+    outcome = calendar_year_cluster_bootstrap_differences(
+        group_a, group_b, num_resamples=50, seed=0, max_redraw_attempts=1
+    )
+
+    assert outcome.estimable is False
+    assert outcome.differences is None
+    assert outcome.reason is not None
+    assert "redraw cap (1 attempts) exhausted" in outcome.reason
+    assert outcome.group_a_cluster_count == 2
+    assert outcome.group_b_cluster_count == 2

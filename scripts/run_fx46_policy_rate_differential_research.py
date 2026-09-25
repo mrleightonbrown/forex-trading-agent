@@ -78,6 +78,23 @@ Writes:
     - research_results/fx46/policy_rate_differential_research.json
     - research_results/fx46/policy_rate_differential_samples.csv
     - research_results/fx46/policy_rate_differential_summary.md
+
+FX-46H correction (see docs/DECISIONS.md's FX-46H entry): FX-46's
+original bootstrap fabricated a zero mean for a calendar-year cluster
+contrast's arm whenever a bootstrap replication's drawn years left
+that arm empty -- `domain.block_bootstrap.calendar_year_cluster_
+bootstrap_differences` now redraws such a replication instead, and
+reports a whole contrast NOT_ESTIMABLE (see `_contrast`'s own `note`)
+rather than fabricate anything when an arm has fewer than 2 distinct
+year clusters to begin with. FX-46H also corrected this script's own
+provenance metadata: `git_commit`/`git_commit_dirty` now reflect
+whether the working tree actually matched the recorded commit when
+this ran, `candle_end_actual_by_instrument` records the real max
+D-candle timestamp used per pair (distinct from `candle_end_bound`,
+which remains only the query bound passed to `get_range`), and
+`macro_data_fingerprint` records a deterministic hash of the exact
+policy-rate vintage history actually read, so a rerun against the
+same source commit can detect whether the underlying data changed.
 """
 
 from __future__ import annotations
@@ -255,6 +272,50 @@ class _CachingMacroObservationRepository:
         self, series_key: str, observation_period: UtcTimestamp, as_of: UtcTimestamp
     ) -> MacroObservationVintage | None:
         return await self._delegate.observation_as_known_at(series_key, observation_period, as_of)
+
+    def macro_data_fingerprint(self) -> dict[str, Any]:
+        """FX-46H: a deterministic fingerprint of every series' vintage
+        history actually fetched during this run (only ever populated
+        by `list_all_for_series` above, the SAME complete history
+        `ComputePolicyRateDifferential`'s own contract requires) --
+        callers rerunning against the same source commit later can
+        compare this to detect whether the underlying macro data
+        (a later backfill, remediation, or correction) changed, since
+        neither the commit SHA nor the generation timestamp alone can
+        tell them that.
+        """
+        per_series: dict[str, str] = {}
+        max_released_at: UtcTimestamp | None = None
+        total_vintages = 0
+        for series_key in sorted(self._cache):
+            vintages = self._cache[series_key]
+            total_vintages += len(vintages)
+            rows = sorted(
+                (
+                    v.observation_period.value.isoformat(),
+                    str(v.value),
+                    v.released_at.value.isoformat(),
+                    v.revision_sequence,
+                    v.source,
+                    v.effective_at.value.isoformat() if v.effective_at is not None else None,
+                    v.released_at_is_verified,
+                    v.released_at_is_conservative_bound,
+                )
+                for v in vintages
+            )
+            per_series[series_key] = hashlib.sha256(
+                json.dumps(rows, sort_keys=True).encode()
+            ).hexdigest()
+            for v in vintages:
+                if max_released_at is None or v.released_at.value > max_released_at.value:
+                    max_released_at = v.released_at
+        combined = hashlib.sha256(json.dumps(per_series, sort_keys=True).encode()).hexdigest()
+        return {
+            "combined_fingerprint": combined,
+            "per_series_fingerprint": per_series,
+            "max_released_at": max_released_at.value.isoformat() if max_released_at else None,
+            "total_vintages_read": total_vintages,
+        }
 
 
 # --- Sample records (one row per attempted observation, usable or not) -----
@@ -471,10 +532,11 @@ async def _collect_pair_records(
     candle_repo: SqlAlchemyCandleRepository,
     use_case: ComputePolicyRateDifferential,
     instrument: Instrument,
-) -> list[SampleRecord]:
+) -> tuple[list[SampleRecord], UtcTimestamp | None]:
     d_candles = await candle_repo.get_range(
         instrument, Granularity.D, _CANDLE_START, _CANDLE_END, source=CandleSource.AGGREGATED
     )
+    actual_end = d_candles[-1].start_time if d_candles else None
     records: list[SampleRecord] = []
     for semantics in SEMANTICS:
         daily_evals = [
@@ -487,7 +549,7 @@ async def _collect_pair_records(
             _level_records(instrument, semantics, d_candles, weekly_candles, eval_by_as_of)
         )
         records.extend(_change_records(instrument, semantics, d_candles, daily_evals))
-    return records
+    return records, actual_end
 
 
 # --- Aggregation / statistics -----------------------------------------------
@@ -534,6 +596,8 @@ class ContrastResult:
     group_b: str
     n_a: int
     n_b: int
+    n_years_a: int
+    n_years_b: int
     observed_diff: Decimal | None
     lower_95: Decimal | None
     upper_95: Decimal | None
@@ -550,43 +614,72 @@ def _contrast(
     no fabricated zero) rather than run a bootstrap when either group
     has zero usable observations at this horizon -- both are needed
     for a real "A vs B" comparison to mean anything.
+
+    FX-46H: the bootstrap itself can also come back `estimable=False`
+    (see `domain.block_bootstrap.calendar_year_cluster_bootstrap_
+    differences`) when a group has fewer than 2 distinct calendar-year
+    clusters, or when every redraw attempt for some replication still
+    left an arm empty -- reported here via `note`, same as the
+    "not computable" case, with the observed point estimate and each
+    arm's cluster count still populated so the reader can see WHY.
     """
     values_a = _usable_values(records, experiment, group_a, horizon_days)
     values_b = _usable_values(records, experiment, group_b, horizon_days)
     if not values_a or not values_b:
         return ContrastResult(
-            horizon_days,
-            group_a,
-            group_b,
-            len(values_a),
-            len(values_b),
-            None,
-            None,
-            None,
-            None,
-            "not computable: one or both groups have zero usable observations at this horizon",
+            horizon_days=horizon_days,
+            group_a=group_a,
+            group_b=group_b,
+            n_a=len(values_a),
+            n_b=len(values_b),
+            n_years_a=0,
+            n_years_b=0,
+            observed_diff=None,
+            lower_95=None,
+            upper_95=None,
+            fraction_le_zero=None,
+            note="not computable: one or both groups have zero usable observations at this horizon",
         )
     by_year_a = _usable_values_by_year(records, experiment, group_a, horizon_days)
     by_year_b = _usable_values_by_year(records, experiment, group_b, horizon_days)
     observed_diff = (sum(values_a, Decimal(0)) / len(values_a)) - (
         sum(values_b, Decimal(0)) / len(values_b)
     )
-    diffs = calendar_year_cluster_bootstrap_differences(
+    outcome = calendar_year_cluster_bootstrap_differences(
         by_year_a, by_year_b, num_resamples=NUM_RESAMPLES, seed=SEED
     )
+    if not outcome.estimable:
+        return ContrastResult(
+            horizon_days=horizon_days,
+            group_a=group_a,
+            group_b=group_b,
+            n_a=len(values_a),
+            n_b=len(values_b),
+            n_years_a=outcome.group_a_cluster_count,
+            n_years_b=outcome.group_b_cluster_count,
+            observed_diff=observed_diff,
+            lower_95=None,
+            upper_95=None,
+            fraction_le_zero=None,
+            note=f"NOT_ESTIMABLE: {outcome.reason}",
+        )
+    diffs = outcome.differences
+    assert diffs is not None
     lower_95, upper_95 = percentile_ci(diffs, Decimal("0.95"))
     fraction_le_zero = Decimal(sum(1 for d in diffs if d <= 0)) / Decimal(len(diffs))
     return ContrastResult(
-        horizon_days,
-        group_a,
-        group_b,
-        len(values_a),
-        len(values_b),
-        observed_diff,
-        lower_95,
-        upper_95,
-        fraction_le_zero,
-        None,
+        horizon_days=horizon_days,
+        group_a=group_a,
+        group_b=group_b,
+        n_a=len(values_a),
+        n_b=len(values_b),
+        n_years_a=outcome.group_a_cluster_count,
+        n_years_b=outcome.group_b_cluster_count,
+        observed_diff=observed_diff,
+        lower_95=lower_95,
+        upper_95=upper_95,
+        fraction_le_zero=fraction_le_zero,
+        note=None,
     )
 
 
@@ -674,6 +767,8 @@ def _serialize_contrast(c: ContrastResult) -> dict[str, Any]:
         "group_b": c.group_b,
         "n_a": c.n_a,
         "n_b": c.n_b,
+        "n_years_a": c.n_years_a,
+        "n_years_b": c.n_years_b,
         "observed_diff": str(c.observed_diff) if c.observed_diff is not None else None,
         "lower_95": str(c.lower_95) if c.lower_95 is not None else None,
         "upper_95": str(c.upper_95) if c.upper_95 is not None else None,
@@ -855,8 +950,21 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append("# FX-46: Historical Policy-Rate Differential Research")
     lines.append("")
     lines.append(f"Generated: {report['generated_at']}  ")
-    lines.append(f"Git commit: {report['git_commit']}  ")
-    lines.append(f"Config hash: {report['config_hash']}")
+    dirty = report.get("git_commit_dirty")
+    if dirty is True:
+        dirty_suffix = " (DIRTY -- see git_dirty_paths)"
+    elif dirty is False:
+        dirty_suffix = " (clean)"
+    else:
+        dirty_suffix = " (unknown)"
+    lines.append(f"Git commit: {report['git_commit']}{dirty_suffix}  ")
+    lines.append(f"Config hash: {report['config_hash']}  ")
+    fp = report.get("macro_data_fingerprint") or {}
+    lines.append(
+        f"Macro data fingerprint: {fp.get('combined_fingerprint', 'n/a')} "
+        f"({fp.get('total_vintages_read', 'n/a')} vintages, "
+        f"max released_at {fp.get('max_released_at', 'n/a')})"
+    )
     lines.append("")
     lines.append(
         "Research experiment only -- no thresholds, scoring, signal, execution logic, or "
@@ -915,8 +1023,10 @@ def _render_markdown(report: dict[str, Any]) -> str:
                     f"resamples={report['config']['num_resamples']})"
                 )
                 lines.append("")
-                lines.append("| Horizon | n_a | n_b | diff | 95% CI | frac<=0 | note |")
-                lines.append("|---|---|---|---|---|---|---|")
+                lines.append(
+                    "| Horizon | n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |"
+                )
+                lines.append("|---|---|---|---|---|---|---|---|---|")
                 for h in FORWARD_HORIZONS_TRADING_DAYS:
                     c = pc["by_horizon"][str(h)]
                     ci = (
@@ -925,7 +1035,8 @@ def _render_markdown(report: dict[str, Any]) -> str:
                         else "n/a"
                     )
                     lines.append(
-                        f"| {h}d | {c['n_a']} | {c['n_b']} | {_fmt(c['observed_diff'])} | "
+                        f"| {h}d | {c['n_a']} | {c['n_b']} | {c['n_years_a']} | "
+                        f"{c['n_years_b']} | {_fmt(c['observed_diff'])} | "
                         f"{ci} | {_fmt(c['fraction_le_zero'])} | {c['note'] or ''} |"
                     )
 
@@ -991,9 +1102,17 @@ def _render_markdown(report: dict[str, Any]) -> str:
         "instruments, horizons, eras, or grouping were made after this script was run "
         "against real data.\n"
         "- 10,000-resample bootstraps drawn from a small number of distinct calendar-year "
-        "clusters (see each contrast's own n_a/n_b and the era table's own per-era counts) "
-        "are not 10,000 independent historical years -- interpret CI width accordingly, "
-        "the same caveat this project's own FX-39 bootstrap work already carries."
+        "clusters (see each contrast's own n_years_a/n_years_b and the era table's own "
+        "per-era counts) are not 10,000 independent historical years -- interpret CI width "
+        "accordingly, the same caveat this project's own FX-39 bootstrap work already "
+        "carries.\n"
+        "- A contrast reporting NOT_ESTIMABLE (see its own note) means the calendar-year "
+        "cluster bootstrap could not compute a confidence interval at all -- either an arm "
+        "has fewer than 2 distinct year clusters in the full sample, or the bootstrap's "
+        "redraw cap was exhausted for a structurally pathological cluster imbalance "
+        "(FX-46H). This is reported explicitly rather than as a wide-but-computed CI or a "
+        "fabricated value -- do not read the observed point estimate alone as evidence of "
+        "association when its own contrast is NOT_ESTIMABLE."
     )
     lines.append("")
     return "\n".join(lines)
@@ -1005,6 +1124,7 @@ def _render_markdown(report: dict[str, Any]) -> str:
 async def main() -> None:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
     all_records: list[SampleRecord] = []
+    candle_end_actual_by_instrument: dict[str, str | None] = {}
     async with session_factory() as session:
         candle_repo = SqlAlchemyCandleRepository(session)
         raw_repo = SqlAlchemyMacroObservationRepository(session)
@@ -1012,9 +1132,13 @@ async def main() -> None:
         use_case = ComputePolicyRateDifferential(repository=cached_repo)
         for instrument in PAIRS:
             print(f"{instrument.symbol}: evaluating ...")
-            records = await _collect_pair_records(candle_repo, use_case, instrument)
+            records, actual_end = await _collect_pair_records(candle_repo, use_case, instrument)
             all_records.extend(records)
+            candle_end_actual_by_instrument[instrument.symbol] = (
+                actual_end.value.isoformat() if actual_end is not None else None
+            )
             print(f"  {len(records)} sample rows")
+        macro_data_fingerprint = cached_repo.macro_data_fingerprint()
 
     all_records.sort(key=lambda r: (r.instrument, r.semantics, r.experiment, r.as_of.value))
 
@@ -1022,6 +1146,14 @@ async def main() -> None:
         commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
     except Exception:
         commit_hash = "unknown"
+
+    try:
+        dirty_output = subprocess.check_output(["git", "status", "--porcelain"]).decode().strip()
+        git_commit_dirty: bool | None = bool(dirty_output)
+        git_dirty_paths = dirty_output.splitlines() if dirty_output else []
+    except Exception:
+        git_commit_dirty = None
+        git_dirty_paths = []
 
     config = {
         "instruments": [i.symbol for i in PAIRS],
@@ -1047,6 +1179,10 @@ async def main() -> None:
         "story": "FX-46",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "git_commit": commit_hash,
+        "git_commit_dirty": git_commit_dirty,
+        "git_dirty_paths": git_dirty_paths,
+        "candle_end_actual_by_instrument": candle_end_actual_by_instrument,
+        "macro_data_fingerprint": macro_data_fingerprint,
         "config_hash": config_hash,
         "config": config,
         "pairs": {

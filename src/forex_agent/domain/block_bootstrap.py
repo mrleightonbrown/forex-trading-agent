@@ -44,6 +44,16 @@ clustered by calendar year -- the standard `NUM_RESAMPLES = 10_000`
 convention this module's own callers already use (FX-39) is reused
 unchanged, per FX-46's own instruction to reuse an existing project-
 wide bootstrap standard rather than invent a competing one.
+
+FX-46H correction: FX-46's original version of this function scored a
+replication whose drawn years left one arm's pool empty as though that
+arm's mean were exactly 0 -- a fabricated statistic, not an observed
+one. It now REDRAWS a replication's year sample (up to a bounded
+number of attempts) when either arm's pool would be empty, and reports
+a whole contrast as NOT ESTIMABLE (rather than fabricating any values)
+when either arm has fewer than 2 distinct calendar-year clusters in
+the full sample to begin with -- a single cluster cannot support a
+between-year uncertainty estimate no matter how it's resampled.
 """
 
 import random
@@ -242,12 +252,43 @@ def segment_block_bootstrap_means(
     return means
 
 
+#: FX-46H: a cluster bootstrap cannot estimate between-year uncertainty
+#: from a single calendar-year cluster -- reported verbatim as part of
+#: `ClusterBootstrapOutcome.reason` when this blocks a contrast.
+INSUFFICIENT_CLUSTERS_REASON = (
+    "at least one group has fewer than 2 distinct calendar-year clusters in "
+    "the full sample -- a cluster bootstrap cannot estimate between-year "
+    "uncertainty from a single cluster, no matter how it is resampled"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterBootstrapOutcome:
+    """FX-46H: result of `calendar_year_cluster_bootstrap_differences`.
+
+    `estimable=False` means no bootstrap differences were computed at
+    all -- `differences` is `None` and `reason` explains why (either
+    `INSUFFICIENT_CLUSTERS_REASON`, or the redraw cap was exhausted).
+    Callers must check `estimable` before reading `differences`; this
+    is deliberately not a bare `list[Decimal]` any more so a caller
+    cannot accidentally treat a not-estimable contrast as a valid
+    (and, before FX-46H, silently distorted) empty-arm result.
+    """
+
+    estimable: bool
+    differences: list[Decimal] | None
+    group_a_cluster_count: int
+    group_b_cluster_count: int
+    reason: str | None
+
+
 def calendar_year_cluster_bootstrap_differences(
     group_a_by_year: dict[int, list[Decimal]],
     group_b_by_year: dict[int, list[Decimal]],
     num_resamples: int,
     seed: int,
-) -> list[Decimal]:
+    max_redraw_attempts: int = 1000,
+) -> ClusterBootstrapOutcome:
     """FX-46: `num_resamples` resampled `mean(group_a) - mean(group_b)`
     differences via a calendar-year cluster bootstrap -- the natural
     two-group extension of `segment_block_bootstrap_means` above (same
@@ -267,36 +308,81 @@ def calendar_year_cluster_bootstrap_differences(
 
     Pooled-mean convention (weight by observation count, not a naive
     mean-of-year-means) matches `segment_block_bootstrap_means`'s own.
-    A replication where a group's pool is empty (both groups' data
-    happen to share no years in common with the drawn set for that
-    group) contributes a difference against a zero mean for that
-    side -- deliberately not skipped or reweighted, so `num_resamples`
-    always stays exactly what was requested; this is only possible when
-    a group's own year coverage is a strict subset of the other's,
-    itself worth surfacing rather than silently smoothing over.
+
+    FX-46H: if EITHER group has fewer than 2 distinct calendar-year
+    clusters with at least one observation in the FULL (unresampled)
+    sample, the contrast is reported `estimable=False` with
+    `INSUFFICIENT_CLUSTERS_REASON` -- a single cluster cannot support a
+    between-year uncertainty estimate, so no bootstrap is attempted at
+    all. Otherwise, if a replication's drawn years would leave either
+    arm's pool empty (possible when a group's own year coverage is a
+    strict subset of the other's), that replication's year sample is
+    REDRAWN -- never scored against a fabricated zero mean -- up to
+    `max_redraw_attempts` times. If every attempt for some replication
+    still leaves an arm empty, the WHOLE contrast is reported
+    `estimable=False` (not a partial result, and not an exception
+    escaping to the caller) so a structurally pathological case fails
+    closed rather than silently under-filling `num_resamples`.
 
     Deterministic for a fixed `seed`. Raises `ValueError` if both
-    groups are entirely empty (no years to resample at all).
+    groups are entirely empty (no years to resample at all -- a caller
+    error, distinct from the "data exists but isn't estimable" case
+    above) or if `num_resamples`/`max_redraw_attempts` is not positive.
     """
-    all_years = sorted(set(group_a_by_year) | set(group_b_by_year))
-    if not all_years:
+    if not group_a_by_year and not group_b_by_year:
         raise ValueError("group_a_by_year and group_b_by_year must not both be empty")
     if num_resamples < 1:
         raise ValueError(f"num_resamples must be at least 1, got {num_resamples}")
+    if max_redraw_attempts < 1:
+        raise ValueError(f"max_redraw_attempts must be at least 1, got {max_redraw_attempts}")
+
+    group_a_years = sorted(year for year, values in group_a_by_year.items() if values)
+    group_b_years = sorted(year for year, values in group_b_by_year.items() if values)
+    if len(group_a_years) < 2 or len(group_b_years) < 2:
+        return ClusterBootstrapOutcome(
+            estimable=False,
+            differences=None,
+            group_a_cluster_count=len(group_a_years),
+            group_b_cluster_count=len(group_b_years),
+            reason=INSUFFICIENT_CLUSTERS_REASON,
+        )
+
+    all_years = sorted(set(group_a_by_year) | set(group_b_by_year))
     rng = random.Random(seed)
     k = len(all_years)
     differences: list[Decimal] = []
-    for _ in range(num_resamples):
-        drawn_years = [all_years[rng.randrange(k)] for _ in range(k)]
-        pooled_a: list[Decimal] = []
-        pooled_b: list[Decimal] = []
-        for year in drawn_years:
-            pooled_a.extend(group_a_by_year.get(year, []))
-            pooled_b.extend(group_b_by_year.get(year, []))
-        mean_a = sum(pooled_a, Decimal(0)) / len(pooled_a) if pooled_a else Decimal(0)
-        mean_b = sum(pooled_b, Decimal(0)) / len(pooled_b) if pooled_b else Decimal(0)
-        differences.append(mean_a - mean_b)
-    return differences
+    for replication in range(num_resamples):
+        for _attempt in range(max_redraw_attempts):
+            drawn_years = [all_years[rng.randrange(k)] for _ in range(k)]
+            pooled_a: list[Decimal] = []
+            pooled_b: list[Decimal] = []
+            for year in drawn_years:
+                pooled_a.extend(group_a_by_year.get(year, []))
+                pooled_b.extend(group_b_by_year.get(year, []))
+            if pooled_a and pooled_b:
+                mean_a = sum(pooled_a, Decimal(0)) / len(pooled_a)
+                mean_b = sum(pooled_b, Decimal(0)) / len(pooled_b)
+                differences.append(mean_a - mean_b)
+                break
+        else:
+            return ClusterBootstrapOutcome(
+                estimable=False,
+                differences=None,
+                group_a_cluster_count=len(group_a_years),
+                group_b_cluster_count=len(group_b_years),
+                reason=(
+                    f"redraw cap ({max_redraw_attempts} attempts) exhausted while "
+                    f"resampling replication {replication + 1}/{num_resamples} without "
+                    "finding a year draw where both groups' pools are non-empty"
+                ),
+            )
+    return ClusterBootstrapOutcome(
+        estimable=True,
+        differences=differences,
+        group_a_cluster_count=len(group_a_years),
+        group_b_cluster_count=len(group_b_years),
+        reason=None,
+    )
 
 
 def percentile_ci(means: list[Decimal], confidence: Decimal) -> tuple[Decimal, Decimal]:
