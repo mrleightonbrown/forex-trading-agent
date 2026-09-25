@@ -6,7 +6,7 @@ and development rules governing this repository.
 
 ## Stack
 
-Python 3.12 · FastAPI · PostgreSQL · SQLAlchemy 2 (async) · Alembic ·
+Python 3.13 · FastAPI · PostgreSQL · SQLAlchemy 2 (async) · Alembic ·
 Docker Compose · pytest · OANDA Practice API. Dependency/tooling choices are
 recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -14,7 +14,7 @@ recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ```bash
 # Install uv if you don't have it: https://docs.astral.sh/uv/getting-started/installation/
-uv python install 3.12
+uv python install 3.13
 uv sync                      # creates .venv and installs all dependencies
 cp .env.example .env         # then fill in local values — never commit .env
 

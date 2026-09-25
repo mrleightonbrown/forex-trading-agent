@@ -64,7 +64,7 @@ class PostgresBackfillLock:
                 yield
             finally:
                 result = await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                unlocked = result.scalar_one()
+                unlocked: bool = result.scalar_one()
                 if not unlocked:
                     raise RuntimeError(
                         f"pg_advisory_unlock did not report releasing the lock for "

@@ -6760,3 +6760,99 @@ Per this story's own explicit stop instruction: no FX-return research,
 no strategy/backtest, no carry, no JPY ingestion, no news, no event-
 surprise work, no technical gating follow this story -- and FX-46 (the
 historical rate-differential experiment) does not start automatically.
+
+## 2026-09-24 — Python 3.13 toolchain upgrade
+
+Not a numbered FX-## story -- a pure toolchain/infra change, prompted
+by the development sandbox only having Python 3.13 available locally
+(3.12 remains uv-managed and installed, untouched, alongside 3.13).
+No application behavior change intended; see `e3802d4`/`bb4bf3d` for
+this repo's own precedent of plain, non-FX commits for infra/docs-only
+work.
+
+**Decision.** `requires-python` narrowed from `>=3.12,<3.13` to
+`>=3.13,<3.14` in `pyproject.toml` -- the existing narrow single-minor
+pin style preserved, not opened to a floor, so every future Python
+move stays a deliberate, single-commit event rather than something
+`uv sync` could silently drift onto. `[tool.ruff] target-version`
+moved `py312` -> `py313`; `[tool.mypy] python_version` moved `"3.12"`
+-> `"3.13"`. New `.python-version` (`3.13`), written by
+`uv python pin 3.13` rather than hand-authored. `uv.lock` fully
+regenerated via `uv lock --upgrade --python 3.13` -- every dependency
+in both `[project.dependencies]` and the `dev` group re-resolved to
+the latest version satisfying its existing `>=` floor (no floor
+itself changed); `uv.lock`'s own header now reads
+`requires-python = "==3.13.*"` (was `==3.12.*"`).
+
+**Real fallout found and fixed (not zero, as flagged as possible before
+starting).**
+
+1. **`sqlalchemy[asyncio]` extra now required explicitly.** SQLAlchemy
+   2.1.0 (this upgrade's resolved version, up from 2.0.52) restructured
+   its own PyPI metadata so `greenlet` is declared ONLY under the
+   `asyncio` extra (`greenlet>=1; extra == "asyncio"`) rather than
+   being pulled in by a bare `sqlalchemy` install as it effectively was
+   before. The very first `uv lock --upgrade` run surfaced this
+   directly and unambiguously: `Removed greenlet v3.5.5`. Confirmed via
+   SQLAlchemy's own live PyPI JSON metadata before treating this as
+   safe to fix, not routed around. `greenlet` is not optional for this
+   project -- `infrastructure/db/session.py`'s `create_async_engine`,
+   every repository's `AsyncSession` usage, and Alembic's own
+   async-to-sync migration bridge all depend on it. Fixed at the
+   source: `pyproject.toml`'s dependency changed from `"sqlalchemy>=2.0"`
+   to `"sqlalchemy[asyncio]>=2.0"`. Re-running `uv lock --upgrade`
+   confirmed the fix: `Added greenlet v3.5.6`, and `uv sync --all-groups`
+   installed it correctly (54 packages total, matching the pre-upgrade
+   count).
+2. **One new mypy --strict finding**, from the mypy version bump
+   (`>=1.13` floor resolved to 2.3.1): `src/forex_agent/infrastructure/
+   db/backfill_lock.py:67` -- `unlocked = result.scalar_one()` needed
+   an explicit `Need type annotation` per the newer mypy's stricter
+   inference for a `text()`-query `.scalar_one()` call. Fixed with an
+   explicit, correct annotation (`unlocked: bool = ...` -- `pg_advisory_
+   unlock` returns a boolean) rather than an ignore; zero runtime
+   behavior change (a bare annotation). Confirmed inert by re-running
+   the specific test (`pytest -k backfill_lock`) and the full suite.
+3. **Zero new ruff findings**, despite both the `py312` -> `py313`
+   target-version bump and ruff's own version moving (0.16.7 -> 0.16.9
+   within this lock-upgrade; the `>=0.7` floor was already resolving
+   to a recent 0.16.x before this change).
+4. **`.pre-commit-config.yaml`'s `ruff-pre-commit` rev** bumped
+   `v0.7.4` -> `v0.16.9` to match the newly-locked `ruff` version
+   exactly (verified the tag exists on GitHub before using it) --
+   otherwise `pre-commit run --all-files` and `uv run ruff check .`
+   would have silently disagreed.
+
+**Other real version movement** (from `uv.lock`, no fixes needed):
+sqlalchemy 2.0.52 -> 2.1.0, starlette 1.6.0 -> 1.7.0 (FastAPI's own
+transitive dependency), uvicorn 0.52.4 -> 0.53.0, greenlet 3.5.5 ->
+3.5.6 (per point 1 above), plus routine point-release bumps across
+coverage, filelock, idna, mako, platformdirs, python-discovery,
+virtualenv, watchfiles, ast-serialize. pydantic (2.13.5),
+pydantic-core (2.46.5), pydantic-settings (2.15.0), asyncpg (0.31.0),
+and alembic (1.20.0) were already resolving to their current-latest
+compatible releases before this upgrade and did not move further.
+
+**CI (`.github/workflows/ci.yml`)** updated in lockstep, all three
+jobs (lint, typecheck, test): `uv python install 3.12` -> `3.13`. The
+`astral-sh/setup-uv@v3` pin (`0.12.13`) is unchanged -- confirmed
+already 3.13-capable via `uv python list` before relying on it.
+README.md and `docs/CURRENT_STATE.md`'s toolchain references updated
+to 3.13 the same way.
+
+**Verification**: `uv run python --version` -> `Python 3.13.15`;
+`docker compose up -d db && uv run alembic upgrade head` clean against
+3.13; `uv run pytest -q --no-cov` -> 1145 passed (identical count to
+pre-upgrade -- confirms no test silently stopped collecting);
+`uv run pytest -q` (coverage on, matching CI's exact test-job
+invocation) -> 1145 passed; `uv run ruff check .` / `uv run ruff
+format --check .` / `uv run mypy --strict` all clean; `uv run
+pre-commit run --all-files` clean with the bumped ruff-pre-commit rev.
+
+**Rollback safety**: `uv.lock` and every touched file's prior git
+history fully capture the pre-upgrade state; Python 3.12.14 remains
+uv-installed and untouched throughout. A clean `git revert` of this
+commit, or `git checkout` of the touched files plus `rm -rf .venv &&
+uv sync --all-groups`, restores the verified-3.12 state exactly, with
+zero residue -- this was the safety net this change was executed
+under, not just a theoretical option.

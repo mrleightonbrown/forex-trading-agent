@@ -3,7 +3,7 @@
 Confirmed live against the practice API before writing this:
 - `/v3/instruments/{instrument}/candles` takes no account ID.
 - Its `time` field (e.g. "2026-09-11T20:57:00.000000000Z", nanosecond
-  precision) parses directly with Python 3.12's `datetime.fromisoformat` —
+  precision) parses directly with Python's `datetime.fromisoformat` —
   no manual string handling needed.
 - OANDA caps `count` at 5000 and returns HTTP 400 ("Maximum value for
   'count' exceeded") for a `from`/`to` range implying more than that,
