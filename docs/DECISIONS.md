@@ -6983,3 +6983,60 @@ sets `pass_filenames: false`, so `scripts/run-mypy.sh`'s `uv run mypy
 argument falls back to the same reduced `packages` scope. Fixed
 identically: the script now runs `uv run mypy . "$@"`, so `pre-commit
 run --all-files` also covers all 262 files, matching CI.
+
+**A separate, pre-existing, unrelated CI gap, found while confirming
+the above and deliberately NOT fixed here.** With `lint` and
+`typecheck` both green on push `2b68444`, CI's `test` job still
+failed. Checked CI's run history across all 15 pushes back to FX-41
+(`gh`/GitHub API, unauthenticated): every single one shows `conclusion:
+failure` for this same job -- this predates Python 3.13 and this
+story entirely. Confirmed directly, not assumed: reproduced the exact
+CI steps twice in a Linux container (`python:3.13-slim`, sharing a
+Postgres container's network namespace, exactly mirroring how GitHub
+Actions service containers attach) --
+1. Against this session's own long-lived local Postgres (real
+   backfilled/verified/remediated policy-rate data accumulated across
+   the whole epic): `uv run pytest` -- 1145/1145 passed.
+2. Against a genuinely FRESH `postgres:16-alpine` container (schema
+   via `alembic upgrade head` only, matching what CI's own ephemeral
+   service container actually has -- CI never runs the backfill
+   scripts): the SAME 8 tests fail every time, all in `tests/
+   integration/test_compute_policy_rate_differential.py`
+   (`test_eur_usd_real_orientation`, `test_usd_cad_real_orientation`,
+   `test_gbp_usd_effective_semantics_unavailable`, `test_usd_cad_
+   effective_semantics_unavailable`, `test_interval_crossing_a_real_
+   unresolved_crisis_observation_is_rejected`, `test_three_state_
+   regression_real_2026_09_17_observation`, `test_future_unreleased_
+   provisional_observation_does_not_block_real`, `test_deterministic_
+   output_for_identical_inputs_real`) -- 1137/1145. Each fails with
+   `ResearchIntervalNotReadyError(no_baseline=True)`: `full_series_
+   history = ()`, an empty tuple -- not a bug in the fail-closed gate,
+   exactly the behavior FX-44H built it to have. This test file's own
+   module docstring (written at FX-45, unchanged since) already states
+   the real requirement plainly: "Requires a live Postgres with
+   migrations applied AND the real policy-rate backfill/verification/
+   remediation already run -- ... `scripts/backfill_policy_rate_
+   history.py`, `scripts/verify_policy_rate_release_timing.py`, and
+   `scripts/remediate_usd_release_timing.py`, in that order, first."
+   `.github/workflows/ci.yml`'s `test` job has never run those three
+   scripts -- only `alembic upgrade head` (schema, no data) -- since
+   FX-45 introduced this file, meaning this specific class of gap has
+   existed, undetected via CI, since that story.
+
+This is a genuine, real, pre-existing architectural gap between this
+test file's own stated requirements and what CI actually does --
+**not** something this story's Python/dependency changes caused, and
+not something this story was asked to fix. Per CLAUDE.md's own rule
+("If implementation requires an architectural change: document the
+issue; explain the proposed change; stop before implementing the
+architectural change"), it is recorded here, not silently fixed:
+CI's `test` job would need to run the three backfill/verify/remediate
+scripts (network calls to FRED/ECB/BOE/BOC) before `pytest`, or these
+8 tests would need to be marked/skipped when the real dataset isn't
+present, or CI's Postgres would need to be seeded from a checked-in
+fixture/snapshot instead of a live backfill -- three genuinely
+different approaches with different tradeoffs, a decision for a future
+story, not this one. This story's own scope (Python 3.13, dependency
+upgrade) is verified fully unaffected by it: 1137/1145 pass in a
+clean, data-free environment either way, both before and after every
+change this correction made.
