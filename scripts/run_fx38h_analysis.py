@@ -73,6 +73,7 @@ from forex_agent.domain.strategies.multi_timeframe_trend_incremental import (
     IncrementalMultiTimeframeTrendStrategy,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
+from forex_agent.domain.trade_hypothesis import TradeHypothesis
 from forex_agent.domain.trade_side import TradeSide
 from forex_agent.domain.trade_simulation import simulate_trades
 from forex_agent.infrastructure.db.candle_repository import SqlAlchemyCandleRepository
@@ -266,7 +267,7 @@ async def _run_sealed_mtt(repo: SqlAlchemyCandleRepository) -> None:
                 source=CandleSource.NATIVE,
             )
 
-            def _run(candles: list[Candle], h4: list[Candle] = h4_candles) -> list:
+            def _run(candles: list[Candle], h4: list[Candle] = h4_candles) -> list[TradeHypothesis]:
                 strategy = IncrementalMultiTimeframeTrendStrategy(h4_candles=h4)
                 return run_backtest_incremental(strategy, candles)
 

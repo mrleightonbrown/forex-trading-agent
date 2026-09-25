@@ -13,8 +13,16 @@ from forex_agent.domain.release_timing_rule import ReleaseTimingConfidence
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
-def _period(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _period(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 def test_usd_regular_post_2013_meeting_is_exact() -> None:

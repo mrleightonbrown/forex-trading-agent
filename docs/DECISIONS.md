@@ -6856,3 +6856,130 @@ commit, or `git checkout` of the touched files plus `rm -rf .venv &&
 uv sync --all-groups`, restores the verified-3.12 state exactly, with
 zero residue -- this was the safety net this change was executed
 under, not just a theoretical option.
+
+## 2026-09-24 — Correction: mypy scope gap surfaced by CI (Python 3.13 upgrade)
+
+The commit above (`ede1005`) was pushed after a full local ritual that
+included `uv run mypy --strict` -- clean, per `pyproject.toml`'s own
+`[tool.mypy] packages = ["forex_agent"]` setting, which restricts a
+bare `mypy --strict` invocation to `src/forex_agent` ONLY. CI's actual
+`typecheck` job runs `uv run mypy .` -- passing `.` as an explicit
+path makes mypy discover files by walking the filesystem instead,
+covering the FULL repository (`tests/`, `scripts/`, 262 files vs. 112).
+This gap has existed since this project's mypy configuration was
+first written; it was never exercised by this session's own habitual
+local check (`mypy --strict`, not `mypy .`) until CI itself caught it
+on this push -- `lint` passed, `typecheck` and `test` both failed.
+
+**Diagnosis.** Reproduced identically on macOS with a plain
+`uv run mypy .` (no Docker/Linux-runner difference involved at all,
+confirmed before investigating further) -- 87 errors across 28 files,
+none of them in `src/forex_agent` (which the original `mypy --strict`
+run, and therefore this story's own fallout-triage, had already
+covered correctly). All 87 are genuine, mypy-2.3.1-version-surfaced
+findings in test/script files this session's local ritual had simply
+never been checking. Fixed every one at the source, by category:
+
+1. **`_ts`/`_period` helpers across 21 test files**: `datetime(*args,
+   tzinfo=UTC)` where `args: tuple[int, ...]` has unknown static
+   length -- mypy 2.3.1 correctly won't rule out `args` supplying
+   enough positional values to collide with the `tzinfo=` keyword.
+   Replaced the `*args: int` signature with explicit `year, month,
+   day, hour=0, minute=0, second=0, microsecond=0` parameters in every
+   one of the 21 files (one file's helper is named `_period`, not
+   `_ts` -- found and fixed separately, not missed). Fully call-site
+   compatible (every existing call still supplies 2-7 positional
+   ints); resolves the ambiguity structurally rather than suppressing
+   it, and avoids a `datetime()`-then-`.replace(tzinfo=...)` two-step
+   that was tried first and rejected -- it triggers ruff's `DTZ001`
+   (naive `datetime()` construction) on the intermediate call, a real
+   regression the single-call explicit-parameters form avoids
+   entirely.
+2. **`test_multi_timeframe_trend_incremental.py`**: two `kwargs =
+   {...}` dict literals inferred as `dict[str, int]`, unpacked via
+   `**kwargs` into constructors that also have a `strategy_version:
+   str` parameter -- mypy correctly can't rule out the dict
+   supplying an int to that slot. Fixed with a `_PeriodKwargs(TypedDict)`
+   precisely enumerating the 4 keys actually used, so mypy validates
+   the unpacking exactly rather than conservatively.
+3. **`test_sealed_window_backtest.py`**: `_run`'s return type was
+   unannotated (`disallow_untyped_defs=False` for tests, so this
+   wasn't itself an error, but the untyped lambda it returns needed an
+   explicit signature to type-check downstream). Annotated `-> Callable[
+   [list[Candle]], list[TradeHypothesis]]`, matching `run_sealed_
+   window_backtest`'s own parameter type exactly.
+4. **`test_policy_rate_differential.py`**: `test_currency_rate_state_
+   rejects_float_rate` had a genuine, pre-existing test-design bug,
+   not merely a lint nag -- `_state(currency, rate, **overrides)`
+   binds a `rate=` keyword to its own named `rate: str` parameter
+   before `**overrides` ever sees it (Python's own calling
+   convention), so `_state("EUR", "3.75", rate=3.75)` was always a
+   duplicate-argument `TypeError`, not the "CurrencyRateState rejects
+   a float" behavior the test's name claims -- it only ever "passed"
+   because `pytest.raises(TypeError, match="rate")`'s substring match
+   happened to accept either error's message. `_state` also could
+   never have tested this even if called correctly: its `rate: str`
+   parameter is unconditionally converted via `Decimal(rate)` before
+   `CurrencyRateState` is ever constructed, so a bad type passed that
+   way never reaches `__post_init__`'s own guard. Fixed by constructing
+   `CurrencyRateState` directly (bypassing `_state` for this one test),
+   mirroring the very next test's own established pattern
+   (`test_snapshot_rejects_float_differential`, which already
+   constructs its target type directly for the same reason).
+5. **`test_backtest_report.py`** (the largest concentration, 27 of the
+   87 errors): one call's `# type: ignore[arg-type]` was placed on the
+   statement's LAST line (the closing paren) while the actual error
+   mypy reports lands on the line with `**_base_kwargs(...)` itself --
+   `# type: ignore` suppresses only the exact line it's on, so this
+   ignore was never actually active; every other single-line call in
+   the same file had it correctly placed. Fixed by computing the
+   kwargs into a local first, then calling `to_report_dict(**kwargs)`
+   on its own clean line. Separately, 4 `config_identifier(params)`
+   calls passed a `params = {"fast_period": 20, ...}` literal inferred
+   as `dict[str, int]` into a `dict[str, int | str | Decimal]`
+   parameter -- dicts are invariant in their value type, so this is a
+   real mismatch regardless of `int` being a member of that union.
+   Fixed by annotating each `params` literal precisely at its
+   declaration (`dict[str, int | str | Decimal]`) rather than
+   widening `config_identifier`'s own signature to `Mapping` (mypy's
+   own suggested alternative) -- keeping this a test-scoped fix, not a
+   domain-code change, per this project's own "smallest change" rule.
+   Also removed 14 other stale `# type: ignore[index]`/`[union-attr]`
+   comments in this same file that mypy 2.3.1 reports as genuinely
+   unused (`warn_unused_ignores = true` is this project's own
+   pre-existing policy, not a new one) -- `report: dict[str, Any]`'s
+   indexed access chains never needed per-site suppression once the
+   one misplaced ignore above was corrected.
+6. **`test_macro_observation_vintage.py`** (4) and
+   `test_declared_policy_rate_gap.py`/`scripts/export_backtest_report.py`
+   (3 combined): further stale `# type: ignore[arg-type]`/`[index]`
+   comments mypy 2.3.1 reports as unused -- `_vintage(**overrides:
+   object)`/`_gap(...)`'s permissive `object`-typed parameters never
+   actually needed them. Removed.
+7. **`scripts/run_fx38h_analysis.py`** (1) and **`scripts/
+   run_fx39_significance_testing.py`** (2): three locally-defined
+   `_run`/`_gated` closures annotated `-> list` (bare, no type
+   argument) instead of the `list[TradeHypothesis]` they actually
+   return. Annotated precisely; added the missing `TradeHypothesis`
+   import to both files.
+
+**Verification, repeated in full after every category above**: `uv
+run ruff check .`, `uv run ruff format --check .` (both clean
+throughout -- zero new ruff findings from this correction),
+`uv run mypy .` (0 errors, 262 files -- CI's own exact command, not
+just `--strict`'s 112-file subset), `uv run pytest -q --no-cov` and
+`uv run pytest -q` (both 1145/1145, identical to every count before
+this correction -- confirming all 28 files' fixes are purely
+type-annotation/structural, zero behavior change), `uv run alembic
+upgrade head`, `uv run pre-commit run --all-files` -- all clean.
+
+**Going forward**: this session's own local verification ritual now
+runs `uv run mypy .` (matching CI exactly), not `uv run mypy --strict`
+alone -- recorded here, and in this session's own memory, specifically
+so this gap does not reopen silently on a future story. The SAME gap
+existed a second place: `.pre-commit-config.yaml`'s local `mypy` hook
+sets `pass_filenames: false`, so `scripts/run-mypy.sh`'s `uv run mypy
+"$@"` always ran with an EMPTY `$@` -- a bare `mypy` with no path
+argument falls back to the same reduced `packages` scope. Fixed
+identically: the script now runs `uv run mypy . "$@"`, so `pre-commit
+run --all-files` also covers all 262 files, matching CI.

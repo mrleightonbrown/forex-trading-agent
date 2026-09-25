@@ -24,8 +24,16 @@ from tests.fakes.macro_observation_repository import FakeMacroObservationReposit
 from tests.fakes.policy_rate_history_provider import FakePolicyRateHistoryProvider
 
 
-def _ts(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _ts(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 def _fred_with_a_hike() -> FakePolicyRateHistoryProvider:

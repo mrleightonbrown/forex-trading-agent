@@ -60,7 +60,7 @@ def test_decimal_fidelity_is_preserved_exactly() -> None:
 
 def test_rejects_float_value() -> None:
     with pytest.raises(TypeError, match="Decimal"):
-        _vintage(value=2.1)  # type: ignore[arg-type]
+        _vintage(value=2.1)
 
 
 def test_rejects_naive_observation_period() -> None:
@@ -83,7 +83,7 @@ def test_normalizes_non_utc_timestamp_to_utc() -> None:
 
 def test_rejects_raw_datetime_for_released_at() -> None:
     with pytest.raises(TypeError, match="released_at"):
-        _vintage(released_at=datetime(2024, 3, 12, tzinfo=UTC))  # type: ignore[arg-type]
+        _vintage(released_at=datetime(2024, 3, 12, tzinfo=UTC))
 
 
 def test_rejects_negative_revision_sequence() -> None:
@@ -128,7 +128,7 @@ def test_released_at_is_verified_can_be_explicitly_true() -> None:
 
 def test_rejects_non_bool_released_at_is_verified() -> None:
     with pytest.raises(TypeError, match="released_at_is_verified"):
-        _vintage(released_at_is_verified="yes")  # type: ignore[arg-type]
+        _vintage(released_at_is_verified="yes")
 
 
 def test_released_at_is_conservative_bound_defaults_to_false() -> None:
@@ -149,7 +149,7 @@ def test_released_at_is_conservative_bound_can_be_explicitly_true() -> None:
 
 def test_rejects_non_bool_released_at_is_conservative_bound() -> None:
     with pytest.raises(TypeError, match="released_at_is_conservative_bound"):
-        _vintage(released_at_is_conservative_bound="yes")  # type: ignore[arg-type]
+        _vintage(released_at_is_conservative_bound="yes")
 
 
 def test_rejects_exact_and_conservative_simultaneously() -> None:

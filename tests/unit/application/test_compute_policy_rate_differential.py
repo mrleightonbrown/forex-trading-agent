@@ -24,8 +24,16 @@ from forex_agent.domain.timestamps import UtcTimestamp
 from tests.fakes.macro_observation_repository import FakeMacroObservationRepository
 
 
-def _ts(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _ts(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 async def _seed_exact(

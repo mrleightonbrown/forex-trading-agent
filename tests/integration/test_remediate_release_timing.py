@@ -31,8 +31,16 @@ from forex_agent.infrastructure.db.session import get_engine
 TEST_SERIES_KEY = "__test_usd_remediation__"
 
 
-def _ts(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _ts(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 @pytest.fixture

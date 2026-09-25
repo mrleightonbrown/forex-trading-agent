@@ -137,14 +137,14 @@ def test_schema_version_constant_matches_output() -> None:
 
 def test_decimal_prices_serialize_as_strings() -> None:
     report = to_report_dict(**_base_kwargs())  # type: ignore[arg-type]
-    trade = report["trades"][0]  # type: ignore[index]
+    trade = report["trades"][0]
     assert isinstance(trade["entry_price"], str)
     assert isinstance(trade["exit_price"], str)
 
 
 def test_decimal_pnl_serializes_as_string() -> None:
     report = to_report_dict(**_base_kwargs())  # type: ignore[arg-type]
-    for trade in report["trades"]:  # type: ignore[union-attr]
+    for trade in report["trades"]:
         assert isinstance(trade["pnl"], str)
 
 
@@ -162,14 +162,15 @@ def test_decimal_metrics_serialize_as_strings() -> None:
         "sharpe",
         "sortino",
     ):
-        assert isinstance(m[field], str), f"{field} must be a string"  # type: ignore[index]
+        assert isinstance(m[field], str), f"{field} must be a string"
 
 
 def test_decimal_strategy_parameter_serializes_as_string_int_parameter_stays_int() -> None:
-    report = to_report_dict(
-        **_base_kwargs(strategy_parameters={"lookback": 20, "expansion_threshold": Decimal("1.5")})
-    )  # type: ignore[arg-type]
-    params = report["strategy"]["parameters"]  # type: ignore[index]
+    kwargs = _base_kwargs(
+        strategy_parameters={"lookback": 20, "expansion_threshold": Decimal("1.5")}
+    )
+    report = to_report_dict(**kwargs)  # type: ignore[arg-type]
+    params = report["strategy"]["parameters"]
     assert params["lookback"] == 20
     assert isinstance(params["lookback"], int)
     assert params["expansion_threshold"] == "1.5"
@@ -183,7 +184,7 @@ def test_integer_counts_remain_integers() -> None:
     report = to_report_dict(**_base_kwargs())  # type: ignore[arg-type]
     m = report["metrics"]
     for field in ("trade_count", "win_count", "loss_count", "breakeven_count"):
-        assert isinstance(m[field], int), f"{field} must be an int"  # type: ignore[index]
+        assert isinstance(m[field], int), f"{field} must be an int"
 
 
 # --- timestamps -----------------------------------------------------------
@@ -194,7 +195,7 @@ def test_timestamps_are_utc_iso8601_with_z_suffix() -> None:
     assert report["generated_at"] == "2026-09-21T12:00:00Z"
     assert report["from"] == "2024-01-01T00:00:00Z"
     assert report["to"] == "2025-12-31T00:00:00Z"
-    trade = report["trades"][0]  # type: ignore[index]
+    trade = report["trades"][0]
     assert trade["entry_time"].endswith("Z")
     assert trade["exit_time"].endswith("Z")
 
@@ -205,7 +206,7 @@ def test_timestamps_are_utc_iso8601_with_z_suffix() -> None:
 def test_side_serializes_as_long_or_short() -> None:
     trades = [_trade(0, 1, "10", side=TradeSide.LONG), _trade(2, 3, "10", side=TradeSide.SHORT)]
     report = to_report_dict(**_base_kwargs(trades=trades, metrics=compute_metrics(trades)))  # type: ignore[arg-type]
-    sides = [t["side"] for t in report["trades"]]  # type: ignore[union-attr]
+    sides = [t["side"] for t in report["trades"]]
     assert sides == ["LONG", "SHORT"]
 
 
@@ -216,13 +217,13 @@ def test_undefined_profit_factor_serializes_as_null() -> None:
     # All wins, no losses -> gross_loss=0 -> profit_factor is None.
     trades = [_trade(0, 1, "10"), _trade(2, 3, "5")]
     report = to_report_dict(**_base_kwargs(trades=trades, metrics=compute_metrics(trades)))  # type: ignore[arg-type]
-    assert report["metrics"]["profit_factor"] is None  # type: ignore[index]
+    assert report["metrics"]["profit_factor"] is None
 
 
 def test_zero_trades_reports_all_metrics_as_null_not_fabricated_zero() -> None:
     report = to_report_dict(**_base_kwargs(trades=[], metrics=None))  # type: ignore[arg-type]
     m = report["metrics"]
-    assert m["trade_count"] == 0  # type: ignore[index]
+    assert m["trade_count"] == 0
     for field in (
         "win_rate",
         "average_win",
@@ -234,7 +235,7 @@ def test_zero_trades_reports_all_metrics_as_null_not_fabricated_zero() -> None:
         "sharpe",
         "sortino",
     ):
-        assert m[field] is None, f"{field} must be null, not a fabricated value"  # type: ignore[index]
+        assert m[field] is None, f"{field} must be null, not a fabricated value"
     assert report["trades"] == []
 
 
@@ -251,7 +252,7 @@ def test_trades_and_metrics_emptiness_must_agree() -> None:
 def test_trades_preserve_deterministic_input_order() -> None:
     trades = [_trade(4, 5, "1"), _trade(0, 1, "2"), _trade(2, 3, "3")]
     report = to_report_dict(**_base_kwargs(trades=trades, metrics=compute_metrics(trades)))  # type: ignore[arg-type]
-    pnls = [t["pnl"] for t in report["trades"]]  # type: ignore[union-attr]
+    pnls = [t["pnl"] for t in report["trades"]]
     assert pnls == ["1", "2", "3"], "must preserve the CALLER's own order, not re-sort"
 
 
@@ -269,9 +270,9 @@ def test_serializer_performs_no_metric_recalculation() -> None:
 
     report = to_report_dict(**_base_kwargs(trades=trades, metrics=fabricated))  # type: ignore[arg-type]
 
-    assert report["metrics"]["trade_count"] == 1  # type: ignore[index]
-    assert report["metrics"]["total_pnl"] == "999999"  # type: ignore[index]
-    assert len(report["trades"]) == 2  # type: ignore[arg-type]
+    assert report["metrics"]["trade_count"] == 1
+    assert report["metrics"]["total_pnl"] == "999999"
+    assert len(report["trades"]) == 2
 
 
 def test_git_commit_and_generated_at_are_not_computed_internally() -> None:
@@ -286,7 +287,7 @@ def test_git_commit_and_generated_at_are_not_computed_internally() -> None:
 
 
 def test_config_identifier_is_deterministic() -> None:
-    params = {"fast_period": 20, "slow_period": 50}
+    params: dict[str, int | str | Decimal] = {"fast_period": 20, "slow_period": 50}
     assert config_identifier(params) == config_identifier(dict(params))
 
 
@@ -313,7 +314,7 @@ def test_config_identifier_treats_decimal_and_equal_string_as_equivalent() -> No
 
 
 def test_config_identifier_is_not_pythons_builtin_hash() -> None:
-    params = {"fast_period": 20, "slow_period": 50}
+    params: dict[str, int | str | Decimal] = {"fast_period": 20, "slow_period": 50}
     assert config_identifier(params) != str(hash(frozenset(params.items())))
     # sha256 hex digest, truncated to 8 chars -- always valid lowercase hex.
     identifier = config_identifier(params)
@@ -336,7 +337,7 @@ def test_report_filename_default_configuration_has_no_suffix() -> None:
 
 
 def test_report_filename_non_default_configuration_has_deterministic_suffix() -> None:
-    params = {"fast_period": 10, "slow_period": 30}
+    params: dict[str, int | str | Decimal] = {"fast_period": 10, "slow_period": 30}
     kwargs: dict[str, object] = {
         "strategy_key": "ema_crossover_v1",
         "instrument": EUR_USD,

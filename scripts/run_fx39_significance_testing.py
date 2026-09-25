@@ -106,6 +106,7 @@ from forex_agent.domain.strategies.multi_timeframe_trend_incremental import (
     IncrementalMultiTimeframeTrendStrategy,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
+from forex_agent.domain.trade_hypothesis import TradeHypothesis
 from forex_agent.domain.trade_simulation import simulate_trades
 from forex_agent.infrastructure.db.candle_repository import SqlAlchemyCandleRepository
 from forex_agent.infrastructure.db.session import get_engine
@@ -186,7 +187,7 @@ async def _holdout_trades_mtt(
         source=CandleSource.NATIVE,
     )
 
-    def _run(candles: list[Candle], h4: list[Candle] = h4_candles) -> list:
+    def _run(candles: list[Candle], h4: list[Candle] = h4_candles) -> list[TradeHypothesis]:
         strategy = IncrementalMultiTimeframeTrendStrategy(h4_candles=h4)
         return run_backtest_incremental(strategy, candles)
 
@@ -354,7 +355,7 @@ async def main() -> None:
             )
         )
 
-        def _gated(c: list[Candle]) -> list:
+        def _gated(c: list[Candle]) -> list[TradeHypothesis]:
             return run_backtest_incremental(IncrementalEmaCrossoverTrendRegimeGatedStrategy(), c)
 
         gated_xau = await _holdout_trades_h1_only(repo, XAU_USD, _gated)

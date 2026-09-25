@@ -355,7 +355,7 @@ async def main(argv: list[str]) -> None:
     _regenerate_dashboard_data(REPORTS_DIR)
 
     print(f"Wrote {REPORTS_DIR / filename}")
-    print(f"  {len(trades)} trades, PF={report['metrics']['profit_factor']}")  # type: ignore[index]
+    print(f"  {len(trades)} trades, PF={report['metrics']['profit_factor']}")
     print(f"Updated {REPORTS_DIR / 'index.json'} and {REPORTS_DIR / 'dashboard_data.js'}")
 
 

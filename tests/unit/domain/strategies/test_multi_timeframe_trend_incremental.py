@@ -5,6 +5,7 @@ against the slow, ground-truth `MultiTimeframeTrendStrategy`.
 import math
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import TypedDict
 
 from forex_agent.domain.backtest import run_backtest
 from forex_agent.domain.candle import Candle
@@ -21,6 +22,19 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
 _EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+class _PeriodKwargs(TypedDict):
+    """Precise key/value types for the `**kwargs`-unpacked period overrides
+    below -- a plain `dict[str, int]` would let mypy treat `**kwargs` as
+    potentially supplying an int to `strategy_version: str` too, since it
+    can't rule out that key being present in a generically-typed dict."""
+
+    h1_fast_period: int
+    h1_slow_period: int
+    h4_fast_period: int
+    h4_slow_period: int
+
 
 # The exact hand-derived series from test_multi_timeframe_trend.py's own
 # module docstring -- reused verbatim so its known decision trace (LONG at
@@ -162,7 +176,12 @@ def test_incremental_matches_slow_engine_across_dst_fall_back_transition() -> No
             for i in range(4)
         ]
 
-    kwargs = {"h1_fast_period": 2, "h1_slow_period": 3, "h4_fast_period": 1, "h4_slow_period": 2}
+    kwargs: _PeriodKwargs = {
+        "h1_fast_period": 2,
+        "h1_slow_period": 3,
+        "h4_fast_period": 1,
+        "h4_slow_period": 2,
+    }
     slow_not_yet = MultiTimeframeTrendStrategy(h4_candles=h4_candles, **kwargs)
     fast_not_yet = IncrementalMultiTimeframeTrendStrategy(h4_candles=h4_candles, **kwargs)
     not_yet_candles = _h1_crossover_ending_at(9)
@@ -200,7 +219,12 @@ def test_h4_bias_requires_one_more_visible_candle_than_ema_readiness() -> None:
     above still passed, then restored the gate and confirmed this test
     passes again.
     """
-    kwargs = {"h1_fast_period": 2, "h1_slow_period": 3, "h4_fast_period": 1, "h4_slow_period": 2}
+    kwargs: _PeriodKwargs = {
+        "h1_fast_period": 2,
+        "h1_slow_period": 3,
+        "h4_fast_period": 1,
+        "h4_slow_period": 2,
+    }
     # Only 2 H4 candles closed by the H1 decision bar -- one short of the
     # 3 the slow strategy's own gate requires. Wildly bullish closes so a
     # premature bias read would clearly diverge (LONG) from the correct,

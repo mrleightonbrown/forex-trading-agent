@@ -16,8 +16,16 @@ from forex_agent.domain.policy_rate_differential import (
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
-def _ts(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _ts(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 def _state(currency: str, rate: str, **overrides: object) -> CurrencyRateState:
@@ -122,8 +130,22 @@ def test_format_pair_uses_slash_form() -> None:
 
 
 def test_currency_rate_state_rejects_float_rate() -> None:
+    # Constructed directly, not via _state(): _state's own `rate: str`
+    # positional parameter always converts through Decimal(rate) before
+    # CurrencyRateState ever sees it, so a bad type passed that way could
+    # never reach (or test) CurrencyRateState.__post_init__'s own guard.
     with pytest.raises(TypeError, match="rate"):
-        _state("EUR", "3.75", rate=3.75)  # type: ignore[arg-type]
+        CurrencyRateState(
+            currency="EUR",
+            rate=3.75,  # type: ignore[arg-type]
+            series_key="EUR_POLICY_RATE",
+            observation_period=_ts(2026, 9, 17),
+            revision_sequence=0,
+            released_at=_ts(2026, 9, 16, 18, 0, 0),
+            effective_at=_ts(2026, 9, 17),
+            released_at_is_verified=True,
+            released_at_is_conservative_bound=False,
+        )
 
 
 def test_snapshot_rejects_float_differential() -> None:

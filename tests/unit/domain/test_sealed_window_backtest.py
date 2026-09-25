@@ -4,6 +4,7 @@ comparison without boundary-straddling leakage.
 """
 
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -21,6 +22,7 @@ from forex_agent.domain.strategies.ema_crossover_incremental import (
     IncrementalEmaCrossoverStrategy,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
+from forex_agent.domain.trade_hypothesis import TradeHypothesis
 from forex_agent.domain.trade_simulation import simulate_trades
 
 EUR_USD = Instrument(base_currency="EUR", quote_currency="USD")
@@ -60,7 +62,9 @@ _WARMUP_MID = _ALL_CANDLES[:150]
 _WINDOW_MID = _ALL_CANDLES[150:300]
 
 
-def _run(strategy: IncrementalEmaCrossoverStrategy):
+def _run(
+    strategy: IncrementalEmaCrossoverStrategy,
+) -> Callable[[list[Candle]], list[TradeHypothesis]]:
     return lambda candles: run_backtest_incremental(strategy, candles)
 
 

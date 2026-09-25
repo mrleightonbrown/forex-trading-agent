@@ -6,8 +6,16 @@ from forex_agent.domain.declared_policy_rate_gap import DeclaredPolicyRateGap
 from forex_agent.domain.timestamps import UtcTimestamp
 
 
-def _ts(*args: int) -> UtcTimestamp:
-    return UtcTimestamp(datetime(*args, tzinfo=UTC))
+def _ts(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+    microsecond: int = 0,
+) -> UtcTimestamp:
+    return UtcTimestamp(datetime(year, month, day, hour, minute, second, microsecond, tzinfo=UTC))
 
 
 def _gap(**overrides: object) -> DeclaredPolicyRateGap:
@@ -52,12 +60,12 @@ def test_rejects_empty_reason() -> None:
 
 def test_rejects_wrong_start_type() -> None:
     with pytest.raises(TypeError, match="start"):
-        _gap(start=datetime(2001, 3, 19, tzinfo=UTC))  # type: ignore[arg-type]
+        _gap(start=datetime(2001, 3, 19, tzinfo=UTC))
 
 
 def test_rejects_wrong_end_type() -> None:
     with pytest.raises(TypeError, match="end"):
-        _gap(end=datetime(2006, 3, 9, tzinfo=UTC))  # type: ignore[arg-type]
+        _gap(end=datetime(2006, 3, 9, tzinfo=UTC))
 
 
 def test_gap_is_immutable() -> None:
