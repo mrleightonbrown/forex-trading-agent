@@ -1241,23 +1241,32 @@ referencing it; fixed, artifact regenerated, no statistic changed).
 
 Three candidates investigated, verified directly rather than assumed:
 **market-quoted FX forward/swap points** -- NOT VIABLE (no free/legal
-historical source; OANDA doesn't even quote FX forwards). **OANDA's own
-historical financing/rollover** -- NOT VIABLE for backtesting (verified
-live: the API exposes only a current snapshot, and this project's own
-practice account has zero historical financing transactions -- it has
-never held a real position). **Short-term wholesale funding-rate
+historical source meeting this project's requirements was found; OANDA
+doesn't even quote FX forwards). **OANDA's own historical financing/
+rollover** -- NOT VIABLE for backtesting (verified live: the API
+exposes only a current snapshot, and this project's own practice
+account has zero historical financing transactions -- it has never held
+a real position; the Wednesday-vs-Thursday triple-roll difference by
+instrument is a concrete exception to the usual convention, not a
+contradiction of OANDA's own docs). **Overnight benchmark rate
 differential** (SOFR/€STR/SONIA/CORRA) -- VIABLE, all four available
 from the same four providers already used for policy rates, with better
-instrument coverage than the existing policy-rate differential.
-Decision: don't pursue the first two; a minimal ingestion design for
-the third is PROPOSED in the ADR but not implemented, pending separate
-sign-off -- and even if built, it would still not be literal tradable
-carry (no cross-currency basis, no broker markup) and must never be
-labeled "carry."
+instrument coverage than the existing policy-rate differential -- but
+with two real methodology breaks (SONIA reformed 2018-04-23, CORRA
+reformed 2020-06-15) and a real secured-vs-unsecured heterogeneity
+across the four legs (SOFR/CORRA are repo-secured, €STR/SONIA are
+unsecured), which is why it's named "overnight benchmark rate
+differential" rather than "funding-rate differential." Decision: don't
+pursue the first two; a minimal ingestion design for the third is
+PROPOSED in the ADR but not implemented, pending separate sign-off --
+and even if built, it would still not be literal tradable carry (no
+cross-currency basis, no broker markup) and must never be labeled
+"carry" or a homogeneous "funding-rate differential."
 
 **Per this story's own explicit stop instruction**: no ingestion code
-for the funding-rate differential without a separate, explicit
-go-ahead; no relabeling of `policy_rate_differential` as "carry."
+for the overnight benchmark rate differential without a separate,
+explicit go-ahead; no relabeling of `policy_rate_differential` as
+"carry."
 
 No further work has been requested; check in before starting anything
 new here or elsewhere — including the proposed funding-rate-differential

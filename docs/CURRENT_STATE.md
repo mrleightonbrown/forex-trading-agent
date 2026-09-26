@@ -1105,34 +1105,42 @@ _Last updated: 2026-09-25 (FX-48)_
   project's first ADR: `docs/adr/0001-tradable-carry-financing-data-
   sourcing.md`. Three candidates investigated, nothing fabricated from
   today's broker table: **market-quoted FX forward/swap points** -- NOT
-  VIABLE, no free/legal historical source exists (a commercial
-  Bloomberg/Refinitiv/ICE-class product in practice), and OANDA doesn't
-  even quote FX forwards (spot/CFD only, confirmed). **OANDA's own
-  historical financing/rollover** -- NOT VIABLE for backtesting,
-  verified live against the real practice API: `/v3/accounts/{id}/
-  instruments` exposes only a CURRENT snapshot (checked: EUR/USD
-  longRate=-0.0247/shortRate=+0.0045, genuinely asymmetric; triple-roll
-  day is Wednesday for EUR/USD but Thursday for USD/CAD, contradicting
-  OANDA's own general docs' universal "Wednesday" claim);
+  VIABLE, no free/legal historical source meeting this project's
+  requirements was found (a commercial Bloomberg/Refinitiv/ICE-class
+  product in practice), and OANDA doesn't even quote FX forwards
+  (spot/CFD only, confirmed). **OANDA's own historical financing/
+  rollover** -- NOT VIABLE for backtesting, verified live against the
+  real practice API: `/v3/accounts/{id}/instruments` exposes only a
+  CURRENT snapshot (checked: EUR/USD longRate=-0.0247/shortRate=+0.0045,
+  genuinely asymmetric; triple-roll day is Wednesday for EUR/USD but
+  Thursday for USD/CAD -- a concrete instrument-specific exception to
+  the usual convention, consistent with USD/CAD's own T+1 settlement);
   `/v3/accounts/{id}/transactions` (`DAILY_FINANCING`) returned ZERO
   records for this project's own practice account (created
   2026-09-13, never held a real position) -- no historical time-series
   endpoint exists independent of an account's own transaction history.
-  **Short-term wholesale funding-rate differential** (SOFR/€STR/SONIA/
-  CORRA) -- VIABLE: all four map onto the SAME FOUR PROVIDERS this
-  project already uses for policy rates (FRED/ECB/BoE/BoC), confirmed
-  directly, with full instrument coverage actually BETTER than the
-  existing policy-rate differential (no GBP/CAD EFFECTIVE-gap, since a
-  daily rate has no ANNOUNCED/EFFECTIVE split). CORRA has a real
-  methodology break at 2020-06-15 (Bank of Canada took over from
-  Refinitiv). **Decision**: don't pursue A or C; B's minimal ingestion
-  design is PROPOSED in the ADR (reusing `MacroSeriesDefinition`/
+  **Overnight benchmark rate differential** (SOFR/€STR/SONIA/CORRA) --
+  VIABLE: all four map onto the SAME FOUR PROVIDERS this project
+  already uses for policy rates (FRED/ECB/BoE/BoC), confirmed directly,
+  with full instrument coverage actually BETTER than the existing
+  policy-rate differential (no GBP/CAD EFFECTIVE-gap, since a daily
+  rate has no ANNOUNCED/EFFECTIVE split). Real methodology breaks on
+  BOTH the GBP leg (SONIA reformed 2018-04-23) and the CAD leg (CORRA
+  reformed 2020-06-15, Bank of Canada took over from Refinitiv) --
+  neither a homogeneous single-methodology series across its full
+  history. Also: SOFR/CORRA are SECURED repo benchmarks while €STR/
+  SONIA are UNSECURED wholesale benchmarks -- a real economic
+  heterogeneity across the three pairs' own contrasts, not just a
+  naming nicety, which is why this candidate is named "overnight
+  benchmark rate differential" rather than "funding-rate differential."
+  **Decision**: don't pursue A or C; B's minimal ingestion design is
+  PROPOSED in the ADR (reusing `MacroSeriesDefinition`/
   `MacroObservationVintage`/`ProviderSeriesMapping` unchanged) but NOT
   implemented -- pending separate sign-off. Even if built, B would
   still not be literal tradable carry (no cross-currency basis, no
   broker markup) and must never be labeled "carry." Full details in
   `docs/DECISIONS.md`'s FX-48 entry. **Stop after FX-48 -- no ingestion
-  code for the funding-rate differential without an explicit new
+  code for the benchmark-rate differential without an explicit new
   story.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle

@@ -8099,14 +8099,17 @@ expected to change on any rerun regardless).
 **Three candidates investigated, nothing fabricated from today's
 broker table**:
 
-- **Market-quoted FX forward/swap points**: NOT VIABLE. No free,
-  legal, continuously-updated historical source exists -- genuine
-  forward-point data is a commercial product in practice (Bloomberg/
-  Refinitiv/ICE, per the academic literature actually checked, e.g. BIS
-  Working Paper 590 on covered-interest-parity breakdown). Separately
-  confirmed: OANDA does not offer FX forward outright contracts at all
-  -- spot/CFD only -- so there is no channel through this project's
-  existing broker relationship either.
+- **Market-quoted FX forward/swap points**: NOT VIABLE. No free, legal
+  historical source meeting this project's requirements was found --
+  genuine forward-point data is a commercial product in practice
+  (Bloomberg/Refinitiv/ICE, per the academic literature actually
+  checked, e.g. BIS Working Paper 590 on covered-interest-parity
+  breakdown; BIS does publish public FX-derivatives datasets, but only
+  aggregated turnover/outstanding statistics, not the daily pair/tenor
+  forward-point history this project needs). Separately confirmed:
+  OANDA does not offer FX forward outright contracts at all -- spot/CFD
+  only -- so there is no channel through this project's existing broker
+  relationship either.
 - **OANDA's own historical financing/rollover**: NOT VIABLE for
   backtesting, verified directly against the real practice API (not
   assumed). `GET /v3/accounts/{id}/instruments` exposes financing
@@ -8115,10 +8118,12 @@ broker table**:
   own markup on top of the underlying differential, not a sign-mirror).
   `financingDaysOfWeek` (also current-only, also per-instrument)
   confirms the triple-roll day REALLY DOES vary by instrument -- checked
-  live: EUR/USD charges triple on Wednesday, USD/CAD on Thursday
-  (consistent with USD/CAD's own T+1 spot settlement) -- contradicting
-  OANDA's own general help documentation, which states "Wednesday" as
-  if universal. `GET /v3/accounts/{id}/transactions`
+  live: EUR/USD charges triple on Wednesday (the usual convention, and
+  OANDA's own general help documentation's own worked example), USD/CAD
+  on Thursday (consistent with USD/CAD's own T+1 spot settlement) -- a
+  concrete, instrument-specific exception to the usual convention, not
+  a contradiction of that documentation (which illustrates one example,
+  not a universal rule). `GET /v3/accounts/{id}/transactions`
   (`DAILY_FINANCING`) returned ZERO records for this project's own
   practice account (created 2026-09-13, `openTradeCount=0`, never held
   a real position) -- there is no history to read because none has ever
@@ -8127,29 +8132,50 @@ broker table**:
   downloadable historical archive was found on OANDA's public site
   either. Using today's snapshot to backfill history would be exactly
   the fabrication this story's own directive forbade.
-- **Short-term wholesale funding-rate differential**: VIABLE. All four
-  needed series map onto the SAME FOUR PROVIDERS this project already
+- **Overnight benchmark rate differential**: VIABLE. All four needed
+  series map onto the SAME FOUR PROVIDERS this project already
   integrates for policy-rate ingestion (FX-43), confirmed by checking
   each directly: USD SOFR via FRED (daily from 2018-04-03), EUR €STR
-  via the ECB Data Portal (daily from 2019-10-02, first published),
-  GBP SONIA via the Bank of England's own database (`IUDSOIA`, daily
-  from 1997, Open Government Licence), CAD CORRA via the Bank of
-  Canada's Valet API (no key, no registration -- but REFORMED
-  methodology only from 2020-06-15, when the Bank of Canada took over
-  administration from Refinitiv; a real methodology break across that
-  date, the same class of issue FX-43H already handles for
-  provisional-vs-verified policy-rate timing). Instrument coverage is
-  full and in fact BETTER than the existing policy-rate differential
-  (no GBP/CAD EFFECTIVE-unavailable problem at all, since a daily
-  published rate has no ANNOUNCED/EFFECTIVE split to begin with).
-  Long/short asymmetry does NOT apply to this candidate's own data (a
-  market rate differential is symmetric by construction; asymmetry only
-  enters once a broker's markup is layered on, i.e. Candidate C) --
-  which is exactly why this candidate, even if built, would still not
-  be literal tradable carry: no cross-currency basis, no broker
-  spread/markup, the same fundamental gap `policy_rate_differential`
-  already has, just measured against the market's actual short-term
-  wholesale rate instead of the central bank's target/policy rate.
+  via the ECB Data Portal (daily from 2019-10-02, first published), GBP
+  SONIA via the Bank of England's own database (`IUDSOIA`, daily from
+  1997, Open Government Licence), CAD CORRA via the Bank of Canada's
+  Valet API (no key, no registration). Instrument coverage is full and
+  in fact BETTER than the existing policy-rate differential (no
+  GBP/CAD EFFECTIVE-unavailable problem at all, since a daily published
+  rate has no ANNOUNCED/EFFECTIVE split to begin with). **Two real
+  methodology breaks, verified precisely, not treated as formalities**:
+  SONIA reformed 2018-04-23 (Bank of England took over administration,
+  broadened coverage, changed the averaging method to a volume-weighted
+  trimmed mean, moved publication to the next business day -- last
+  legacy observation Friday 2018-04-20, first reformed observation
+  Monday 2018-04-23 published Tuesday 2018-04-24); CORRA reformed with
+  a genuine `observation_period`/`released_at` split rather than one
+  boundary date -- the Bank of Canada took over administration and
+  began publishing under the new methodology on 2020-06-15, but that
+  first new-methodology publication was itself FOR Friday 2020-06-12
+  (`released_at >= 2020-06-15` marks the new regime; its first
+  observation has `observation_period = 2020-06-12`) -- the same class
+  of issue FX-43H already handles for provisional-vs-verified
+  policy-rate timing. **A real economic heterogeneity across the four
+  legs**: SOFR and CORRA are both SECURED overnight repo rates ("Secured
+  Overnight Financing Rate", "Canadian Overnight *Repo* Rate Average");
+  €STR and SONIA are both UNSECURED overnight wholesale benchmarks --
+  so EUR/USD and GBP/USD each contrast an unsecured leg against a
+  secured one, while USD/CAD contrasts two secured legs. This doesn't
+  invalidate the candidate (these remain the canonical overnight/RFR
+  benchmark per currency) but means it is a cross-currency
+  benchmark-rate proxy, not a homogeneous "funding-rate differential"
+  -- named `overnight_benchmark_rate_differential` throughout for
+  exactly this reason, not "short-term wholesale funding-rate
+  differential" as first drafted. Long/short asymmetry does NOT apply
+  to this candidate's own data (a market rate differential is symmetric
+  by construction; asymmetry only enters once a broker's markup is
+  layered on, i.e. Candidate C) -- which is exactly why this candidate,
+  even if built, would still not be literal tradable carry: no
+  cross-currency basis, no broker spread/markup, the same fundamental
+  gap `policy_rate_differential` already has, just measured against the
+  market's actual overnight benchmark rate instead of the central
+  bank's target/policy rate.
 
 **Decision**: do not pursue Candidates A or C (closed avenues unless
 the underlying constraint changes: a paid data subscription for A;
@@ -8160,11 +8186,14 @@ PROPOSED in the ADR (reusing `MacroSeriesDefinition`/
 `MacroObservationVintage`/`ProviderSeriesMapping` unchanged, confirmed
 generic/reusable; a new `DailyBenchmarkRateDefinition`-shaped concept
 would be needed since `PolicyRateDefinition`'s own registry is
-decision-date-specific and doesn't fit a continuously-published rate)
--- but **not implemented in this story**, per its own explicit
-constraint, pending separate sign-off. If ever built, Candidate B must
-also never be labeled "carry" -- it is a better funding-cost proxy than
-the policy rate, not a measure of realized carry.
+decision-date-specific and doesn't fit a continuously-published rate,
+and it must support effective-dated methodology regimes per series
+given the SONIA/CORRA breaks above) -- but **not implemented in this
+story**, per its own explicit constraint, pending separate sign-off. If
+ever built, Candidate B must also never be labeled "carry", nor a
+homogeneous "funding-rate differential" without the secured-vs-unsecured
+caveat above -- it is a better benchmark-rate proxy than the policy
+rate, not a measure of realized carry.
 
 **Output**: `docs/adr/0001-tradable-carry-financing-data-sourcing.md`
 (this project's first ADR) plus this entry -- the complete output of
@@ -8177,3 +8206,15 @@ Per this story's own explicit stop instruction: no ingestion code for
 Candidate B without a separate, explicit go-ahead; no relabeling of
 `policy_rate_differential` as "carry"; no further work on this epic
 without an explicit new story.
+
+**2026-09-25 correction, before archival closure (patched in place,
+not a new hardening story)**: a follow-up review found this entry's
+first draft omitted SONIA's own methodology reform (present for CORRA,
+missing for SONIA), conflated CORRA's publication-regime date with its
+first new-methodology observation date, didn't flag the secured-vs-
+unsecured heterogeneity across the four candidate series, and used
+"exists"/"contradicting" wording stronger than the investigation
+actually established in two places. All fixed above (Candidate B
+renamed `overnight_benchmark_rate_differential` throughout); none of
+it changes the decision. Full detail in `docs/adr/0001-tradable-carry-
+financing-data-sourcing.md`'s own correction note.
