@@ -818,8 +818,10 @@ async def main() -> None:
             .strip()
         )
         git_commit_dirty: bool | None = bool(dirty_output)
+        git_dirty_paths = dirty_output.splitlines() if dirty_output else []
     except Exception:
         git_commit_dirty = None
+        git_dirty_paths = []
 
     config = {
         "instruments": [i.symbol for i in PAIRS],
@@ -840,6 +842,7 @@ async def main() -> None:
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "git_commit": commit_hash,
         "git_commit_dirty": git_commit_dirty,
+        "git_dirty_paths": git_dirty_paths,
         "candle_end_actual_by_instrument": candle_end_actual_by_instrument,
         "macro_data_fingerprint": macro_data_fingerprint,
         "config_hash": config_hash,
