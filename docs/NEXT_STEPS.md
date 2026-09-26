@@ -1230,33 +1230,63 @@ scoped, awaiting this story's close), no gated/filtered strategy built
 from the GBP/USD result above, no further investigation of that
 result, no threshold/parameter tuning.
 
+## FX-48: tradable carry / financing feasibility (complete)
+
+A feasibility investigation, not an assumed build -- see this project's
+first ADR, `docs/adr/0001-tradable-carry-financing-data-sourcing.md`,
+for the full findings; summarized in `docs/DECISIONS.md`'s FX-48 entry.
+Also folded in, per the user's own instruction: a minor FX-47 cleanup
+(`git_dirty_paths` wasn't actually stored despite the markdown
+referencing it; fixed, artifact regenerated, no statistic changed).
+
+Three candidates investigated, verified directly rather than assumed:
+**market-quoted FX forward/swap points** -- NOT VIABLE (no free/legal
+historical source; OANDA doesn't even quote FX forwards). **OANDA's own
+historical financing/rollover** -- NOT VIABLE for backtesting (verified
+live: the API exposes only a current snapshot, and this project's own
+practice account has zero historical financing transactions -- it has
+never held a real position). **Short-term wholesale funding-rate
+differential** (SOFR/€STR/SONIA/CORRA) -- VIABLE, all four available
+from the same four providers already used for policy rates, with better
+instrument coverage than the existing policy-rate differential.
+Decision: don't pursue the first two; a minimal ingestion design for
+the third is PROPOSED in the ADR but not implemented, pending separate
+sign-off -- and even if built, it would still not be literal tradable
+carry (no cross-currency basis, no broker markup) and must never be
+labeled "carry."
+
+**Per this story's own explicit stop instruction**: no ingestion code
+for the funding-rate differential without a separate, explicit
+go-ahead; no relabeling of `policy_rate_differential` as "carry."
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-48 (tradable carry/financing
-feasibility, scoped but not started), the future declassification-
-mechanism need noted above (not yet needed, not yet built), the 18
-still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
-known-irregular dates left unresolved, JPY provider mapping, the
-pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
-out of scope for FX-46/FX-46H/FX-47/FX-47H's own research, per FX-46's
-own section 14).
+new here or elsewhere — including the proposed funding-rate-differential
+ingestion (scoped in the ADR but not started), the future
+declassification-mechanism need noted above (not yet needed, not yet
+built), the 18 still-provisional pre-2006 EUR change points, the 8
+USD/6 GBP/3 CAD known-irregular dates left unresolved, JPY provider
+mapping, the pre-2009 CAD gap, or any carry-strategy/tradability work
+(explicitly out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48's own
+research, per FX-46's own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry TRADING strategies, execution logic, or live trading — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H above are the explicitly-
-scoped exceptions (domain model, storage-integrity hardening, canonical
-registry/provider-mapping definitions, real policy-rate ingestion,
-hardening and correction rounds, genuine release-timing verification, a
-deterministic, auditable, scoring-free policy-rate differential
-feature plus two rounds of its own point-in-time hardening, one
-pre-registered, honestly-reported RESEARCH experiment against it, a
-correction to that experiment's own bootstrap validity and artifact
-reproducibility, a pure attribution cross-reference against existing
-technical strategies, and a correction to that cross-reference's own
-inferential methodology and provenance -- still no strategy, no
-decision logic, no "carry" framing, no tradability claim) and do not
-open the door to the rest of this phase.
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48 above are the
+explicitly-scoped exceptions (domain model, storage-integrity
+hardening, canonical registry/provider-mapping definitions, real
+policy-rate ingestion, hardening and correction rounds, genuine
+release-timing verification, a deterministic, auditable, scoring-free
+policy-rate differential feature plus two rounds of its own
+point-in-time hardening, one pre-registered, honestly-reported RESEARCH
+experiment against it, a correction to that experiment's own bootstrap
+validity and artifact reproducibility, a pure attribution
+cross-reference against existing technical strategies, a correction to
+that cross-reference's own inferential methodology and provenance, and
+a data-sourcing feasibility investigation for tradable carry -- still
+no strategy, no decision logic, no "carry" framing, no tradability
+claim) and do not open the door to the rest of this phase.
 The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow

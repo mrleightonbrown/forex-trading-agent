@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-47H)_
+_Last updated: 2026-09-25 (FX-48)_
 
 ## What exists
 
@@ -1096,9 +1096,44 @@ _Last updated: 2026-09-25 (FX-47H)_
   factually and not treated as a signal to act on. The original EUR/USD
   `CloseChannelBreakoutStrategy` "exception" is gone under the correct
   methodology. No new strategy, pairs, buckets, thresholds, or gating.
-  Full details in `docs/DECISIONS.md`'s FX-47H entry. **Stop after
-  FX-47H -- do not start FX-48 (tradable carry/financing feasibility)
-  without an explicit new story.**
+  Full details in `docs/DECISIONS.md`'s FX-47H entry.
+- **FX-48: tradable carry / financing feasibility (complete)**. A
+  feasibility investigation, not an assumed build -- also folded in a
+  minor FX-47 cleanup (its markdown said "see `git_dirty_paths`" but
+  the report never stored that field; fixed and `research_results/
+  fx47/` regenerated, all computed statistics unchanged). This
+  project's first ADR: `docs/adr/0001-tradable-carry-financing-data-
+  sourcing.md`. Three candidates investigated, nothing fabricated from
+  today's broker table: **market-quoted FX forward/swap points** -- NOT
+  VIABLE, no free/legal historical source exists (a commercial
+  Bloomberg/Refinitiv/ICE-class product in practice), and OANDA doesn't
+  even quote FX forwards (spot/CFD only, confirmed). **OANDA's own
+  historical financing/rollover** -- NOT VIABLE for backtesting,
+  verified live against the real practice API: `/v3/accounts/{id}/
+  instruments` exposes only a CURRENT snapshot (checked: EUR/USD
+  longRate=-0.0247/shortRate=+0.0045, genuinely asymmetric; triple-roll
+  day is Wednesday for EUR/USD but Thursday for USD/CAD, contradicting
+  OANDA's own general docs' universal "Wednesday" claim);
+  `/v3/accounts/{id}/transactions` (`DAILY_FINANCING`) returned ZERO
+  records for this project's own practice account (created
+  2026-09-13, never held a real position) -- no historical time-series
+  endpoint exists independent of an account's own transaction history.
+  **Short-term wholesale funding-rate differential** (SOFR/€STR/SONIA/
+  CORRA) -- VIABLE: all four map onto the SAME FOUR PROVIDERS this
+  project already uses for policy rates (FRED/ECB/BoE/BoC), confirmed
+  directly, with full instrument coverage actually BETTER than the
+  existing policy-rate differential (no GBP/CAD EFFECTIVE-gap, since a
+  daily rate has no ANNOUNCED/EFFECTIVE split). CORRA has a real
+  methodology break at 2020-06-15 (Bank of Canada took over from
+  Refinitiv). **Decision**: don't pursue A or C; B's minimal ingestion
+  design is PROPOSED in the ADR (reusing `MacroSeriesDefinition`/
+  `MacroObservationVintage`/`ProviderSeriesMapping` unchanged) but NOT
+  implemented -- pending separate sign-off. Even if built, B would
+  still not be literal tradable carry (no cross-currency basis, no
+  broker markup) and must never be labeled "carry." Full details in
+  `docs/DECISIONS.md`'s FX-48 entry. **Stop after FX-48 -- no ingestion
+  code for the funding-rate differential without an explicit new
+  story.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

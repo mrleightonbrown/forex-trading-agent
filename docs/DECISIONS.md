@@ -8074,3 +8074,106 @@ explicit new story, no gated/filtered strategy built from the GBP/USD
 result above, no further investigation of that one result (itself the
 kind of post-hoc search this epic's own protocol forbids), no
 threshold/parameter tuning of anything reported here.
+
+## 2026-09-25 — FX-48: tradable carry / financing feasibility
+
+A feasibility investigation, not an assumed build:
+`policy_rate_differential` (FX-42–FX-46H) is a central-bank *policy*
+rate differential, never called "carry" in this codebase; actual
+tradable carry needs either market-quoted forward/swap points or a
+broker's own financing/rollover economics, neither ever investigated
+before. Full findings and the decision itself are in the new
+`docs/adr/0001-tradable-carry-financing-data-sourcing.md` (this
+project's first ADR) — this entry summarizes them.
+
+**Also folded into this story per the user's own instruction**: a
+minor, non-blocking FX-47 cleanup — its markdown renderer said "see
+git_dirty_paths" but the report never actually stored that field
+(only the boolean `git_commit_dirty`). Fixed
+(`scripts/run_fx47_rate_differential_attribution.py` now records
+`git_dirty_paths` too) and `research_results/fx47/` regenerated;
+confirmed every computed statistic is unchanged, only provenance
+metadata differs (`git_commit`/`config_hash`/`candle_end_bound`, all
+expected to change on any rerun regardless).
+
+**Three candidates investigated, nothing fabricated from today's
+broker table**:
+
+- **Market-quoted FX forward/swap points**: NOT VIABLE. No free,
+  legal, continuously-updated historical source exists -- genuine
+  forward-point data is a commercial product in practice (Bloomberg/
+  Refinitiv/ICE, per the academic literature actually checked, e.g. BIS
+  Working Paper 590 on covered-interest-parity breakdown). Separately
+  confirmed: OANDA does not offer FX forward outright contracts at all
+  -- spot/CFD only -- so there is no channel through this project's
+  existing broker relationship either.
+- **OANDA's own historical financing/rollover**: NOT VIABLE for
+  backtesting, verified directly against the real practice API (not
+  assumed). `GET /v3/accounts/{id}/instruments` exposes financing
+  fields as a CURRENT SNAPSHOT ONLY -- checked live: EUR/USD
+  `longRate=-0.0247`/`shortRate=+0.0045`, genuinely asymmetric (OANDA's
+  own markup on top of the underlying differential, not a sign-mirror).
+  `financingDaysOfWeek` (also current-only, also per-instrument)
+  confirms the triple-roll day REALLY DOES vary by instrument -- checked
+  live: EUR/USD charges triple on Wednesday, USD/CAD on Thursday
+  (consistent with USD/CAD's own T+1 spot settlement) -- contradicting
+  OANDA's own general help documentation, which states "Wednesday" as
+  if universal. `GET /v3/accounts/{id}/transactions`
+  (`DAILY_FINANCING`) returned ZERO records for this project's own
+  practice account (created 2026-09-13, `openTradeCount=0`, never held
+  a real position) -- there is no history to read because none has ever
+  accrued, and the V20 API has no separate historical financing
+  time-series endpoint independent of an account's own transactions. No
+  downloadable historical archive was found on OANDA's public site
+  either. Using today's snapshot to backfill history would be exactly
+  the fabrication this story's own directive forbade.
+- **Short-term wholesale funding-rate differential**: VIABLE. All four
+  needed series map onto the SAME FOUR PROVIDERS this project already
+  integrates for policy-rate ingestion (FX-43), confirmed by checking
+  each directly: USD SOFR via FRED (daily from 2018-04-03), EUR €STR
+  via the ECB Data Portal (daily from 2019-10-02, first published),
+  GBP SONIA via the Bank of England's own database (`IUDSOIA`, daily
+  from 1997, Open Government Licence), CAD CORRA via the Bank of
+  Canada's Valet API (no key, no registration -- but REFORMED
+  methodology only from 2020-06-15, when the Bank of Canada took over
+  administration from Refinitiv; a real methodology break across that
+  date, the same class of issue FX-43H already handles for
+  provisional-vs-verified policy-rate timing). Instrument coverage is
+  full and in fact BETTER than the existing policy-rate differential
+  (no GBP/CAD EFFECTIVE-unavailable problem at all, since a daily
+  published rate has no ANNOUNCED/EFFECTIVE split to begin with).
+  Long/short asymmetry does NOT apply to this candidate's own data (a
+  market rate differential is symmetric by construction; asymmetry only
+  enters once a broker's markup is layered on, i.e. Candidate C) --
+  which is exactly why this candidate, even if built, would still not
+  be literal tradable carry: no cross-currency basis, no broker
+  spread/markup, the same fundamental gap `policy_rate_differential`
+  already has, just measured against the market's actual short-term
+  wholesale rate instead of the central bank's target/policy rate.
+
+**Decision**: do not pursue Candidates A or C (closed avenues unless
+the underlying constraint changes: a paid data subscription for A;
+this practice account genuinely accruing years of real financing
+history for C, which would support a paper-trading feature, not
+backtesting). Candidate B is viable -- a minimal ingestion design is
+PROPOSED in the ADR (reusing `MacroSeriesDefinition`/
+`MacroObservationVintage`/`ProviderSeriesMapping` unchanged, confirmed
+generic/reusable; a new `DailyBenchmarkRateDefinition`-shaped concept
+would be needed since `PolicyRateDefinition`'s own registry is
+decision-date-specific and doesn't fit a continuously-published rate)
+-- but **not implemented in this story**, per its own explicit
+constraint, pending separate sign-off. If ever built, Candidate B must
+also never be labeled "carry" -- it is a better funding-cost proxy than
+the policy rate, not a measure of realized carry.
+
+**Output**: `docs/adr/0001-tradable-carry-financing-data-sourcing.md`
+(this project's first ADR) plus this entry -- the complete output of
+FX-48 per its own explicit instruction that the result "may be an
+implementation or a documented feasibility result." No code was
+written toward Candidates A or C; Candidate B's design is a proposal
+only, not implemented.
+
+Per this story's own explicit stop instruction: no ingestion code for
+Candidate B without a separate, explicit go-ahead; no relabeling of
+`policy_rate_differential` as "carry"; no further work on this epic
+without an explicit new story.
