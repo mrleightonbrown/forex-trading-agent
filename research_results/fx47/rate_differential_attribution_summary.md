@@ -1,7 +1,7 @@
 # FX-47: Rate Differential x Existing Technical/Regime Evidence
 
-Generated: 2026-09-26T01:52:54+00:00
-Git commit: cad2c87994482756b204085ca18f0c3afdfaa4cb (clean)
+Generated: 2026-09-26T02:38:45+00:00
+Git commit: f83d96d7f969eca346680d80b0aef01dc4d0eba6 (clean)
 Macro data fingerprint: 1d488d1b91acd06b34516410b3881ef23e09b6b245de692c6dc34c6a47075dde (258 vintages, max released_at 2026-09-16T18:00:00+00:00)
 
 Actual candle maxima used per instrument:
