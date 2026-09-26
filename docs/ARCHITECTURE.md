@@ -790,8 +790,28 @@ native H1 candles/pair) made `CloseChannelBreakoutStrategy`'s existing
 O(n^2) `evaluate()`/`run_backtest` path intractable -- the same problem
 FX-29 already solved for every other strategy in this position.
 `IncrementalCloseChannelBreakoutStrategy` follows that exact established
-pattern (same `strategy_key`/parameters/logic, O(1)-per-bar rolling
-window), parity-tested against the unchanged slow reference.
+pattern (same `strategy_key`/parameters/logic, a small rolling-window
+deque instead of full re-slicing/re-scanning). **FX-47H correction**:
+this is O(`lookback`) per bar (it copies the window and takes `max()`/
+`min()` over it every call), not O(1) as originally described here --
+still O(n) overall since `lookback` is a small fixed constant, fully
+solving the practical O(n^2) problem, but the per-bar complexity claim
+itself was wrong. Parity-tested against the unchanged slow reference.
+
+**FX-47H: per-bucket significance is not the same question as
+between-bucket difference.** FX-47's original per-bucket bootstraps
+each tested only "is this bucket's own mean distinguishable from
+zero?" -- not "do two buckets actually differ?" Each cell now also
+computes a joint calendar-year cluster bootstrap contrast (FX-46H's own
+`calendar_year_cluster_bootstrap_differences`, reused unchanged:
+`mean(SUPPORTS) - mean(OPPOSES)` for LEVEL, `mean(INCREASED) -
+mean(DECREASED)` for CHANGE) as the PRIMARY inferential result per
+cell; the original per-bucket stats remain as descriptive-only context.
+The script also now records the same provenance fields FX-46H
+established (actual max H1/H4/D timestamp per instrument, macro-vintage
+fingerprint/count/max `released_at`) -- FX-47's own first version had
+regressed to recording only query bounds. See `docs/DECISIONS.md`'s
+FX-47H entry.
 
 ## Current state
 

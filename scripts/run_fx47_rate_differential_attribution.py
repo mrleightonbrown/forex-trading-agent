@@ -37,6 +37,22 @@ If no interaction appears in any bucket, that is reported as the
 finding -- this script's own protocol forbids treating a null result as
 a reason to try a different strategy, parameter, or bucketing scheme.
 
+FX-47H correction: FX-47's original per-bucket bootstraps each tested
+only "is this bucket's own mean distinguishable from zero?" -- never
+"do SUPPORTS and OPPOSES (or INCREASED and DECREASED) actually differ?"
+A per-bucket CI excluding zero while the other bucket's CI includes
+zero is NOT evidence the two differ. Each cell now ALSO computes a
+joint calendar-year cluster bootstrap contrast (FX-46H's own mechanism,
+reused unchanged: `mean(SUPPORTS) - mean(OPPOSES)` for LEVEL,
+`mean(INCREASED) - mean(DECREASED)` for CHANGE, years resampled jointly
+across both groups) -- this is now the PRIMARY inferential result per
+cell; the original per-bucket metrics/CIs remain, relabeled
+descriptive-only. FX-47H also restores the data-provenance fields
+FX-46H established and FX-47 had regressed on: actual max H1/H4/D
+timestamp used per instrument, and a macro-vintage fingerprint/count/
+max `released_at` (`_CachingMacroObservationRepository.macro_data_
+fingerprint`, copied from FX-46H's own script).
+
 Run:
     uv run python scripts/run_fx47_rate_differential_attribution.py
 
@@ -61,7 +77,7 @@ import csv
 import hashlib
 import json
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -80,10 +96,13 @@ from forex_agent.domain.backtest_metrics import BacktestMetrics, compute_metrics
 from forex_agent.domain.block_bootstrap import (
     BlockLengthSelection,
     BootstrapResult,
+    calendar_year_cluster_bootstrap_differences,
     moving_block_bootstrap_means,
+    percentile_ci,
     select_block_length,
     summarize_bootstrap,
 )
+from forex_agent.domain.candle import Candle
 from forex_agent.domain.candle_source import CandleSource
 from forex_agent.domain.granularity import Granularity
 from forex_agent.domain.incremental_strategy import run_backtest_incremental
@@ -208,13 +227,61 @@ class _CachingMacroObservationRepository:
     ) -> MacroObservationVintage | None:
         return await self._delegate.observation_as_known_at(series_key, observation_period, as_of)
 
+    def macro_data_fingerprint(self) -> dict[str, Any]:
+        """FX-47H: identical in shape and justification to FX-46H's own
+        method of the same name -- a deterministic fingerprint of every
+        series' vintage history actually fetched during this run, so a
+        rerun against the same source commit can detect whether the
+        underlying macro data changed. Copied rather than imported,
+        matching this project's established "each research script is
+        self-contained" convention."""
+        per_series: dict[str, str] = {}
+        max_released_at: UtcTimestamp | None = None
+        total_vintages = 0
+        for series_key in sorted(self._cache):
+            vintages = self._cache[series_key]
+            total_vintages += len(vintages)
+            rows = sorted(
+                (
+                    v.observation_period.value.isoformat(),
+                    str(v.value),
+                    v.released_at.value.isoformat(),
+                    v.revision_sequence,
+                    v.source,
+                    v.effective_at.value.isoformat() if v.effective_at is not None else None,
+                    v.released_at_is_verified,
+                    v.released_at_is_conservative_bound,
+                )
+                for v in vintages
+            )
+            per_series[series_key] = hashlib.sha256(
+                json.dumps(rows, sort_keys=True).encode()
+            ).hexdigest()
+            for v in vintages:
+                if max_released_at is None or v.released_at.value > max_released_at.value:
+                    max_released_at = v.released_at
+        combined = hashlib.sha256(json.dumps(per_series, sort_keys=True).encode()).hexdigest()
+        return {
+            "combined_fingerprint": combined,
+            "per_series_fingerprint": per_series,
+            "max_released_at": max_released_at.value.isoformat() if max_released_at else None,
+            "total_vintages_read": total_vintages,
+        }
+
 
 # --- Trade generation (existing strategies, unchanged parameters) ----------
 
 
+@dataclass(frozen=True, slots=True)
+class _GeneratedTrades:
+    trades_by_strategy: dict[str, list[SimulatedTrade]]
+    h1_max: UtcTimestamp | None
+    h4_max: UtcTimestamp | None
+
+
 async def _generate_trades(
     candle_repo: SqlAlchemyCandleRepository, instrument: Instrument
-) -> dict[str, list[SimulatedTrade]]:
+) -> _GeneratedTrades:
     h1_candles = await candle_repo.get_range(
         instrument, Granularity.H1, _CANDLE_START, _CANDLE_END, source=CandleSource.NATIVE
     )
@@ -230,24 +297,33 @@ async def _generate_trades(
     )
     mtt_trades = simulate_trades(mtt_hypotheses, h1_candles)
 
-    return {
-        "CloseChannelBreakoutStrategy": ccb_trades,
-        "MultiTimeframeTrendStrategy": mtt_trades,
-    }
+    return _GeneratedTrades(
+        trades_by_strategy={
+            "CloseChannelBreakoutStrategy": ccb_trades,
+            "MultiTimeframeTrendStrategy": mtt_trades,
+        },
+        h1_max=h1_candles[-1].start_time if h1_candles else None,
+        h4_max=h4_candles[-1].start_time if h4_candles else None,
+    )
 
 
 # --- Per-D-bar CHANGE precomputation (one per instrument x semantics) ------
 
 
+async def _fetch_d_candles(
+    candle_repo: SqlAlchemyCandleRepository, instrument: Instrument
+) -> list[Candle]:
+    return await candle_repo.get_range(
+        instrument, Granularity.D, _CANDLE_START, _CANDLE_END, source=CandleSource.AGGREGATED
+    )
+
+
 async def _daily_evaluations(
-    candle_repo: SqlAlchemyCandleRepository,
+    d_candles: list[Candle],
     use_case: ComputePolicyRateDifferential,
     instrument: Instrument,
     semantics: RateSemantics,
 ) -> list[FeatureEvaluation]:
-    d_candles = await candle_repo.get_range(
-        instrument, Granularity.D, _CANDLE_START, _CANDLE_END, source=CandleSource.AGGREGATED
-    )
     return [
         await evaluate_feature(use_case, instrument, candle.start_time, semantics)
         for candle in d_candles
@@ -337,6 +413,144 @@ def _axis_report(attributions: list[TradeAttribution], label_fn: Any, axis: str)
     return {label: _bucket_report(trades) for label, trades in sorted(by_bucket.items())}
 
 
+# --- Primary contrast: joint calendar-year cluster bootstrap (FX-47H) ------
+
+
+@dataclass(frozen=True, slots=True)
+class JointContrastResult:
+    bucket_a: str
+    bucket_b: str
+    n_a: int
+    n_b: int
+    n_years_a: int
+    n_years_b: int
+    observed_diff: Decimal | None
+    lower_95: Decimal | None
+    upper_95: Decimal | None
+    fraction_le_zero: Decimal | None
+    note: str | None
+
+
+def _pnl_by_year(
+    attributions: list[TradeAttribution], label_fn: Any, axis: str, bucket: str
+) -> dict[int, list[Decimal]]:
+    by_year: dict[int, list[Decimal]] = {}
+    for a in attributions:
+        if label_fn(getattr(a, axis)) == bucket:
+            year = a.trade.entry_time.value.year
+            by_year.setdefault(year, []).append(a.trade.pnl.amount)
+    return by_year
+
+
+def _joint_contrast(
+    attributions: list[TradeAttribution], label_fn: Any, axis: str, bucket_a: str, bucket_b: str
+) -> JointContrastResult:
+    """FX-47H: THE primary inferential result per cell, answering "do
+    `bucket_a` and `bucket_b` actually differ?" -- unlike each bucket's
+    own individual bootstrap (`_bucket_report`, kept but demoted to
+    descriptive-only), which only ever asks whether ONE bucket's own
+    mean differs from zero. Reuses FX-46H's own `calendar_year_cluster_
+    bootstrap_differences` unchanged: years are resampled JOINTLY across
+    both groups, so within-year dependence between them is preserved
+    (the same reasoning FX-46H's own docstring gives), and a contrast
+    with fewer than 2 distinct calendar-year clusters in either group
+    reports `NOT_ESTIMABLE` rather than a misleading CI.
+    """
+    by_year_a = _pnl_by_year(attributions, label_fn, axis, bucket_a)
+    by_year_b = _pnl_by_year(attributions, label_fn, axis, bucket_b)
+    values_a = [v for vs in by_year_a.values() for v in vs]
+    values_b = [v for vs in by_year_b.values() for v in vs]
+    if not values_a or not values_b:
+        return JointContrastResult(
+            bucket_a=bucket_a,
+            bucket_b=bucket_b,
+            n_a=len(values_a),
+            n_b=len(values_b),
+            n_years_a=len(by_year_a),
+            n_years_b=len(by_year_b),
+            observed_diff=None,
+            lower_95=None,
+            upper_95=None,
+            fraction_le_zero=None,
+            note="not computable: one or both groups have zero observations in this cell",
+        )
+    observed_diff = (sum(values_a, Decimal(0)) / len(values_a)) - (
+        sum(values_b, Decimal(0)) / len(values_b)
+    )
+    outcome = calendar_year_cluster_bootstrap_differences(
+        by_year_a, by_year_b, num_resamples=NUM_RESAMPLES, seed=SEED
+    )
+    if not outcome.estimable:
+        return JointContrastResult(
+            bucket_a=bucket_a,
+            bucket_b=bucket_b,
+            n_a=len(values_a),
+            n_b=len(values_b),
+            n_years_a=outcome.group_a_cluster_count,
+            n_years_b=outcome.group_b_cluster_count,
+            observed_diff=observed_diff,
+            lower_95=None,
+            upper_95=None,
+            fraction_le_zero=None,
+            note=f"NOT_ESTIMABLE: {outcome.reason}",
+        )
+    diffs = outcome.differences
+    assert diffs is not None
+    lower_95, upper_95 = percentile_ci(diffs, Decimal("0.95"))
+    fraction_le_zero = Decimal(sum(1 for d in diffs if d <= 0)) / Decimal(len(diffs))
+    return JointContrastResult(
+        bucket_a=bucket_a,
+        bucket_b=bucket_b,
+        n_a=len(values_a),
+        n_b=len(values_b),
+        n_years_a=outcome.group_a_cluster_count,
+        n_years_b=outcome.group_b_cluster_count,
+        observed_diff=observed_diff,
+        lower_95=lower_95,
+        upper_95=upper_95,
+        fraction_le_zero=fraction_le_zero,
+        note=None,
+    )
+
+
+def _serialize_joint_contrast(c: JointContrastResult) -> dict[str, Any]:
+    return {
+        "bucket_a": c.bucket_a,
+        "bucket_b": c.bucket_b,
+        "n_a": c.n_a,
+        "n_b": c.n_b,
+        "n_years_a": c.n_years_a,
+        "n_years_b": c.n_years_b,
+        "observed_diff": str(c.observed_diff) if c.observed_diff is not None else None,
+        "lower_95": str(c.lower_95) if c.lower_95 is not None else None,
+        "upper_95": str(c.upper_95) if c.upper_95 is not None else None,
+        "fraction_le_zero": str(c.fraction_le_zero) if c.fraction_le_zero is not None else None,
+        "note": c.note,
+    }
+
+
+def _multiplicity_summary(results: dict[str, Any]) -> dict[str, Any]:
+    """FX-47H: counts the DESCRIPTIVE per-bucket CIs actually present in
+    `results` (never a hardcoded guess -- the review that prompted this
+    story found the original "roughly 150" claim was wrong; the real
+    count was 89), so this number is always self-consistent with
+    whatever this run actually produced."""
+    total = 0
+    excludes_zero = 0
+    for by_strategy in results.values():
+        for by_semantics in by_strategy.values():
+            for axes in by_semantics.values():
+                for axis_name in ("level", "change"):
+                    for cell in axes[axis_name].values():
+                        b = cell["bootstrap"]
+                        if b is None:
+                            continue
+                        total += 1
+                        if Decimal(b["lower_95"]) > 0 or Decimal(b["upper_95"]) < 0:
+                            excludes_zero += 1
+    return {"total_descriptive_bucket_cis": total, "excluding_zero": excludes_zero}
+
+
 # --- Output writers ----------------------------------------------------------
 
 _CSV_FIELDS = [
@@ -373,21 +587,45 @@ def _fmt(v: str | None) -> str:
     return v if v is not None else "n/a"
 
 
+_CONTRAST_BUCKETS = {"level": ("SUPPORTS", "OPPOSES"), "change": ("INCREASED", "DECREASED")}
+
+
 def _render_markdown(report: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# FX-47: Rate Differential x Existing Technical/Regime Evidence")
     lines.append("")
     lines.append(f"Generated: {report['generated_at']}  ")
     dirty = report.get("git_commit_dirty")
-    dirty_suffix = " (clean)" if dirty is False else " (DIRTY)" if dirty else " (unknown)"
-    lines.append(f"Git commit: {report['git_commit']}{dirty_suffix}")
+    if dirty is True:
+        dirty_suffix = " (DIRTY -- see git_dirty_paths)"
+    elif dirty is False:
+        dirty_suffix = " (clean)"
+    else:
+        dirty_suffix = " (unknown)"
+    lines.append(f"Git commit: {report['git_commit']}{dirty_suffix}  ")
+    fp = report.get("macro_data_fingerprint") or {}
+    lines.append(
+        f"Macro data fingerprint: {fp.get('combined_fingerprint', 'n/a')} "
+        f"({fp.get('total_vintages_read', 'n/a')} vintages, "
+        f"max released_at {fp.get('max_released_at', 'n/a')})"
+    )
+    lines.append("")
+    lines.append("Actual candle maxima used per instrument:")
+    lines.append("")
+    lines.append("| Instrument | H1 max | H4 max | D max |")
+    lines.append("|---|---|---|---|")
+    for instrument_symbol, maxima in report["candle_end_actual_by_instrument"].items():
+        lines.append(
+            f"| {instrument_symbol} | {_fmt(maxima['h1'])} | {_fmt(maxima['h4'])} | "
+            f"{_fmt(maxima['d'])} |"
+        )
     lines.append("")
     lines.append(
         "ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delayed, "
         "or resized based on the differential. Every trade the strategy generates on the full "
         "available history is bucketed after the fact by two independent axes, reported "
-        "separately. A null result (no bucket differs meaningfully) is a valid, reported "
-        "finding, not a reason to try a different bucketing scheme."
+        "separately. A null result (no interaction survives the primary contrast below) is a "
+        "valid, reported finding, not a reason to try a different bucketing scheme."
     )
     lines.append("")
 
@@ -397,9 +635,41 @@ def _render_markdown(report: dict[str, Any]) -> str:
             for semantics_value, axes in by_semantics.items():
                 lines.append("")
                 lines.append(f"### {strategy_label} / {semantics_value}")
+
+                for axis_name, (bucket_a, bucket_b) in _CONTRAST_BUCKETS.items():
+                    c = axes[f"{axis_name}_contrast"]
+                    lines.append("")
+                    lines.append(
+                        f"**Primary contrast ({axis_name.upper()}): "
+                        f"mean({bucket_a}) - mean({bucket_b})** (joint calendar-year cluster "
+                        f"bootstrap, 95% CI, seed={report['config']['seed']}, "
+                        f"resamples={report['config']['num_resamples']})"
+                    )
+                    lines.append("")
+                    lines.append(
+                        "| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |"
+                    )
+                    lines.append("|---|---|---|---|---|---|---|---|")
+                    ci = (
+                        f"[{c['lower_95']}, {c['upper_95']}]"
+                        if c["lower_95"] is not None
+                        else "n/a"
+                    )
+                    lines.append(
+                        f"| {c['n_a']} | {c['n_b']} | {c['n_years_a']} | {c['n_years_b']} | "
+                        f"{_fmt(c['observed_diff'])} | {ci} | {_fmt(c['fraction_le_zero'])} | "
+                        f"{c['note'] or ''} |"
+                    )
+
+                lines.append("")
+                lines.append(
+                    "*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, "
+                    "NOT a test of whether buckets differ from each other (see primary "
+                    "contrast above for that):*"
+                )
                 for axis_name in ("level", "change"):
                     lines.append("")
-                    lines.append(f"**{axis_name.upper()} axis**")
+                    lines.append(f"**{axis_name.upper()} axis (descriptive)**")
                     lines.append("")
                     lines.append(
                         "| Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |"
@@ -422,7 +692,13 @@ def _render_markdown(report: dict[str, Any]) -> str:
 
     lines.append("## Limitations")
     lines.append("")
+    ms = report["multiplicity_summary"]
     lines.append(
+        "- The PRIMARY inferential result for each cell is its joint calendar-year cluster "
+        "bootstrap contrast (SUPPORTS vs. OPPOSES for LEVEL, INCREASED vs. DECREASED for "
+        "CHANGE) -- NOT the descriptive per-bucket tables. A per-bucket CI excluding zero while "
+        "another bucket's CI includes zero is NOT evidence the two buckets differ (FX-47H: "
+        "FX-47's original report conflated the two).\n"
         "- This is attribution, not a trading signal or filter -- a bucket's own trade count, "
         "expectancy, and CI describe the SAMPLE that landed in it, nothing about future "
         "performance.\n"
@@ -434,11 +710,13 @@ def _render_markdown(report: dict[str, Any]) -> str:
         "itself -- a CI excluding zero in one of these buckets describes the strategy's own "
         "unconditional performance during a data-unavailable period, not a rate-differential "
         "interaction.\n"
-        "- No multiple-comparison correction is applied across the many buckets/axes/cells "
-        "reported here (unlike FX-39's own Holm-Bonferroni treatment of a small, pre-registered "
-        "candidate set) -- with this many 95% CIs computed, a handful excluding zero by chance "
-        "alone, even under a true null, is expected. Treat any single bucket's CI exclusion as "
-        "suggestive, not confirmatory -- especially for a small-n bucket.\n"
+        f"- {ms['excluding_zero']} of {ms['total_descriptive_bucket_cis']} DESCRIPTIVE "
+        "per-bucket CIs (not the primary contrasts above) exclude zero. These are exploratory, "
+        "highly dependent comparisons -- no multiple-comparison correction is applied (unlike "
+        "FX-39's own Holm-Bonferroni treatment of a small, pre-registered candidate set) -- and "
+        "several of the exclusions are sparse or non-research-usable (BLOCKED/UNAVAILABLE/"
+        "tiny-n) buckets. No multiplicity-adjusted inference, in either direction, should be "
+        "drawn from this count.\n"
         "- No parameter, strategy, instrument, or bucketing-scheme change occurred after "
         "seeing any result above."
     )
@@ -453,6 +731,7 @@ async def main() -> None:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
     results: dict[str, Any] = {}
     csv_rows: list[dict[str, Any]] = []
+    candle_end_actual_by_instrument: dict[str, dict[str, str | None]] = {}
 
     async with session_factory() as session:
         candle_repo = SqlAlchemyCandleRepository(session)
@@ -462,16 +741,25 @@ async def main() -> None:
 
         for instrument in PAIRS:
             print(f"{instrument.symbol}: generating trades ...")
-            trades_by_strategy = await _generate_trades(candle_repo, instrument)
+            generated = await _generate_trades(candle_repo, instrument)
+            trades_by_strategy = generated.trades_by_strategy
             for label, trades in trades_by_strategy.items():
                 print(f"  {label}: {len(trades)} trades")
+
+            d_candles = await _fetch_d_candles(candle_repo, instrument)
+            d_max = d_candles[-1].start_time if d_candles else None
+            candle_end_actual_by_instrument[instrument.symbol] = {
+                "h1": generated.h1_max.value.isoformat() if generated.h1_max else None,
+                "h4": generated.h4_max.value.isoformat() if generated.h4_max else None,
+                "d": d_max.value.isoformat() if d_max else None,
+            }
 
             instrument_out: dict[str, Any] = {}
             for strategy_label, trades in trades_by_strategy.items():
                 semantics_out: dict[str, Any] = {}
                 for semantics in SEMANTICS:
                     print(f"  {strategy_label} / {semantics.value}: evaluating differential ...")
-                    daily = await _daily_evaluations(candle_repo, use_case, instrument, semantics)
+                    daily = await _daily_evaluations(d_candles, use_case, instrument, semantics)
                     daily_sorted = sorted(daily, key=lambda e: e.as_of.value)
                     change_events = build_change_events(daily)
                     events_by_as_of = {e.as_of.value: e for e in change_events}
@@ -498,12 +786,23 @@ async def main() -> None:
                             }
                         )
 
+                    level_contrast = _joint_contrast(
+                        attributions, level_bucket_label, "level", "SUPPORTS", "OPPOSES"
+                    )
+                    change_contrast = _joint_contrast(
+                        attributions, change_bucket_label, "change", "INCREASED", "DECREASED"
+                    )
+
                     semantics_out[semantics.value] = {
                         "level": _axis_report(attributions, level_bucket_label, "level"),
                         "change": _axis_report(attributions, change_bucket_label, "change"),
+                        "level_contrast": _serialize_joint_contrast(level_contrast),
+                        "change_contrast": _serialize_joint_contrast(change_contrast),
                     }
                 instrument_out[strategy_label] = semantics_out
             results[instrument.symbol] = instrument_out
+
+        macro_data_fingerprint = cached_repo.macro_data_fingerprint()
 
     try:
         commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
@@ -528,7 +827,8 @@ async def main() -> None:
         "strategies": ["CloseChannelBreakoutStrategy", "MultiTimeframeTrendStrategy"],
         "num_resamples": NUM_RESAMPLES,
         "seed": SEED,
-        "bootstrap_method": "moving_block_bootstrap_means",
+        "bootstrap_method": "moving_block_bootstrap_means (descriptive) / "
+        "calendar_year_cluster_bootstrap_differences (primary contrast)",
         "confidence_level": "0.90/0.95",
         "candle_start_bound": _CANDLE_START.value.isoformat(),
         "candle_end_bound": _CANDLE_END.value.isoformat(),
@@ -540,9 +840,12 @@ async def main() -> None:
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "git_commit": commit_hash,
         "git_commit_dirty": git_commit_dirty,
+        "candle_end_actual_by_instrument": candle_end_actual_by_instrument,
+        "macro_data_fingerprint": macro_data_fingerprint,
         "config_hash": config_hash,
         "config": config,
         "results": results,
+        "multiplicity_summary": _multiplicity_summary(results),
     }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
