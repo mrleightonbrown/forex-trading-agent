@@ -1,15 +1,38 @@
 # FX-47: Rate Differential x Existing Technical/Regime Evidence
 
-Generated: 2026-09-25T19:39:07+00:00
-Git commit: f4ad5dcc60754aae121d5cd7ccb549b8aaf06435 (clean)
+Generated: 2026-09-26T01:52:54+00:00
+Git commit: cad2c87994482756b204085ca18f0c3afdfaa4cb (clean)
+Macro data fingerprint: 1d488d1b91acd06b34516410b3881ef23e09b6b245de692c6dc34c6a47075dde (258 vintages, max released_at 2026-09-16T18:00:00+00:00)
 
-ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delayed, or resized based on the differential. Every trade the strategy generates on the full available history is bucketed after the fact by two independent axes, reported separately. A null result (no bucket differs meaningfully) is a valid, reported finding, not a reason to try a different bucketing scheme.
+Actual candle maxima used per instrument:
+
+| Instrument | H1 max | H4 max | D max |
+|---|---|---|---|
+| EUR_USD | 2026-09-18T20:00:00+00:00 | 2026-09-18T17:00:00+00:00 | 2026-09-17T21:00:00+00:00 |
+| GBP_USD | 2026-09-18T20:00:00+00:00 | 2026-09-18T17:00:00+00:00 | 2026-09-17T21:00:00+00:00 |
+| USD_CAD | 2026-09-18T20:00:00+00:00 | 2026-09-18T17:00:00+00:00 | 2026-09-17T21:00:00+00:00 |
+
+ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delayed, or resized based on the differential. Every trade the strategy generates on the full available history is bucketed after the fact by two independent axes, reported separately. A null result (no interaction survives the primary contrast below) is a valid, reported finding, not a reason to try a different bucketing scheme.
 
 ## EUR_USD
 
 ### CloseChannelBreakoutStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 957 | 957 | 13 | 13 | -0.0004731974921630094043887147335 | [-0.001190730780121243162644425797, 0.00009390274290933074351152391393] | 0.9421 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 10 | 20 | 4 | 6 | 0.0057035 | [-0.0006087351778656126482213438735, 0.01316982965686274509803921568] | 0.0428 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -17,7 +40,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 957 | 0.00005568443051201671891327063741 | 1.026783470542705788928761698 | 0.15346 | [-0.0002738098223615464994775339603, 0.0003996859979101358411703239290] | [-0.0003357194357366771159874608150, 0.0004646833855799373040752351097] | 0.3919 |
 | SUPPORTS | 957 | -0.0004175130616509926854754440961 | 0.8068246647134472389019425831 | 0.41192 | [-0.0006943699059561128526645768025, -0.0001518688610240334378265412748] | [-0.0007435673981191222570532915361, -0.0001023388192267502612330198537] | 0.9948 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -30,7 +53,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### CloseChannelBreakoutStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 836 | 836 | 11 | 11 | -0.0002362081339712918660287081340 | [-0.0009200728837792179018500055389, 0.0003012726233926691334318755015] | 0.7741 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 15 | 16 | 5 | 7 | -0.0006550833333333333333333333333 | [-0.006350194805194805194805194805, 0.002901388888888888888888888889] | 0.6297 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -39,7 +76,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | SUPPORTS | 836 | -0.0003244617224880382775119617225 | 0.8427508884212479057606798959 | 0.29450 | [-0.0006049108851674641148325358852, -0.00004151076555023923444976076555] | [-0.0006621187200956937799043062201, 0.00001228558612440191387559808612] | 0.97 |
 | UNAVAILABLE | 1683 | -0.0001140522875816993464052287582 | 0.9621445940429258018266046886 | 0.53425 | [-0.0004573324420677361853832442068, 0.0002281072489601901366607248960] | [-0.0005228095662507427213309566251, 0.0003008902257872846108140225788] | 0.7148 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -53,7 +90,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 173 | 223 | 10 | 13 | -0.0006676318722621115114440498716 | [-0.001670236072653423494952095521, 0.0005055027371894991613411494311] | 0.8774 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 7 | 1 | 4 | 1 | 0.004382857142857142857142857143 | n/a | n/a | NOT_ESTIMABLE: at least one group has fewer than 2 distinct calendar-year clusters in the full sample -- a cluster bootstrap cannot estimate between-year uncertainty from a single cluster, no matter how it is resampled |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -61,7 +112,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 223 | 0.0001017937219730941704035874439 | 1.040863350794765170744001008 | 0.12212 | [-0.0008061614349775784753363228699, 0.001050367713004484304932735426] | [-0.0009612152466367713004484304933, 0.001244690582959641255605381166] | 0.4424 |
 | SUPPORTS | 173 | -0.0005658381502890173410404624277 | 0.7670284163929744395259174639 | 0.13082 | [-0.001219153179190751445086705202, 0.0001823757225433526011560693642] | [-0.001343294797687861271676300578, 0.0003300086705202312138728323699] | 0.9009 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -72,7 +123,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 160 | 182 | 8 | 11 | -0.0002751552197802197802197802198 | [-0.001353646255544323130309521395, 0.0009481128789659224441833137483] | 0.6784 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 2 | 6 | 2 | 4 | 0.003630 | [-0.0039075000, 0.01110666666666666666666666667] | 0.2857 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -81,7 +146,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | SUPPORTS | 160 | -0.000670375 | 0.7178259497000947069346522151 | 0.13082 | [-0.00132013750, -0.000022793750] | [-0.0014424406250, 0.0001134390625] | 0.9559 |
 | UNAVAILABLE | 368 | -0.0002730434782608695652173913043 | 0.9288486050134541849596374451 | 0.33284 | [-0.001114797554347826086956521739, 0.0007219198369565217391304347826] | [-0.001272410326086956521739130435, 0.0009085414402173913043478260870] | 0.6524 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -95,7 +160,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### CloseChannelBreakoutStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 1153 | 1156 | 17 | 17 | -0.0004622862053856796021811612252 | [-0.001216254657394860473605890869, 0.0004249666027453127188118153759] | 0.8664 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 19 | 26 | 7 | 10 | -0.001133441295546558704453441295 | [-0.007886886115228584802621313777, 0.008685294894044574351479722324] | 0.584 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -104,7 +183,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 1156 | 0.0001580017301038062283737024221 | 1.052257680577252101465446701 | 0.23783 | [-0.0002969710207612456747404844290, 0.0006215852076124567474048442907] | [-0.0003846368944636678200692041523, 0.0007125776384083044982698961938] | 0.293 |
 | SUPPORTS | 1153 | -0.0003042844752818733738074588031 | 0.9068329743926112207259719947 | 0.64914 | [-0.0007894761491760624457935819601, 0.0001150420641803989592367736340] | [-0.0008709952298352124891587163920, 0.0001987885949696444058976582827] | 0.8975 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -118,14 +197,28 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### CloseChannelBreakoutStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
 | BLOCKED | 806 | -0.0002583870967741935483870967742 | 0.9373418578412937194433997744 | 0.45397 | [-0.001005210297766749379652605459, 0.0005423145161290322580645161290] | [-0.001131917493796526054590570720, 0.0007042847394540942928039702234] | 0.7158 |
 | UNAVAILABLE | 3875 | -0.0001727535483870967741935483871 | 0.9464980614718427886033246297 | 1.09384 | [-0.0004195068387096774193548387096, 0.00008547703225806451612903225807] | [-0.0004676672258064516129032258065, 0.0001328293548387096774193548387] | 0.8669 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -135,7 +228,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 238 | 237 | 14 | 15 | -0.001721145622806084459100095734 | [-0.003229466992198870582756010944, -0.0004013488451923778209398650061] | 0.9951 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 3 | 7 | 3 | 6 | 0.01482714285714285714285714286 | [-0.01288625000, 0.05262666666666666666666666667] | 0.2604 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -144,7 +251,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 237 | 0.001112658227848101265822784810 | 1.292866583001077287013693762 | 0.09392 | [-0.0003226286919831223628691983122, 0.002646388185654008438818565401] | [-0.0005658808016877637130801687764, 0.002914828059071729957805907173] | 0.106 |
 | SUPPORTS | 238 | -0.0006084873949579831932773109244 | 0.8232609226263119355626067855 | 0.25102 | [-0.001600852941176470588235294118, 0.0004737247899159663865546218488] | [-0.001765589285714285714285714285, 0.0006969758403361344537815126050] | 0.8303 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -155,14 +262,28 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
 | BLOCKED | 176 | 0.002152215909090909090909090909 | 1.571430726526671494086410813 | 0.13339 | [0.0002169232954545454545454545454, 0.004471193181818181818181818181] | [-0.00008568039772727272727272727273, 0.004962696022727272727272727272] | 0.0312 |
 | UNAVAILABLE | 810 | -0.00006480246913580246913580246914 | 0.9834024765060774319213791533 | 0.24067 | [-0.0007274703703703703703703703704, 0.0006066740740740740740740740741] | [-0.0008345524691358024691358024691, 0.0007379648148148148148148148148] | 0.5662 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -173,7 +294,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### CloseChannelBreakoutStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 848 | 853 | 11 | 11 | 0.0000732138926983565219314738216 | [-0.0003885809546804198457138688529, 0.0005046247568340059265484738050] | 0.3809 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 10 | 13 | 5 | 6 | 0.003955846153846153846153846154 | [-0.004356904761904761904761904762, 0.01053380952380952380952380952] | 0.1871 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -181,7 +316,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 853 | -0.0002949237983587338804220398593 | 0.8675522141319055065047199364 | 0.34281 | [-0.0006099349355216881594372801876, 0.00002171395076201641266119577960] | [-0.0006643282532239155920281359906, 0.00008670398593200468933177022275] | 0.9368 |
 | SUPPORTS | 848 | -0.0002217099056603773584905660377 | 0.9016282793189690354851874719 | 0.35668 | [-0.0005474115566037735849056603773, 0.00008597228773584905660377358491] | [-0.0006006603773584905660377358490, 0.0001540100235849056603773584906] | 0.8835 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -194,14 +329,28 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### CloseChannelBreakoutStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
 | BLOCKED | 1473 | -0.0004110794297352342158859470468 | 0.8698271154813550431458877046 | 0.73980 | [-0.0007593852681602172437202987101, -0.00003407501697216564833672776647] | [-0.0008235974202308214528173794976, 0.00003837067209775967413441955193] | 0.9627 |
 | UNAVAILABLE | 3191 | -0.0002963428392353494202444374804 | 0.8702709599177969810419973468 | 1.11161 | [-0.0004695739580068943904732058916, -0.0001242471012221874020683171420] | [-0.0004989167972422438107176433720, -0.00009076762770291444688185521780] | 0.998 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -211,7 +360,21 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / ANNOUNCED
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 196 | 171 | 10 | 11 | -0.0000530704738035565103234276166 | [-0.0009247544046636370822698102742, 0.0008063828301941177062420751430] | 0.5437 |  |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 4 | 3 | 3 | 3 | -0.002270833333333333333333333333 | [-0.015852000, 0.016364000] | 0.5743 |  |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -219,7 +382,7 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 | OPPOSES | 171 | -0.0003143274853801169590643274854 | 0.8891341116290582071696712182 | 0.15649 | [-0.001253459064327485380116959064, 0.0006953742690058479532163742690] | [-0.001427200292397660818713450292, 0.0009213450292397660818713450292] | 0.7041 |
 | SUPPORTS | 196 | -0.0003673979591836734693877551020 | 0.8545046774291313923181055907 | 0.13905 | [-0.001118433673469387755102040817, 0.0004506887755102040816326530612] | [-0.001254033163265306122448979591, 0.0006189885204081632653061224490] | 0.7788 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -230,14 +393,28 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ### MultiTimeframeTrendStrategy / EFFECTIVE
 
-**LEVEL axis**
+**Primary contrast (LEVEL): mean(SUPPORTS) - mean(OPPOSES)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+**Primary contrast (CHANGE): mean(INCREASED) - mean(DECREASED)** (joint calendar-year cluster bootstrap, 95% CI, seed=47, resamples=10000)
+
+| n_a | n_b | years_a | years_b | diff | 95% CI | frac<=0 | note |
+|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | n/a | n/a | n/a | not computable: one or both groups have zero observations in this cell |
+
+*Descriptive per-bucket stats below -- each bucket's own mean vs. zero, NOT a test of whether buckets differ from each other (see primary contrast above for that):*
+
+**LEVEL axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
 | BLOCKED | 322 | -0.00006198757763975155279503105590 | 0.9813705176308077131283716936 | 0.14880 | [-0.001104326086956521739130434783, 0.0009883198757763975155279503105] | [-0.001296265527950310559006211180, 0.001212886645962732919254658385] | 0.5723 |
 | UNAVAILABLE | 681 | -0.0005744052863436123348017621145 | 0.7927795730253747947237378821 | 0.45931 | [-0.001014690161527165932452276064, -0.00009137371512481644640234948605] | [-0.001099745594713656387665198238, 0.000007905653450807635829662261380] | 0.9737 |
 
-**CHANGE axis**
+**CHANGE axis (descriptive)**
 
 | Bucket | n | expectancy | PF | max DD | 90% CI | 95% CI | frac<=0 |
 |---|---|---|---|---|---|---|---|
@@ -246,8 +423,9 @@ ATTRIBUTION only -- no strategy parameter was changed, no trade was gated, delay
 
 ## Limitations
 
+- The PRIMARY inferential result for each cell is its joint calendar-year cluster bootstrap contrast (SUPPORTS vs. OPPOSES for LEVEL, INCREASED vs. DECREASED for CHANGE) -- NOT the descriptive per-bucket tables. A per-bucket CI excluding zero while another bucket's CI includes zero is NOT evidence the two buckets differ (FX-47H: FX-47's original report conflated the two).
 - This is attribution, not a trading signal or filter -- a bucket's own trade count, expectancy, and CI describe the SAMPLE that landed in it, nothing about future performance.
 - Bootstraps drawn from a small number of trades in a bucket are not equivalent to many independent historical samples -- interpret CI width accordingly, next to each bucket's own `n`.
 - BLOCKED/UNAVAILABLE/NO_GOVERNING_DAY buckets reflect this project's own current data coverage limits (see FX-45/FX-45H/FX-46), not a property of the differential itself -- a CI excluding zero in one of these buckets describes the strategy's own unconditional performance during a data-unavailable period, not a rate-differential interaction.
-- No multiple-comparison correction is applied across the many buckets/axes/cells reported here (unlike FX-39's own Holm-Bonferroni treatment of a small, pre-registered candidate set) -- with this many 95% CIs computed, a handful excluding zero by chance alone, even under a true null, is expected. Treat any single bucket's CI exclusion as suggestive, not confirmatory -- especially for a small-n bucket.
+- 13 of 89 DESCRIPTIVE per-bucket CIs (not the primary contrasts above) exclude zero. These are exploratory, highly dependent comparisons -- no multiple-comparison correction is applied (unlike FX-39's own Holm-Bonferroni treatment of a small, pre-registered candidate set) -- and several of the exclusions are sparse or non-research-usable (BLOCKED/UNAVAILABLE/tiny-n) buckets. No multiplicity-adjusted inference, in either direction, should be drawn from this count.
 - No parameter, strategy, instrument, or bucketing-scheme change occurred after seeing any result above.

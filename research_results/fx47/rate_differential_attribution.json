@@ -1,9 +1,37 @@
 {
   "story": "FX-47",
-  "generated_at": "2026-09-25T19:39:07+00:00",
-  "git_commit": "f4ad5dcc60754aae121d5cd7ccb549b8aaf06435",
+  "generated_at": "2026-09-26T01:52:54+00:00",
+  "git_commit": "cad2c87994482756b204085ca18f0c3afdfaa4cb",
   "git_commit_dirty": false,
-  "config_hash": "9df21023eeb1735c445830671c1282c5b87aacb3a9c11c1fb4e9c6a6b2acce7a",
+  "candle_end_actual_by_instrument": {
+    "EUR_USD": {
+      "h1": "2026-09-18T20:00:00+00:00",
+      "h4": "2026-09-18T17:00:00+00:00",
+      "d": "2026-09-17T21:00:00+00:00"
+    },
+    "GBP_USD": {
+      "h1": "2026-09-18T20:00:00+00:00",
+      "h4": "2026-09-18T17:00:00+00:00",
+      "d": "2026-09-17T21:00:00+00:00"
+    },
+    "USD_CAD": {
+      "h1": "2026-09-18T20:00:00+00:00",
+      "h4": "2026-09-18T17:00:00+00:00",
+      "d": "2026-09-17T21:00:00+00:00"
+    }
+  },
+  "macro_data_fingerprint": {
+    "combined_fingerprint": "1d488d1b91acd06b34516410b3881ef23e09b6b245de692c6dc34c6a47075dde",
+    "per_series_fingerprint": {
+      "CAD_POLICY_RATE": "f73ae0d2e84d63b0db8654a45f2fed078b29898d9e221802e2f42b8aa3d4762d",
+      "EUR_POLICY_RATE": "aabc3bf69e184cfa3cc7ab3761f8a1b26ca6ebb71d0a4053cf86ba64582f546a",
+      "GBP_POLICY_RATE": "ceaf09decfda2bc4350468b7421ef870b1fda1e80d1c1640a0426cfe38756eec",
+      "USD_POLICY_RATE": "d1e7fb4a876318f7cdd58059984ec8171e3b5e05a42eff7678f571d31b61583c"
+    },
+    "max_released_at": "2026-09-16T18:00:00+00:00",
+    "total_vintages_read": 258
+  },
+  "config_hash": "398d6b058684ea06cdafaf1de106d7be82f8aacc3eab3a7eea59c6db863180bc",
   "config": {
     "instruments": [
       "EUR_USD",
@@ -20,10 +48,10 @@
     ],
     "num_resamples": 10000,
     "seed": 47,
-    "bootstrap_method": "moving_block_bootstrap_means",
+    "bootstrap_method": "moving_block_bootstrap_means (descriptive) / calendar_year_cluster_bootstrap_differences (primary contrast)",
     "confidence_level": "0.90/0.95",
     "candle_start_bound": "2000-01-01T00:00:00+00:00",
-    "candle_end_bound": "2026-09-25T19:35:03.957922+00:00"
+    "candle_end_bound": "2026-09-26T01:48:33.538343+00:00"
   },
   "results": {
     "EUR_USD": {
@@ -735,6 +763,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 957,
+            "n_b": 957,
+            "n_years_a": 13,
+            "n_years_b": 13,
+            "observed_diff": "-0.0004731974921630094043887147335",
+            "lower_95": "-0.001190730780121243162644425797",
+            "upper_95": "0.00009390274290933074351152391393",
+            "fraction_le_zero": "0.9421",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 10,
+            "n_b": 20,
+            "n_years_a": 4,
+            "n_years_b": 6,
+            "observed_diff": "0.0057035",
+            "lower_95": "-0.0006087351778656126482213438735",
+            "upper_95": "0.01316982965686274509803921568",
+            "fraction_le_zero": "0.0428",
+            "note": null
           }
         },
         "EFFECTIVE": {
@@ -1642,6 +1696,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 836,
+            "n_b": 836,
+            "n_years_a": 11,
+            "n_years_b": 11,
+            "observed_diff": "-0.0002362081339712918660287081340",
+            "lower_95": "-0.0009200728837792179018500055389",
+            "upper_95": "0.0003012726233926691334318755015",
+            "fraction_le_zero": "0.7741",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 15,
+            "n_b": 16,
+            "n_years_a": 5,
+            "n_years_b": 7,
+            "observed_diff": "-0.0006550833333333333333333333333",
+            "lower_95": "-0.006350194805194805194805194805",
+            "upper_95": "0.002901388888888888888888888889",
+            "fraction_le_zero": "0.6297",
+            "note": null
           }
         }
       },
@@ -2236,6 +2316,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 173,
+            "n_b": 223,
+            "n_years_a": 10,
+            "n_years_b": 13,
+            "observed_diff": "-0.0006676318722621115114440498716",
+            "lower_95": "-0.001670236072653423494952095521",
+            "upper_95": "0.0005055027371894991613411494311",
+            "fraction_le_zero": "0.8774",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 7,
+            "n_b": 1,
+            "n_years_a": 4,
+            "n_years_b": 1,
+            "observed_diff": "0.004382857142857142857142857143",
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "NOT_ESTIMABLE: at least one group has fewer than 2 distinct calendar-year clusters in the full sample -- a cluster bootstrap cannot estimate between-year uncertainty from a single cluster, no matter how it is resampled"
           }
         },
         "EFFECTIVE": {
@@ -3018,6 +3124,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 160,
+            "n_b": 182,
+            "n_years_a": 8,
+            "n_years_b": 11,
+            "observed_diff": "-0.0002751552197802197802197802198",
+            "lower_95": "-0.001353646255544323130309521395",
+            "upper_95": "0.0009481128789659224441833137483",
+            "fraction_le_zero": "0.6784",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 2,
+            "n_b": 6,
+            "n_years_a": 2,
+            "n_years_b": 4,
+            "observed_diff": "0.003630",
+            "lower_95": "-0.0039075000",
+            "upper_95": "0.01110666666666666666666666667",
+            "fraction_le_zero": "0.2857",
+            "note": null
           }
         }
       }
@@ -3856,6 +3988,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 1153,
+            "n_b": 1156,
+            "n_years_a": 17,
+            "n_years_b": 17,
+            "observed_diff": "-0.0004622862053856796021811612252",
+            "lower_95": "-0.001216254657394860473605890869",
+            "upper_95": "0.0004249666027453127188118153759",
+            "fraction_le_zero": "0.8664",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 19,
+            "n_b": 26,
+            "n_years_a": 7,
+            "n_years_b": 10,
+            "observed_diff": "-0.001133441295546558704453441295",
+            "lower_95": "-0.007886886115228584802621313777",
+            "upper_95": "0.008685294894044574351479722324",
+            "fraction_le_zero": "0.584",
+            "note": null
           }
         },
         "EFFECTIVE": {
@@ -4312,6 +4470,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
           }
         }
       },
@@ -4966,6 +5150,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 238,
+            "n_b": 237,
+            "n_years_a": 14,
+            "n_years_b": 15,
+            "observed_diff": "-0.001721145622806084459100095734",
+            "lower_95": "-0.003229466992198870582756010944",
+            "upper_95": "-0.0004013488451923778209398650061",
+            "fraction_le_zero": "0.9951",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 3,
+            "n_b": 7,
+            "n_years_a": 3,
+            "n_years_b": 6,
+            "observed_diff": "0.01482714285714285714285714286",
+            "lower_95": "-0.01288625000",
+            "upper_95": "0.05262666666666666666666666667",
+            "fraction_le_zero": "0.2604",
+            "note": null
           }
         },
         "EFFECTIVE": {
@@ -5355,6 +5565,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
           }
         }
       }
@@ -6067,6 +6303,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 848,
+            "n_b": 853,
+            "n_years_a": 11,
+            "n_years_b": 11,
+            "observed_diff": "0.0000732138926983565219314738216",
+            "lower_95": "-0.0003885809546804198457138688529",
+            "upper_95": "0.0005046247568340059265484738050",
+            "fraction_le_zero": "0.3809",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 10,
+            "n_b": 13,
+            "n_years_a": 5,
+            "n_years_b": 6,
+            "observed_diff": "0.003955846153846153846153846154",
+            "lower_95": "-0.004356904761904761904761904762",
+            "upper_95": "0.01053380952380952380952380952",
+            "fraction_le_zero": "0.1871",
+            "note": null
           }
         },
         "EFFECTIVE": {
@@ -6525,6 +6787,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
           }
         }
       },
@@ -7117,6 +7405,32 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 196,
+            "n_b": 171,
+            "n_years_a": 10,
+            "n_years_b": 11,
+            "observed_diff": "-0.0000530704738035565103234276166",
+            "lower_95": "-0.0009247544046636370822698102742",
+            "upper_95": "0.0008063828301941177062420751430",
+            "fraction_le_zero": "0.5437",
+            "note": null
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 4,
+            "n_b": 3,
+            "n_years_a": 3,
+            "n_years_b": 3,
+            "observed_diff": "-0.002270833333333333333333333333",
+            "lower_95": "-0.015852000",
+            "upper_95": "0.016364000",
+            "fraction_le_zero": "0.5743",
+            "note": null
           }
         },
         "EFFECTIVE": {
@@ -7519,9 +7833,39 @@
                 }
               }
             }
+          },
+          "level_contrast": {
+            "bucket_a": "SUPPORTS",
+            "bucket_b": "OPPOSES",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
+          },
+          "change_contrast": {
+            "bucket_a": "INCREASED",
+            "bucket_b": "DECREASED",
+            "n_a": 0,
+            "n_b": 0,
+            "n_years_a": 0,
+            "n_years_b": 0,
+            "observed_diff": null,
+            "lower_95": null,
+            "upper_95": null,
+            "fraction_le_zero": null,
+            "note": "not computable: one or both groups have zero observations in this cell"
           }
         }
       }
     }
+  },
+  "multiplicity_summary": {
+    "total_descriptive_bucket_cis": 89,
+    "excluding_zero": 13
   }
 }

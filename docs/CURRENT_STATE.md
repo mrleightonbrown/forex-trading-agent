@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-47)_
+_Last updated: 2026-09-25 (FX-47H)_
 
 ## What exists
 
@@ -1066,9 +1066,39 @@ _Last updated: 2026-09-25 (FX-47)_
   SUPPORTS/OPPOSES sign mapping, the look-ahead-safe D-bar join) plus
   the incremental strategy's own window ordering. 25 new tests, 1210
   pass (full suite, up from 1185). Full results: `research_results/
-  fx47/`. Full details in `docs/DECISIONS.md`'s FX-47 entry. **Stop
-  after FX-47 -- do not start FX-48 (tradable carry/financing
-  feasibility) without an explicit new story.**
+  fx47/`. Full details in `docs/DECISIONS.md`'s FX-47 entry. **Superseded
+  by FX-47H below** -- the EUR/USD "exception" above did not survive a
+  proper joint contrast; the multiplicity count ("roughly 150") was
+  also wrong (actual: 89).
+- **FX-47H: attribution validity & provenance hardening (complete)**.
+  An external review of FX-47 found its per-bucket bootstraps each
+  tested only "is this bucket's own mean distinguishable from zero?",
+  never "do SUPPORTS and OPPOSES (or INCREASED and DECREASED) actually
+  differ?" -- the reported EUR/USD exception didn't survive a proper
+  joint contrast: `mean(SUPPORTS) - mean(OPPOSES) = -0.0004732`, 95% CI
+  (FX-46H's own joint calendar-year cluster bootstrap, 13 clusters each
+  side) `[-0.00119, +0.00009]` -- crossing zero. Fixed: each cell now
+  computes a joint calendar-year cluster bootstrap contrast (reusing
+  `calendar_year_cluster_bootstrap_differences` unchanged) as the
+  PRIMARY inferential result; per-bucket stats remain, relabeled
+  descriptive-only. Also restored the FX-46H-style provenance FX-47 had
+  regressed on (actual max H1/H4/D timestamp per instrument,
+  macro-vintage fingerprint/count/max `released_at`), corrected the
+  multiplicity count (89 descriptive bucket CIs, 13 excluding zero --
+  not "roughly 150"), and fixed `IncrementalCloseChannelBreakoutStrategy`'s
+  own complexity description (O(`lookback`) per bar, not O(1)). **Real,
+  corrected result**: of the now 15 estimable primary contrasts (8
+  LEVEL + 7 CHANGE; the rest `NOT_ESTIMABLE` or not computable for zero
+  observations), exactly ONE excludes zero -- GBP/USD
+  `MultiTimeframeTrendStrategy` ANNOUNCED/LEVEL, SUPPORTS (n=238) vs.
+  OPPOSES (n=237), 95% CI `[-0.00323, -0.00040]` -- roughly consistent
+  with the ~5% base rate expected across this many tests, reported
+  factually and not treated as a signal to act on. The original EUR/USD
+  `CloseChannelBreakoutStrategy` "exception" is gone under the correct
+  methodology. No new strategy, pairs, buckets, thresholds, or gating.
+  Full details in `docs/DECISIONS.md`'s FX-47H entry. **Stop after
+  FX-47H -- do not start FX-48 (tradable carry/financing feasibility)
+  without an explicit new story.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

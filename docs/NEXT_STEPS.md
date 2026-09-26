@@ -1193,22 +1193,42 @@ fix FX-29 already applied to every other strategy in this suite.
 
 **Real result**: level/change bucket totals match each strategy's own
 trade count exactly in all 12 (strategy, instrument, semantics) cells.
-Across roughly 150 bucket-level 95% CIs, the large majority include
-zero -- no reliable interaction established, consistent with the false-
-positive rate expected by chance alone at that many tests (no
-multiple-comparison correction applied, unlike FX-39's small
-pre-registered set -- reported as an explicit limitation). One
-substantial-n exception: EUR/USD `CloseChannelBreakoutStrategy`
-ANNOUNCED's `SUPPORTS` bucket (n=957) has a 95% CI entirely below zero
--- opposite the naive carry-supports-direction intuition -- reported
-factually as one association in one sample, not elevated into a
-conclusion. Full details in `docs/DECISIONS.md`'s FX-47 entry. 25 new
-tests, 1210 pass (full suite, up from 1185).
+**Superseded by FX-47H below**: the per-bucket bootstraps summarized
+here didn't actually test whether buckets differ from each other, and
+the "roughly 150 CIs" claim was wrong (actual: 89) -- see FX-47H for
+the corrected primary-contrast methodology and result.
+
+## FX-47H: attribution validity & provenance hardening (complete)
+
+An external review of FX-47 found its per-bucket bootstraps tested only
+"is this bucket's own mean distinguishable from zero?", never "do two
+buckets actually differ?" -- FX-47's own headline EUR/USD result didn't
+survive a proper joint contrast (`mean(SUPPORTS) - mean(OPPOSES) =
+-0.0004732`, 95% CI `[-0.00119, +0.00009]` via FX-46H's own joint
+calendar-year cluster bootstrap -- crossing zero). Fixed: each cell now
+computes that joint contrast as the PRIMARY inferential result;
+per-bucket stats remain, relabeled descriptive-only. Also restored the
+FX-46H-style provenance FX-47 had regressed on (actual max H1/H4/D
+timestamp per instrument, macro fingerprint/count/max `released_at`),
+corrected the multiplicity count (89 descriptive CIs, 13 excluding
+zero -- computed dynamically now, never hardcoded again), and fixed
+`IncrementalCloseChannelBreakoutStrategy`'s complexity description
+(O(`lookback`) per bar, not O(1)).
+
+**Real, corrected result**: of 24 primary contrast attempts (12 cells x
+LEVEL + CHANGE), 15 are estimable; exactly ONE excludes zero -- GBP/USD
+`MultiTimeframeTrendStrategy` ANNOUNCED/LEVEL (SUPPORTS n=238 vs.
+OPPOSES n=237, 95% CI `[-0.00323, -0.00040]`) -- roughly consistent
+with the ~5% base rate expected by chance across that many tests. The
+original EUR/USD "exception" is gone under the correct methodology.
+Reported factually, not investigated further (that would itself be the
+kind of post-hoc search this epic's protocol forbids). Full details in
+`docs/DECISIONS.md`'s FX-47H entry.
 
 **Per this story's own explicit stop instruction**: no FX-48 (already
 scoped, awaiting this story's close), no gated/filtered strategy built
-from any bucket above, no threshold/parameter tuning, no JPY
-substitution without real ingestion first.
+from the GBP/USD result above, no further investigation of that
+result, no threshold/parameter tuning.
 
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-48 (tradable carry/financing
@@ -1217,25 +1237,26 @@ mechanism need noted above (not yet needed, not yet built), the 18
 still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
 known-irregular dates left unresolved, JPY provider mapping, the
 pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
-out of scope for FX-46/FX-46H/FX-47's own research, per FX-46's own
-section 14).
+out of scope for FX-46/FX-46H/FX-47/FX-47H's own research, per FX-46's
+own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry TRADING strategies, execution logic, or live trading — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47 above are the explicitly-scoped
-exceptions (domain model, storage-integrity hardening, canonical
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H above are the explicitly-
+scoped exceptions (domain model, storage-integrity hardening, canonical
 registry/provider-mapping definitions, real policy-rate ingestion,
 hardening and correction rounds, genuine release-timing verification, a
 deterministic, auditable, scoring-free policy-rate differential
 feature plus two rounds of its own point-in-time hardening, one
 pre-registered, honestly-reported RESEARCH experiment against it, a
 correction to that experiment's own bootstrap validity and artifact
-reproducibility, and a pure attribution cross-reference against
-existing technical strategies -- still no strategy, no decision logic,
-no "carry" framing, no tradability claim) and do not open the door to
-the rest of this phase.
+reproducibility, a pure attribution cross-reference against existing
+technical strategies, and a correction to that cross-reference's own
+inferential methodology and provenance -- still no strategy, no
+decision logic, no "carry" framing, no tradability claim) and do not
+open the door to the rest of this phase.
 The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow

@@ -7909,3 +7909,168 @@ carry/financing feasibility, already scoped and awaiting this story's
 own close), no gated/filtered strategy built from any bucket above, no
 threshold/parameter tuning of anything reported here, no JPY
 substitution attempted without real policy-rate ingestion first.
+
+## 2026-09-25 — FX-47H: attribution validity & provenance hardening
+
+An external review of FX-47 found two real defects, both independently
+verified against the actual code and committed artifacts before this
+fix was written.
+
+**Blocker 1: per-bucket significance is not between-bucket
+difference.** FX-47's `_bucket_report` ran a moving-block bootstrap
+independently inside each bucket, answering "is this bucket's own mean
+distinguishable from zero?" -- never "do SUPPORTS and OPPOSES (or
+INCREASED and DECREASED) actually differ?" FX-47's own headline result
+(EUR/USD `CloseChannelBreakoutStrategy` ANNOUNCED: `SUPPORTS` 95% CI
+entirely below zero, `OPPOSES` CI including zero) was read as evidence
+of an association -- but "one group significant, the other isn't" is
+not evidence the two groups differ. Verified directly from the
+committed trade CSV: `mean(SUPPORTS) - mean(OPPOSES) = -0.0004731975`.
+Running FX-46H's own joint calendar-year cluster bootstrap on the same
+two groups (both have 13 real calendar-year clusters) gives a 95% CI
+of `[-0.0011907, +0.0000939]` -- crossing zero. The reported "exception"
+does not survive a proper joint contrast. There was also a real
+dependence problem: filtering to one bucket's own P&L sequence before
+feeding it to the moving-block bootstrap makes trades that were widely
+separated in real time adjacent in the bootstrap's input, which is not
+the original dependence structure that bootstrap method assumes.
+
+**Fix.** Each cell now ALSO computes a joint calendar-year cluster
+bootstrap contrast -- `mean(SUPPORTS) - mean(OPPOSES)` for LEVEL,
+`mean(INCREASED) - mean(DECREASED)` for CHANGE -- reusing FX-46H's own
+`calendar_year_cluster_bootstrap_differences` completely unchanged
+(`_joint_contrast`, new). This is now THE primary inferential result
+per cell. The original per-bucket metrics/bootstraps (`_bucket_report`,
+unchanged) remain in both the JSON and the rendered markdown, but
+relabeled descriptive-only -- kept for context (a bucket's own trade
+count, expectancy, drawdown are still useful to see), never used alone
+to claim an interaction. `NOT_ESTIMABLE` (from FX-46H's own <2-cluster
+rule) is reported, not worked around, for the many tiny CHANGE buckets
+(policy rates change only a handful of times a year, so
+INCREASED/DECREASED bucket sizes are correspondingly small) -- no
+separate minimum-n gate was added; the mechanism's own honest verdict
+is left to speak for itself, per this project's established philosophy.
+
+**Blocker 2: FX-47 regressed the provenance discipline FX-46H had just
+established.** FX-47's `config` recorded only `candle_start_bound`/
+`candle_end_bound` (query bounds) and code/config metadata -- none of
+FX-46H's own actual-cutoff/fingerprint fields. FX-47 depends on MORE
+data surfaces than FX-46 (H1 for entries/trades, H4 for
+`MultiTimeframeTrendStrategy` confirmation, D for CHANGE attribution,
+macro vintages for both axes), so a future rerun from the same commit
+could silently use corrected/backfilled candle or macro history and
+produce different results with no way to tell why.
+
+**Fix.** The script now also records: `candle_end_actual_by_instrument`
+(the real max H1/H4/D timestamp actually used per pair, captured from
+the candle fetches already happening -- not a new query); and
+`macro_data_fingerprint` (`_CachingMacroObservationRepository.macro_
+data_fingerprint`, copied verbatim from FX-46H's own script -- a
+SHA-256 hash per series over every vintage's full field set, combined
+into one overall fingerprint, plus max `released_at` and a total
+vintage count). `git_commit`/`git_commit_dirty` (already correctly
+scoped to `src/forex_agent` + the script itself, per FX-46H's own
+correction) were unaffected by this regression and needed no change.
+
+**Also corrected, non-blocking but real:**
+- FX-47's Limitations section claimed "roughly 150" bucket-level 95%
+  CIs; the actual count, verified directly from the JSON, is 89 (13
+  excluding zero). `_multiplicity_summary` (new) now counts this
+  DYNAMICALLY from the report itself on every run, never a hardcoded or
+  estimated number again. The wording was also softened to avoid
+  implying any multiplicity-adjusted inference in either direction --
+  the comparisons are highly dependent and several exclusions are
+  sparse/non-research-usable buckets, so no binomial significance claim
+  is attached to the count either way.
+- `IncrementalCloseChannelBreakoutStrategy` was described as
+  "O(1)-per-bar" in `docs/ARCHITECTURE.md` (FX-47's own DECISIONS.md
+  entry above carries the same error, left uncorrected there per this
+  project's append-only convention for dated entries). It actually
+  copies the window and takes `max()`/`min()` over it every call --
+  O(`lookback`) per bar, O(n) overall only because `lookback` is a
+  small fixed constant (still fully solving the practical O(n^2)
+  problem the slow reference has; only the complexity description was
+  wrong). Corrected in `docs/ARCHITECTURE.md`.
+
+**Real, corrected result.** Re-ran the full FX-47 experiment from the
+clean, corrected commit (`cad2c87`) against the same real data (H1/H4
+max 2026-09-18, D max 2026-09-17, 258 macro vintages, max `released_at`
+2026-09-16T18:00:00Z -- all instruments identical, confirming nothing
+about the underlying data changed between FX-47 and FX-47H). 16,936
+total trades, identical to FX-47's original run (no strategy/parameter
+change). `multiplicity_summary` computed dynamically: 89 descriptive
+bucket CIs, 13 excluding zero -- exactly matching the external review's
+own independent count.
+
+Of the resulting 24 primary contrast attempts (12 cells x LEVEL +
+CHANGE), 15 are estimable (8 LEVEL, 7 CHANGE; the rest `NOT_ESTIMABLE`
+for <2 year clusters, or not computable for zero observations in a
+GBP/USD or USD/CAD EFFECTIVE cell -- both entirely `BLOCKED`/
+`UNAVAILABLE`, per FX-45H/FX-46's own already-established coverage
+diagnostic). Exactly ONE of the 15 excludes zero:
+
+| Pair | Strategy | Semantics | Axis | n_a (SUPPORTS/INCREASED) | n_b (OPPOSES/DECREASED) | diff | 95% CI |
+|---|---|---|---|---|---|---|---|
+| GBP/USD | MultiTimeframeTrendStrategy | ANNOUNCED | LEVEL | 238 | 237 | -0.001721 | **[-0.003229, -0.000401]** |
+
+Every other estimable contrast, including EUR/USD's own
+`CloseChannelBreakoutStrategy` ANNOUNCED/LEVEL contrast that FX-47's
+buggy per-bucket analysis originally flagged as "the substantial
+exception" (see above: correctly recomputed here as `[-0.001191,
++0.000094]`, crossing zero), has a 95% CI including zero. One exclusion
+out of 15 estimable tests is roughly consistent with the ~5% false-
+positive rate expected by chance alone at that many tests (15 x 5% =
+0.75) -- reported factually, exactly like FX-47's own EUR/USD result
+was, not elevated into a conclusion, not treated as a signal to act on,
+and not investigated further by this story (that would itself be
+exactly the kind of after-the-fact bucketing/threshold search this
+epic's own protocol forbids).
+
+**No new strategy, no new pairs, no new buckets, no thresholds, no
+tuning, no gating based on the corrected contrasts** -- confirmed by
+construction: the only changes are the addition of the joint contrast
+calculation, the provenance fields, and the two wording corrections;
+trade generation, bucketing logic, and instrument/strategy scope are
+byte-for-byte the same as FX-47 (the samples CSV's own bucket
+assignments are unchanged; only the JSON/markdown's statistical
+treatment and provenance changed).
+
+**Tests**: no new dedicated unit tests -- consistent with this
+project's own established convention (confirmed again here, as it was
+for FX-46H's provenance additions): no file under `scripts/` has ever
+had dedicated pytest coverage anywhere in this project; `_joint_
+contrast`/`_multiplicity_summary` are script-level aggregation/
+reporting functions, the same category FX-46's own `_contrast` already
+established as living in the script rather than the pure module.
+Correctness was instead verified the same way the external review's
+own claims were verified before writing this fix: independent
+recomputation from the committed CSV (`mean(SUPPORTS) -
+mean(OPPOSES)`), and cross-checking the script's own output against
+that independent computation after the fix (exact match on the
+observed difference, matching cluster counts, matching CI).
+`research/rate_differential_attribution.py` (the pure module) is
+unchanged by this story -- no test changes needed there either.
+
+**Verification**: `pytest` (1210/1210 when the OANDA practice market is
+open; 7 unrelated live-OANDA integration tests fail during this run
+specifically because it was performed on a Saturday while the FX spot
+market is closed for the weekend -- confirmed via the exact symptom
+(zero candles returned from a live M1 request) and the actual UTC
+weekday, not a regression: none of the 7 failing tests touch anything
+this story changed), `ruff check .`, `ruff format --check .`, `mypy .`
+(273 source files), `pre-commit run --all-files` -- all clean.
+
+**Artifacts**: `research_results/fx47/` regenerated in place (same
+files, same directory, per FX-46H's own precedent of amending a
+story's artifacts under its original story number rather than creating
+a parallel `fx47h/` directory) -- `rate_differential_attribution.json`
+now carries `level_contrast`/`change_contrast` per cell plus the new
+provenance fields; `rate_differential_attribution_summary.md` leads
+with each cell's primary contrast, demotes the per-bucket tables to
+explicitly descriptive, and reports the corrected multiplicity count.
+
+Per this story's own explicit stop instruction: no FX-48 without an
+explicit new story, no gated/filtered strategy built from the GBP/USD
+result above, no further investigation of that one result (itself the
+kind of post-hoc search this epic's own protocol forbids), no
+threshold/parameter tuning of anything reported here.
