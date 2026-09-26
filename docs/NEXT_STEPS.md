@@ -1403,6 +1403,31 @@ NOT been started; no calendar provider was chosen or integrated; no
 real economic-event data was populated; no surprise calculation was
 implemented; no trading rule or risk weight was added.
 
+## FX-51H.1: economic event model final integrity patch (complete)
+
+Two small, final gaps closed on FX-51H's own model -- no redesign of
+occurrence identity, release vintages, timezone handling, or PIT
+semantics. (1) `attach_release_group` now rejects a non-string/empty/
+whitespace-only `release_group_key` with `ValueError` before any SQL
+runs, mirroring `EconomicEventOccurrence.__post_init__`'s own
+validation of the same field. (2) Migration `76a4b23b2129`'s downgrade
+limitation -- previously only documented, not enforced -- is now a
+runtime guard (`_raise_if_downgrade_would_lose_data`) that checks all
+five tables the migration touches and raises `RuntimeError` naming the
+offending table before any destructive DDL runs; this is a PERMANENT
+limitation once real economic-event data exists (no old-schema
+equivalent for `economic_event_release_vintages`; the old schema
+cannot represent a `NULL` `reference_period` or two `occurrence_key`s
+sharing one `(indicator_key, reference_period)` pair), verified both
+against live Postgres and via a new mock-`op` unit test module
+mirroring this project's existing migration-testing precedent. 14 new
+tests (6 integration + 8 unit); full details in `docs/DECISIONS.md`'s
+FX-51H.1 entry. No new ADR.
+
+**Per this story's own explicit stop instruction**: FX-52 still has
+NOT been started; no calendar provider was chosen or integrated; no
+real economic-event data was populated.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-52 (not started), FX-50 (gated on
 FX-49's own reopening conditions, not started), the proposed
@@ -1420,27 +1445,29 @@ carry TRADING strategies, execution logic, live trading, economic-
 calendar provider integration, or event-risk trading rules — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H
-above are the explicitly-scoped exceptions (domain model, storage-
-integrity hardening, canonical registry/provider-mapping definitions,
-real policy-rate ingestion, hardening and correction rounds, genuine
-release-timing verification, a deterministic, auditable, scoring-free
-policy-rate differential feature plus two rounds of its own
-point-in-time hardening, one pre-registered, honestly-reported RESEARCH
-experiment against it, a correction to that experiment's own bootstrap
-validity and artifact reproducibility, a pure attribution
-cross-reference against existing technical strategies, a correction to
-that cross-reference's own inferential methodology and provenance, a
-data-sourcing feasibility investigation for tradable carry, a
-data-sourcing feasibility investigation for rate expectations, a
-provider-neutral point-in-time economic-event domain/persistence model,
-and a hardening pass on that model's identity/release/timezone
-semantics -- still no strategy, no decision logic, no "carry"/
-"expected rate" framing, no tradability claim, no calendar provider,
-no event-risk scoring) and do not open the door to the rest of this
-phase. The same goes for the downstream epics not in this list at all
-(Decision Engine, Risk Engine, Paper Trading Execution, Performance
-Analytics, Shadow Trading) — none are part of the current phase.
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/
+FX-51H.1 above are the explicitly-scoped exceptions (domain model,
+storage-integrity hardening, canonical registry/provider-mapping
+definitions, real policy-rate ingestion, hardening and correction
+rounds, genuine release-timing verification, a deterministic,
+auditable, scoring-free policy-rate differential feature plus two
+rounds of its own point-in-time hardening, one pre-registered,
+honestly-reported RESEARCH experiment against it, a correction to that
+experiment's own bootstrap validity and artifact reproducibility, a
+pure attribution cross-reference against existing technical
+strategies, a correction to that cross-reference's own inferential
+methodology and provenance, a data-sourcing feasibility investigation
+for tradable carry, a data-sourcing feasibility investigation for rate
+expectations, a provider-neutral point-in-time economic-event
+domain/persistence model, a hardening pass on that model's identity/
+release/timezone semantics, and a final integrity patch closing two
+remaining validation/migration-safety gaps -- still no strategy, no
+decision logic, no "carry"/"expected rate" framing, no tradability
+claim, no calendar provider, no event-risk scoring) and do not open the
+door to the rest of this phase. The same goes for the downstream
+epics not in this list at all (Decision Engine, Risk Engine, Paper
+Trading Execution, Performance Analytics, Shadow Trading) — none are
+part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

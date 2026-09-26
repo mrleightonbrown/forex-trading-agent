@@ -561,6 +561,55 @@ async def test_attach_release_group_is_idempotent_for_the_same_value(
     assert fetched.release_group_key == "GROUP_X"
 
 
+@pytest.mark.parametrize(
+    "invalid_group_key",
+    ["", "   ", "\t\n", 123, None],
+    ids=["empty", "whitespace", "tab_newline", "non_string_int", "none"],
+)
+@pytest.mark.asyncio
+async def test_attach_release_group_rejects_invalid_group_keys_before_any_sql(
+    session: AsyncSession, invalid_group_key: object
+) -> None:
+    # FX-51H.1: domain-equivalent validation must reject a non-string,
+    # empty, or whitespace-only group key BEFORE executing any SQL --
+    # verified here by asserting the occurrence remains ungrouped
+    # afterward (nothing was persisted), not just that a ValueError was
+    # raised.
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}GRP_INVALID"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 9, 4), group=None))
+
+    with pytest.raises(ValueError, match="release_group_key"):
+        await repo.attach_release_group(key, invalid_group_key)  # type: ignore[arg-type]
+
+    fetched = await repo.get_occurrence(key)
+    assert fetched is not None
+    assert fetched.release_group_key is None
+
+
+@pytest.mark.asyncio
+async def test_attach_release_group_exact_valid_retry_remains_idempotent_after_rejection(
+    session: AsyncSession,
+) -> None:
+    # A rejected invalid attempt must not leave the occurrence in a
+    # state where a SUBSEQUENT valid attach behaves any differently --
+    # confirms the validation short-circuits cleanly with no partial
+    # side effect to clean up.
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}GRP_RETRY"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 9, 4), group=None))
+
+    with pytest.raises(ValueError, match="release_group_key"):
+        await repo.attach_release_group(key, "")
+
+    await repo.attach_release_group(key, "VALID_GROUP")
+    await repo.attach_release_group(key, "VALID_GROUP")  # exact retry, must not raise
+
+    fetched = await repo.get_occurrence(key)
+    assert fetched is not None
+    assert fetched.release_group_key == "VALID_GROUP"
+
+
 @pytest.mark.asyncio
 async def test_attach_release_group_conflicts_on_a_different_value(session: AsyncSession) -> None:
     repo = SqlAlchemyEconomicEventRepository(session)

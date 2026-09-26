@@ -121,6 +121,16 @@ class SqlAlchemyEconomicEventRepository:
         return tuple(_occurrence_to_domain(row) for row in rows)
 
     async def attach_release_group(self, occurrence_key: str, release_group_key: str) -> None:
+        # FX-51H.1: domain-equivalent validation, checked BEFORE any SQL --
+        # mirrors EconomicEventOccurrence.__post_init__'s own
+        # release_group_key check exactly, so a caller cannot persist a
+        # non-string/empty/whitespace-only group key through this method
+        # even though it never passes through that constructor.
+        if not isinstance(release_group_key, str) or not release_group_key.strip():
+            raise ValueError(
+                f"release_group_key must be a non-empty string, got {release_group_key!r}"
+            )
+
         # Same atomic-conditional-UPDATE-with-RETURNING discipline as
         # `SqlAlchemyMacroObservationRepository.replace_provisional_
         # release_timing` (FX-43H) -- `release_group_key IS NULL` is part

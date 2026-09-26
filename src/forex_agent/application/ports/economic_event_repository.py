@@ -144,12 +144,17 @@ class EconomicEventRepository(Protocol):
         (FX-43H) already established for its own single legitimate
         mutation.
 
-        Raises `ValueError` if no occurrence exists at `occurrence_key`,
-        or if it already has a DIFFERENT `release_group_key` set. A
-        call with the SAME `release_group_key` it already has is a
-        no-op success (idempotent for an exact retry, matching every
-        `add_*` method's own convention) -- never a destructive
-        rewrite of an already-established group.
+        Raises `ValueError` if `release_group_key` is not a non-empty,
+        non-whitespace-only string (FX-51H.1 -- the same validation
+        `EconomicEventOccurrence.__post_init__` applies to this field
+        at construction time, enforced here too since this value never
+        passes through that constructor), checked BEFORE any write is
+        attempted. Also raises `ValueError` if no occurrence exists at
+        `occurrence_key`, or if it already has a DIFFERENT
+        `release_group_key` set. A call with the SAME `release_group_key`
+        it already has is a no-op success (idempotent for an exact
+        retry, matching every `add_*` method's own convention) -- never
+        a destructive rewrite of an already-established group.
         """
         ...
 

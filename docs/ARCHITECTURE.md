@@ -976,6 +976,20 @@ Verified up/down/up against live Postgres. Full details in
 already-approved conceptual model per explicit instruction, not a
 fresh durable architectural trade-off.
 
+**FX-51H.1** closed two gaps this hardening pass itself left open,
+without touching identity, release vintages, timezone handling, or PIT
+semantics: `attach_release_group` now validates `release_group_key`
+(non-empty, non-whitespace-only string) before any SQL runs -- the
+same check `EconomicEventOccurrence.__post_init__` already applies at
+construction time, which this method's argument never passed through;
+and migration `76a4b23b2129`'s `downgrade()` now enforces, via
+`_raise_if_downgrade_would_lose_data`, the empty-tables precondition
+its own docstring already documented, raising `RuntimeError` naming
+the first non-empty table it finds before any destructive DDL runs,
+rather than leaving that precondition purely as a documentation
+promise a real production database could silently violate. Full
+details in `docs/DECISIONS.md`'s FX-51H.1 entry.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

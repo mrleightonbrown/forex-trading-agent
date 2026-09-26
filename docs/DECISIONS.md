@@ -8719,3 +8719,108 @@ started; no economic-calendar provider was chosen or integrated; no
 real event data was populated; no surprise calculation was
 implemented; no further work on this epic without an explicit new
 story.
+
+## 2026-09-26 — FX-51H.1: economic event model final integrity patch
+
+A small, final integrity patch on FX-51H's own model -- two specific
+gaps, no redesign of occurrence identity, release vintages, timezone
+handling, or PIT semantics.
+
+**1. `attach_release_group` now validates its `release_group_key`
+argument before executing any SQL.** FX-51H's own implementation
+passed this value straight into an `UPDATE ... SET release_group_key =
+:value` statement with no validation of its own -- `EconomicEventOccurrence`'s
+constructor validates a `release_group_key` (non-`None` implies non-
+empty, non-whitespace-only string), but a caller of `attach_release_group`
+never passes through that constructor, so a caller could persist `""`,
+`"   "`, or even a non-string value with no domain-level rejection at
+all, relying only on whatever the database column type happened to
+accept. Fixed by adding the identical check
+(`EconomicEventOccurrence.__post_init__`'s own `release_group_key`
+validation, copied exactly rather than refactored into a shared helper
+-- one field, one call site each, not worth a new abstraction) at the
+top of `SqlAlchemyEconomicEventRepository.attach_release_group`,
+raising `ValueError` before the atomic conditional `UPDATE` is even
+built. Verified via 5 parametrized cases (empty string, whitespace,
+tab/newline, a non-string `int`, `None`) each asserting the occurrence
+remains ungrouped afterward (not merely that a `ValueError` was
+raised) -- proving nothing was persisted, not just that an exception
+surfaced. A separate test confirms a rejected invalid attempt leaves
+no partial state behind: a subsequent valid `attach_release_group`
+call, followed by an exact repeat of it, both succeed exactly as if
+the invalid attempt had never happened.
+
+**2. Migration `76a4b23b2129`'s downgrade limitation is now an
+enforced runtime guard, not merely a documented assumption.** FX-51H's
+own migration docstring already stated its `downgrade()` only
+correctly reverses an EMPTY schema (verified via `SELECT COUNT(*)` at
+authoring time) -- but nothing in the code itself enforced that
+precondition; a `downgrade()` run against a database that had since
+accumulated real economic-event data would previously have failed with
+whatever cryptic Postgres error happened to surface first (a `NOT
+NULL` violation adding `indicator_key` to a non-empty vintage table
+with no default, most likely), or worse, partially succeeded and
+silently dropped the entire contents of `economic_event_release_vintages`
+(a table the pre-FX-51H schema has no equivalent for at all). Fixed
+with an explicit guard, `_raise_if_downgrade_would_lose_data`, run as
+the very first statement in `downgrade()`: it queries `SELECT COUNT(*)`
+against every one of the five tables this migration touches
+(`economic_event_occurrences` and its four vintage tables) and raises
+`RuntimeError` -- naming the specific offending table and its row
+count -- the instant any of them is non-empty, before any DDL runs at
+all. This is a PERMANENT limitation, not a temporary gap to close
+later, for three independent, structural reasons documented in both
+the migration's own module docstring and the error message itself: no
+old-schema table can hold `economic_event_release_vintages`' own data;
+the old schema's `reference_period` `NOT NULL` constraint cannot
+represent a qualitative/irregular occurrence (FX-51H's entire reason
+for making that column nullable); and the old schema's own
+`(indicator_key, reference_period)` `UNIQUE` constraint cannot
+represent two different `occurrence_key`s sharing one such pair.
+Mirrors FX-43H.1's own precedent of never inventing certainty a
+migration cannot actually have (there, per-row verification certainty;
+here, structural/existence certainty) -- refusing outright is the
+honest behavior, not a partial or best-effort reversal.
+
+**Verified against live Postgres, not just unit-tested.** Confirmed
+directly: `alembic downgrade -1` on an empty database still succeeds
+(unchanged from FX-51H); inserting one row into
+`economic_event_occurrences` and retrying raises exactly the expected
+`RuntimeError` naming that table and count, with `alembic current`
+confirming the schema was left untouched at `76a4b23b2129 (head)`
+afterward (the guard runs before any `op.*` DDL call, so a raised
+`RuntimeError` leaves nothing to roll back). A new unit test module,
+`tests/unit/infrastructure/test_migration_harden_economic_event_identity.py`,
+mirrors this project's existing precedent
+(`test_migration_released_at_is_verified_fail_closed.py`) of loading a
+migration's `upgrade()`/`downgrade()` directly via `importlib.util` and
+replacing `alembic.op`'s methods with recording/fake stubs -- proving
+the guard's own logic (which table it blames, that it runs strictly
+before any destructive `op.*` call, and that it still lets a genuinely
+empty-everywhere downgrade proceed) without needing a real database at
+all, and without merely re-confirming that today's dev database
+happens to be in a state the guard allows.
+
+**Tests**: 6 new integration tests
+(`tests/integration/test_economic_event_repository.py`) for the
+`attach_release_group` validation (5 parametrized invalid-key cases +
+1 exact-valid-retry-after-rejection case) plus 8 new unit tests for the
+migration guard, on top of FX-51H's own 67 domain + 32 integration
+tests -- 1338 tests pass in the full suite (up from 1324), the only
+failures being the same pre-existing, unrelated Saturday weekend
+live-OANDA-candle tests (2026-09-26 is still a Saturday). `ruff check`/
+`ruff format --check`/`mypy .`/`pre-commit run --all-files` all clean.
+
+**No redesign.** Occurrence identity (`occurrence_key` alone),
+`EconomicEventReleaseVintage`, `schedule_within_window`'s timezone
+resolution, and every PIT `*_as_of` method are all unchanged from
+FX-51H -- this story touched exactly the two things it was scoped to
+touch.
+
+**No new ADR** -- a validation fix and a migration safety guard are not
+a durable architectural trade-off.
+
+Per this story's own explicit stop instruction: FX-52 has NOT been
+started; no economic-calendar provider was chosen or integrated; no
+real event data was populated; no further work on this epic without an
+explicit new story.

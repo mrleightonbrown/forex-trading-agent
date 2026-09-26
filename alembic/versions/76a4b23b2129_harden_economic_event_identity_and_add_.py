@@ -25,6 +25,29 @@ real or test data beyond a smoke test whose rows were deleted in the
 same session. This is not a general-purpose backfill-safe migration
 pattern; it is only correct because of that verified precondition.
 
+FX-51H.1: `downgrade()` is symmetrically limited by that same
+precondition, and this is a PERMANENT limitation, not merely an
+oversight to fix later -- once real economic-event data exists (from
+FX-52 onward), reversing this migration cannot be done faithfully, for
+three independent reasons: (1) `economic_event_release_vintages` has no
+equivalent table at all in the pre-FX-51H schema, so any row in it
+would simply be dropped; (2) an occurrence with `reference_period IS
+NULL` (a qualitative/irregular event -- the entire reason FX-51H made
+this column nullable) cannot be represented under the old schema's
+`NOT NULL` constraint on that column; (3) two different
+`occurrence_key`s sharing one `(indicator_key, reference_period)` pair
+cannot be represented under the old schema's own `UNIQUE` constraint on
+that pair. `downgrade()` therefore checks every table this migration
+touches for any row at all and refuses (`RuntimeError`) rather than
+attempt a partial, silently lossy reversal -- mirroring FX-43H.1's own
+precedent of never inventing certainty a migration cannot actually
+have, applied here to structural/existence certainty rather than
+per-row classification certainty. This is intentionally the SAME
+"verified empty" precondition `upgrade()`'s own docstring above already
+requires of a fresh downgrade-then-reupgrade cycle; FX-51H.1 only makes
+it an enforced, explicit runtime check instead of a documented
+assumption a caller could otherwise violate silently.
+
 Object-creation order matters here beyond what autogenerate produced:
 a `FOREIGN KEY` requires the referenced columns' unique constraint to
 already exist, so `economic_event_occurrences.occurrence_key` and its
@@ -57,6 +80,36 @@ _VINTAGE_TABLES = (
     "economic_event_consensus_vintages",
     "economic_event_actual_value_vintages",
 )
+_ALL_TABLES_TOUCHED_BY_THIS_MIGRATION = (
+    "economic_event_occurrences",
+    *_VINTAGE_TABLES,
+    "economic_event_release_vintages",
+)
+
+
+def _raise_if_downgrade_would_lose_data() -> None:
+    """FX-51H.1: `downgrade()`'s own permanent limitation, enforced --
+    see this migration's own module docstring for the three
+    independent reasons a non-empty table here cannot be reversed
+    faithfully. Table names are fixed internal constants, never
+    user input.
+    """
+    bind = op.get_bind()
+    for table in _ALL_TABLES_TOUCHED_BY_THIS_MIGRATION:
+        row_count: int = bind.execute(sa.text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+        if row_count > 0:
+            raise RuntimeError(
+                f"Cannot downgrade migration 76a4b23b2129: table {table!r} contains "
+                f"{row_count} row(s). This migration's downgrade only ever reverses an "
+                "EMPTY schema back to its pre-FX-51H shape -- it cannot faithfully "
+                "represent real economic-event data under the old schema (no "
+                "equivalent table for economic_event_release_vintages; the old schema "
+                "cannot store an occurrence with no reference_period; the old schema's "
+                "own UNIQUE constraint cannot represent two occurrence_keys sharing one "
+                "(indicator_key, reference_period) pair). Downgrading past this "
+                "migration once real data exists is a permanent limitation, not a bug "
+                "-- restore from a backup instead."
+            )
 
 
 def upgrade() -> None:
@@ -156,6 +209,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    _raise_if_downgrade_would_lose_data()
+
     # --- 3. Drop the release-vintage table first (FKs onto occurrence_key) --
     op.drop_index(
         "ix_economic_event_release_vintages_occurrence_availability",

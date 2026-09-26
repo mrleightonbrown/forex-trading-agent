@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-51H)_
+_Last updated: 2026-09-26 (FX-51H.1)_
 
 ## What exists
 
@@ -1273,6 +1273,26 @@ _Last updated: 2026-09-26 (FX-51H)_
   FX-51H entry. No new ADR. **Stop after FX-51H -- FX-52 still has NOT
   been started; no calendar provider chosen; no real event data
   populated.**
+- **FX-51H.1: economic event model final integrity patch (complete)**.
+  Two small gaps closed, no redesign. (1) `attach_release_group` now
+  rejects a non-string/empty/whitespace-only `release_group_key` with
+  `ValueError` BEFORE any SQL runs (the identical validation
+  `EconomicEventOccurrence.__post_init__` already applies at
+  construction time, which this method's own argument never passed
+  through). (2) Migration `76a4b23b2129`'s downgrade -- previously only
+  documented as unsafe against real data -- now enforces that at
+  runtime: `_raise_if_downgrade_would_lose_data` checks all five tables
+  it touches and raises `RuntimeError` naming the offending table
+  before any DDL runs, a PERMANENT limitation (no old-schema
+  equivalent for `economic_event_release_vintages`; a `NULL`
+  `reference_period` and duplicate `(indicator_key, reference_period)`
+  pairs are both unrepresentable under the old schema's own
+  constraints), verified directly against live Postgres plus a new
+  mock-`op` unit test module mirroring this project's existing
+  migration-testing precedent. 14 new tests (6 integration + 8 unit);
+  1338 tests pass overall. Full details in `docs/DECISIONS.md`'s
+  FX-51H.1 entry. No new ADR. **Stop after FX-51H.1 -- FX-52 still has
+  NOT been started.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
