@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-25 (FX-48)_
+_Last updated: 2026-09-26 (FX-49)_
 
 ## What exists
 
@@ -1142,6 +1142,39 @@ _Last updated: 2026-09-25 (FX-48)_
   `docs/DECISIONS.md`'s FX-48 entry. **Stop after FX-48 -- no ingestion
   code for the benchmark-rate differential without an explicit new
   story.**
+- **FX-49: rate-expectations data-source feasibility (DEFER)**. A pure
+  source-feasibility investigation -- explicitly not an expected-rate-
+  differential build -- into whether the project can obtain a
+  defensible, point-in-time-safe historical record of what the MARKET
+  EXPECTED future policy rates to be (3/6/12-month forward), as
+  opposed to the current/observed rates FX-42-FX-48 already cover.
+  This project's second ADR: `docs/adr/0002-rate-expectations-data-
+  source-feasibility.md`. Three parallel primary-source research
+  passes (USD; GBP+EUR; CAD) found: a real, liquid, long-established
+  futures instrument exists for every currency (Fed Funds futures/
+  SOFR futures for USD, SONIA futures for GBP, Euribor/€STR futures
+  for EUR, CORRA futures for CAD), and a futures settlement price is
+  genuinely point-in-time-safe -- but every single instrument's real
+  historical depth beyond a short free rolling window is gated behind
+  a paid commercial subscription (CME DataMine/ICE Data Services/TMX
+  Datalinx), each with redistribution-restricted licensing. A critical
+  PIT trap was found and avoided: CME's derived "Term SOFR" benchmark
+  really launched 2021-04-21 (12-month tenor 2022-05-19), so any
+  "historical" value dated earlier would be a back-calculated
+  reconstruction, not a genuine observation -- the raw SOFR futures
+  prices themselves (from 2018-05-07) don't have this problem. A
+  second complication: EUR's two real candidates trade off depth
+  (Euribor futures, ~28y, but a credit/liquidity-premium-bearing term
+  rate) against comparability (€STR futures, economically comparable
+  to the other three, but <3 years old) -- no currently-available EUR
+  instrument is both. **Decision: DEFER**, not NO-GO, not GO --
+  reopening requires an explicit commercial-licensing decision this
+  story has no authority to make, plus the EUR instrument choice, plus
+  several UNRESOLVED technical items. No FX-50 implementation contract
+  written (only required on GO, per the story's own instruction). Full
+  details in `docs/DECISIONS.md`'s FX-49 entry. **Stop after FX-49 --
+  FX-50 remains gated on FX-49's own reopening conditions; no
+  commercial data subscription was added or authorized.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

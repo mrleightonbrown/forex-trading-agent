@@ -8218,3 +8218,104 @@ actually established in two places. All fixed above (Candidate B
 renamed `overnight_benchmark_rate_differential` throughout); none of
 it changes the decision. Full detail in `docs/adr/0001-tradable-carry-
 financing-data-sourcing.md`'s own correction note.
+
+## 2026-09-26 — FX-49: rate-expectations data-source feasibility
+
+A pure source-feasibility investigation, explicitly not an
+expected-rate-differential build: can this project obtain a defensible
+historical, point-in-time record of what the MARKET EXPECTED future
+policy rates to be (3/6/12-month forward), as opposed to the current/
+observed policy rate this project already has (FX-42-FX-46H) or the
+current/observed overnight-benchmark rate FX-48 proposed but never
+built? Full findings and the decision itself are in
+`docs/adr/0002-rate-expectations-data-source-feasibility.md` (this
+project's second ADR) — this entry summarizes them.
+
+**Required currency coverage confirmed unchanged**: EUR, GBP, USD, CAD
+— exactly the four currencies behind this project's existing three
+fundamental-analysis pairs (EUR/USD, GBP/USD, USD/CAD), verified
+directly against `PAIRS` in `scripts/run_fx46_*`/`run_fx47_*`. USD/JPY
+and XAU/USD remain out of scope, unchanged from FX-46/47/48.
+
+**Research method**: three parallel primary-source research passes
+(USD; GBP+EUR; CAD), each instructed to verify claims against
+exchange/administrator official documentation and flag anything
+unconfirmed as UNRESOLVED rather than guess. No production code, no
+live paid/authenticated API calls, no schema changes, no FX-50
+feature.
+
+**The core finding, true for every one of the four currencies**: a
+real, liquid, long-established exchange-traded short-term-interest-
+rate future exists (Fed Funds futures for USD, SONIA futures for GBP,
+Euribor/€STR futures for EUR, CORRA futures for CAD), and a futures
+settlement price is genuinely point-in-time-safe — it was a real
+market price on the day it settled, unlike a derived benchmark
+reconstructed after the fact. But **every single instrument's real
+historical depth, beyond a short free rolling window, is gated behind
+a paid commercial data subscription** (CME DataMine for USD, ICE Data
+Services for GBP/EUR, TMX Datalinx for CAD) with licensing terms that
+at minimum restrict redistribution, and in TMX's case leave even
+internal automated research use unclear without a separate data
+agreement.
+
+**A critical PIT-safety trap found and avoided**: CME's own "Term
+SOFR Reference Rates" (a benchmark DERIVED from SOFR futures, not raw
+futures data) really launched 2021-04-21 (12-month tenor not endorsed
+until 2022-05-19, per CME's and ARRC's own announcements), yet some
+catalog metadata suggests "historical" data back to September 2020 --
+any value dated before the real launch cannot be a genuine
+point-in-time observation and must be a back-calculated
+reconstruction, exactly the fabrication FX-49's own directive forbade.
+This disqualifies the derived benchmark specifically, though not the
+raw SOFR futures prices it's built from (genuinely contemporaneous
+from their own 2018-05-07 launch).
+
+**A second, independent complication for EUR**: the two real EUR
+candidates trade off exactly the two properties this story needs.
+Euribor futures have ~28 years of history (unverified exact ICE-primary
+depth) but price a term, panel-bank-quoted rate carrying interbank
+credit/liquidity premium -- structurally different from every other
+currency's leading candidate (all overnight, risk-free benchmarks).
+€STR futures (launched 2023) are economically comparable to the other
+three but have under 3 years of history, which would cap any
+multi-currency comparison to that same short window. No currently-
+available EUR instrument is both deep and comparable.
+
+**Historical depth verified per currency** (see the ADR for full
+citations): USD Fed Funds futures since ~Oct 1988 (unverified against
+CME's own primary page); USD SOFR futures since 2018-05-07 (CME
+primary); GBP SONIA futures since 2018-06-01 (ICE primary); EUR
+Euribor futures since ~Dec 1998 (unverified primary depth); EUR €STR
+futures since 2023 (Eurex/ICE primary); CAD CORRA futures (`CRA`)
+since 2020-06-12 -- deliberately launched 3 days before, and timed to
+coincide with, CORRA's own 2020-06-15 administration handover
+(FX-48's own already-documented reform date) -- giving CAD a cleaner,
+longer single-methodology history (~5.3 years) than initially assumed,
+though CAD's own OVERALL history remains the most fragmented of the
+four currencies once the separate, 4-years-later CDOR cessation
+(2024-06-28, with BAX force-converted into CRA on 2024-04-26) is
+accounted for.
+
+**Decision: DEFER**, not NO-GO and not GO. Reopening requires, in
+order: (1) an explicit commercial data-licensing/cost decision (CME
+DataMine / ICE Data Services / TMX Datalinx) this story has no
+authority to make; (2) a deliberate EUR instrument choice (Euribor vs.
+€STR, trading off depth against comparability); (3) resolving several
+UNRESOLVED technical items (exact CME contract-month counts and 1988
+launch date; ICE's and TMX's own settlement-timing/revision policies;
+the BoE OIS curve's true historical start date; the ECB's OIS-market
+data page, which returned HTTP 503 during this research) that
+wouldn't alone flip the verdict but should be confirmed before writing
+an implementation contract. No FX-50 implementation contract is
+written (per FX-49's own instruction, only required on GO).
+
+**No look-ahead violated, none introduced**: no actual future policy
+decision was used as a proxy for a historical expectation; the one
+genuine reconstruction risk found (CME Term SOFR pre-launch dates) was
+identified and excluded rather than used.
+
+Per this story's own explicit stop instruction: FX-50 has NOT been
+started and remains gated on FX-49's own DEFER reopening conditions
+above; no commercial data subscription was added or implicitly
+authorized; no further work on this epic without an explicit new
+story.

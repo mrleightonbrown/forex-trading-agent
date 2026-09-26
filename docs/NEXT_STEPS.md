@@ -1268,21 +1268,58 @@ for the overnight benchmark rate differential without a separate,
 explicit go-ahead; no relabeling of `policy_rate_differential` as
 "carry."
 
+## FX-49: rate-expectations data-source feasibility (DEFER)
+
+A pure source-feasibility investigation, not a build -- see this
+project's second ADR, `docs/adr/0002-rate-expectations-data-source-
+feasibility.md`, for full findings; summarized in `docs/DECISIONS.md`'s
+FX-49 entry. Investigated whether a defensible, point-in-time-safe
+historical record of market-EXPECTED (not current/observed) future
+policy rates is obtainable for EUR/GBP/USD/CAD, at 3/6/12-month
+horizons, to eventually gate an FX-50 "expected-rate differential."
+
+A real, liquid futures instrument exists for every currency (Fed Funds/
+SOFR futures for USD, SONIA futures for GBP, Euribor/€STR futures for
+EUR, CORRA futures for CAD) and a settlement price is genuinely
+point-in-time-safe. But every instrument's real historical depth is
+gated behind a paid commercial subscription (CME DataMine/ICE Data
+Services/TMX Datalinx) with redistribution-restricted licensing -- no
+free alternative exists for any of the four currencies, unlike FX-48's
+own overnight-benchmark-differential finding. A PIT trap was found and
+avoided: CME's derived "Term SOFR" benchmark only really launched
+2021-04-21 (12-month tenor 2022-05-19) -- any "historical" value dated
+earlier would be a back-calculated reconstruction, not a genuine
+observation. EUR has an additional depth-vs-comparability tension
+(Euribor futures: ~28y but a credit-premium-bearing term rate; €STR
+futures: comparable but <3 years old).
+
+**Decision: DEFER** -- not NO-GO, not GO. Reopening requires an
+explicit commercial-licensing/cost decision this story has no
+authority to make, a deliberate EUR instrument choice, and resolving
+several UNRESOLVED technical items (see the ADR). **FX-50 (expected-
+rate differential) remains explicitly gated on these conditions and
+has NOT been started.**
+
+**Per this story's own explicit stop instruction**: FX-50 not started;
+no commercial data subscription added or authorized; no relabeling of
+any existing feature as "expected rate" or "carry."
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including the proposed funding-rate-differential
-ingestion (scoped in the ADR but not started), the future
-declassification-mechanism need noted above (not yet needed, not yet
-built), the 18 still-provisional pre-2006 EUR change points, the 8
-USD/6 GBP/3 CAD known-irregular dates left unresolved, JPY provider
-mapping, the pre-2009 CAD gap, or any carry-strategy/tradability work
-(explicitly out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48's own
-research, per FX-46's own section 14).
+new here or elsewhere — including FX-50 (gated, not started), the
+proposed overnight-benchmark-rate-differential ingestion from FX-48
+(scoped in ADR 0001 but not started), the future declassification-
+mechanism need noted above (not yet needed, not yet built), the 18
+still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
+known-irregular dates left unresolved, JPY provider mapping, the
+pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
+out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research,
+per FX-46's own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry TRADING strategies, execution logic, or live trading — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48 above are the
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49 above are the
 explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
@@ -1292,10 +1329,11 @@ point-in-time hardening, one pre-registered, honestly-reported RESEARCH
 experiment against it, a correction to that experiment's own bootstrap
 validity and artifact reproducibility, a pure attribution
 cross-reference against existing technical strategies, a correction to
-that cross-reference's own inferential methodology and provenance, and
-a data-sourcing feasibility investigation for tradable carry -- still
-no strategy, no decision logic, no "carry" framing, no tradability
-claim) and do not open the door to the rest of this phase.
+that cross-reference's own inferential methodology and provenance, a
+data-sourcing feasibility investigation for tradable carry, and a
+data-sourcing feasibility investigation for rate expectations -- still
+no strategy, no decision logic, no "carry"/"expected rate" framing, no
+tradability claim) and do not open the door to the rest of this phase.
 The same goes for
 the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow
