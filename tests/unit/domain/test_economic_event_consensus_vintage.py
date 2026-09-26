@@ -7,14 +7,12 @@ from forex_agent.domain.availability_confidence import AvailabilityConfidence
 from forex_agent.domain.economic_event_consensus_vintage import EconomicEventConsensusVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 
-_REF = UtcTimestamp(datetime(2026, 8, 1, tzinfo=UTC))
 _AVAIL = UtcTimestamp(datetime(2026, 7, 1, tzinfo=UTC))
 
 
 def _vintage(**overrides: object) -> EconomicEventConsensusVintage:
     defaults: dict[str, object] = {
-        "indicator_key": "US_CPI_YOY",
-        "reference_period": _REF,
+        "occurrence_key": "US_CPI_2026_08",
         "revision_sequence": 0,
         "consensus_value": Decimal("3.1"),
         "availability": _AVAIL,
@@ -44,6 +42,11 @@ def test_raw_source_value_optional_and_preserved() -> None:
 def test_rejects_negative_revision_sequence() -> None:
     with pytest.raises(ValueError, match="revision_sequence"):
         _vintage(revision_sequence=-1)
+
+
+def test_rejects_blank_occurrence_key() -> None:
+    with pytest.raises(ValueError, match="occurrence_key"):
+        _vintage(occurrence_key="")
 
 
 def test_two_vintages_same_identity_different_value_are_not_equal() -> None:

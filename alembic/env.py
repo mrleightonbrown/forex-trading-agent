@@ -19,6 +19,9 @@ from forex_agent.infrastructure.db.models.economic_event_consensus_vintage impor
 from forex_agent.infrastructure.db.models.economic_event_occurrence import (  # noqa: F401
     EconomicEventOccurrenceRow,
 )
+from forex_agent.infrastructure.db.models.economic_event_release_vintage import (  # noqa: F401
+    EconomicEventReleaseVintageRow,
+)
 from forex_agent.infrastructure.db.models.economic_event_schedule_vintage import (  # noqa: F401
     EconomicEventScheduleVintageRow,
 )

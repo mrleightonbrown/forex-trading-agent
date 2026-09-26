@@ -8531,3 +8531,191 @@ implemented; no event-risk score, trade-blocking rule, or provider
 "importance" label was converted into anything a strategy or risk
 engine consumes; no further work on this epic without an explicit new
 story.
+
+## 2026-09-26 — FX-51H: point-in-time economic event model hardening
+
+Hardens FX-51's own conceptual model in place, per an explicit
+instruction to fix six specific gaps before FX-52 (economic calendar +
+surprise ingestion) begins. FX-52 was NOT started by this story.
+
+**1. Occurrence identity decoupled from reference period.** FX-51's
+`EconomicEventOccurrence` used `(indicator_key, reference_period)` as
+identity -- a real design gap, because a reference period is not a
+meaningful concept for every economic event: an FOMC press conference
+or a set of meeting minutes is not "for" a calendar period the way a
+CPI print is "for August 2026." `occurrence_key: str` (a stable,
+caller-assigned, provider-neutral string, never a provider ID) is now
+the sole identity; `reference_period` becomes `UtcTimestamp | None`.
+Every schedule/consensus/actual-value vintage's own identity moved from
+`(indicator_key, reference_period, revision_sequence)` to
+`(occurrence_key, revision_sequence)`, and every vintage table's
+`FOREIGN KEY` re-points at `economic_event_occurrences.occurrence_key`
+alone (a single-column FK, simpler than the original composite one).
+`indicator_key`/`reference_period` columns were DROPPED from every
+vintage table -- no longer needed there once occurrence_key is the
+sole join key; both remain on the occurrence row itself, looked up via
+a join when needed. Provider-ID mapping remains explicitly out of
+scope (FX-52's own job); this change gives it a clean place to attach
+later without ever making a provider ID the canonical identity.
+
+**2. A new fact type separates "did it happen" from "what number was
+released."** FX-51's own explicit invariant (Section 18) already said
+qualitative events like central-bank statements must be representable
+without forcing numeric semantics onto them -- but its actual
+implementation left a gap: the ONLY way to represent "this occurrence
+happened" was the mere existence of an `EconomicEventActualValueVintage`,
+which a qualitative event can never have (it has no number). This
+story adds `domain/economic_event_release_vintage.py`
+(`EconomicEventReleaseVintage`): the provider-neutral "occurrence X was
+known, from `availability` onward, to have actually occurred/been
+released on `released_date`[/`released_time`]" fact, independent of
+whether a numeric value exists for it. Same immutable one-row-per-
+revision shape as every other FX-51 vintage (never mutated; a
+correction is a new row with a later `availability` and higher
+`revision_sequence`); `released_time: time | None` mirrors
+`EconomicEventScheduleVintage.scheduled_time`'s own never-fabricate-an-
+unknown-time contract exactly, and `released_date`/`released_time` are
+kept explicitly independent of `availability` -- a statement released
+at 13:00 whose transcript is only published (and thus knowable) two
+days later has both facts, distinct and both preserved. A qualitative
+occurrence now gets a release vintage when it happens; a numeric
+occurrence gets BOTH a release vintage and an actual-value vintage;
+neither type infers the other.
+
+**3. `known_events_in_window` now resolves TRUE timezone instants, not
+a naive date comparison.** FX-51's own module docstring had already
+flagged this as a known, deliberate limitation: comparing
+`scheduled_date` (a local calendar date) against `start`/`end`'s own
+UTC calendar dates could place a boundary-adjacent event on the wrong
+side of a window by a day. Fixed via a new pure function,
+`domain/economic_event_state.py::schedule_within_window` -- unit-
+tested independently of Postgres, taking one schedule vintage and a
+`[start, end)` window. For a KNOWN-time schedule, it resolves
+`scheduled_date`+`scheduled_time` through `schedule_timezone` (via
+`zoneinfo.ZoneInfo`) to one exact UTC instant and tests it directly.
+For a date-only/TBD schedule (`scheduled_time is None`), it NEVER
+fabricates a time of day to get a single instant -- instead it
+resolves the schedule's own full local calendar day (local midnight to
+the next local midnight, in `schedule_timezone`) to its own UTC instant
+RANGE and tests that range for ANY overlap with the window, which is
+both timezone-correct and honest about the imprecision the source
+itself has. Verified against a real DST-adjacent case: a 2026-01-15
+23:00 America/New_York (EST, UTC-5) schedule resolves to 2026-01-16
+04:00 UTC -- a naive local-date-vs-UTC-date comparison would have
+placed it in the Jan 15 UTC window; the corrected test places it
+correctly in the Jan 16 UTC window (exercised in both a pure domain
+unit test and a live-Postgres integration test with the same numbers).
+`SqlAlchemyEconomicEventRepository.known_events_in_window` now does
+only ranking + `availability` filtering in SQL (via the same
+`ROW_NUMBER() OVER (PARTITION BY occurrence_key ...)` pattern FX-51
+already established, simplified to partition by a single column), then
+applies `schedule_within_window` in Python afterward -- deliberately
+NOT a per-row dynamic-timezone SQL `AT TIME ZONE` expression, which
+would be harder to verify and unnecessary at this project's scale
+(Section 26 "do not overengineer").
+
+**4. `release_group_key` may now be attached after occurrence
+creation.** FX-51's own design made grouping a set-once field on
+`EconomicEventOccurrence`, correctly reasoning that grouping is not a
+temporal/vintaged fact -- but this left no path for a caller who
+learns a group only AFTER creating the occurrence (a realistic
+ingestion scenario: headline CPI and core CPI may be discovered as
+belonging to the same release at different times). Fixed with a
+SECOND narrowly-scoped legitimate mutation on this port --
+`EconomicEventRepository.attach_release_group` -- mirroring FX-43H's
+own `replace_provisional_release_timing` precedent exactly: an atomic
+conditional `UPDATE ... WHERE release_group_key IS NULL ... RETURNING
+id`, so the still-unattached check and the write happen in one
+statement (no SELECT-then-UPDATE race). Idempotent for a repeat of the
+SAME value (matching every `add_*` method's own idempotency
+convention); raises `ValueError` for a conflicting DIFFERENT value or a
+missing occurrence -- never a silent overwrite of an already-
+established group. This is legitimate specifically because grouping
+was never a vintaged fact in the first place, not a precedent for
+adding further ad hoc mutations to this or any other FX-51-family port.
+
+**5. PIT contract and identifying parameters updated to match.**
+`EconomicEventRepository`/`GetEconomicEventState` gained a `release`/
+`release_as_of` axis alongside schedule/consensus/actual/first-release;
+`EconomicEventState.release: EconomicEventReleaseVintage | None` is
+`None` whenever the system did not yet know, as of `as_of`, that the
+occurrence had happened -- true for every occurrence, numeric or
+qualitative, before its own release vintage's `availability`. Every
+occurrence-identifying parameter across the port and the use case
+changed from `(indicator_key, reference_period)` to `occurrence_key`
+alone, which also simplified `GetEconomicEventState.__call__`'s own
+signature from three parameters to two.
+
+**6. Every existing FX-51 invariant preserved unchanged.** No UPDATE
+path was added to any vintage table (the one exception,
+`attach_release_group`, targets the non-vintaged occurrence row, per
+#4 above, exactly as `replace_provisional_release_timing` targets a
+non-revision-identity field on `MacroObservationVintageRow`). Fail-
+closed unknown availability (`availability is None` iff confidence is
+`UNKNOWN`, enforced by both `__post_init__` and a database `CHECK`
+constraint) applies identically to the new release vintage type. No
+`previous_value`/`surprise` field was added anywhere. Provider
+neutrality is unchanged -- no calendar provider was chosen, integrated,
+or even discussed as part of this story.
+
+**Migration `76a4b23b2129`** re-keys `economic_event_occurrences` (adds
+`occurrence_key` unique NOT NULL, drops the old `(indicator_key,
+reference_period)` unique constraint, makes `reference_period`
+nullable) and all three existing vintage tables (adds `occurrence_key`
+NOT NULL, drops `indicator_key`/`reference_period`, re-points every
+`FOREIGN KEY`/`UniqueConstraint`/`Index` onto `occurrence_key`), and
+adds `economic_event_release_vintages`. **A real ordering bug was
+caught before this migration was ever applied**: the first attempt
+tried to drop `economic_event_occurrences`' own old unique constraint
+while the three vintage tables' OLD foreign keys still referenced it
+(Postgres correctly rejected this: "cannot drop constraint ... because
+other objects depend on it"); Postgres's transactional DDL rolled the
+failed migration back cleanly (verified via `alembic current` and a
+direct `information_schema.columns` query showing the pre-migration
+schema fully intact). Fixed by dropping every vintage table's OLD
+foreign key FIRST, before touching the occurrence table's own old
+unique constraint -- the same "a FOREIGN KEY requires its target's
+unique constraint to exist, both to create AND to drop" ordering
+dependency this project's own migrations must now watch for whenever a
+referenced unique constraint changes shape, not just when it is first
+introduced (FX-51's original migration only had to worry about
+creation order; this one had to work out both creation AND drop order
+symmetrically). The migration adds every new/re-keyed column directly
+as `NOT NULL` with no intermediate nullable-then-backfill step,
+because all four affected tables were verified EMPTY (`SELECT
+COUNT(*)` = 0 on each) immediately before the migration was written --
+documented in the migration's own docstring as a one-off precondition,
+not a general backfill-safe pattern any future migration in this
+project should assume it can also skip. Verified up/down/up end to end
+against live Postgres (the same discipline FX-1 established for this
+project's very first migration).
+
+**Tests**: 24 new/updated domain unit tests (occurrence identity,
+schedule/consensus/actual-value re-keying, a new
+`test_economic_event_release_vintage.py`, and new `schedule_within_
+window` coverage including the DST-adjacent case) plus the full FX-51
+worked-example suite re-verified against the new field shapes -- 67
+domain tests total (up from 43). 32 live-Postgres integration tests (up
+from 20) covering the full required matrix: release time independent
+of availability time, qualitative event release without an actual
+value, periodic vs. reference-period-less occurrences, reschedule
+preserving occurrence identity, a release recorded after a reschedule,
+the DST/timezone exact-window-membership case, an unknown-release-time
+vintage remaining time-unknown, `release_group_key` NULL-to-known
+enrichment (attach/idempotent-retry/conflict/missing-occurrence), and
+every pre-existing FX-51 PIT/revision/backfill invariant re-verified
+under the new schema. All passing; `ruff check`/`ruff format --check`/
+`mypy .`/`pre-commit run --all-files` all clean across the full
+repository; full existing pytest suite re-run with no regressions (the
+same pre-existing, unrelated Saturday weekend live-OANDA-candle
+failures noted in FX-51's own entry -- 2026-09-26 is still a Saturday).
+
+**No new ADR.** This story hardens an already-approved conceptual
+model per an explicit, itemized instruction; it is not a fresh durable
+architectural trade-off, so none was created.
+
+Per this story's own explicit stop instruction: FX-52 has NOT been
+started; no economic-calendar provider was chosen or integrated; no
+real event data was populated; no surprise calculation was
+implemented; no further work on this epic without an explicit new
+story.

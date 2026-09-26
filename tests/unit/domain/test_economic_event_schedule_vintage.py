@@ -7,14 +7,12 @@ from forex_agent.domain.economic_event_schedule_vintage import EconomicEventSche
 from forex_agent.domain.economic_event_status import EconomicEventStatus
 from forex_agent.domain.timestamps import UtcTimestamp
 
-_REF = UtcTimestamp(datetime(2026, 8, 1, tzinfo=UTC))
 _AVAIL = UtcTimestamp(datetime(2026, 7, 1, tzinfo=UTC))
 
 
 def _vintage(**overrides: object) -> EconomicEventScheduleVintage:
     defaults: dict[str, object] = {
-        "indicator_key": "US_CPI_YOY",
-        "reference_period": _REF,
+        "occurrence_key": "US_CPI_2026_08",
         "revision_sequence": 0,
         "scheduled_date": date(2026, 8, 12),
         "scheduled_time": time(8, 30),
@@ -51,6 +49,11 @@ def test_unknown_confidence_with_none_availability_is_valid() -> None:
 def test_rejects_invalid_timezone_name() -> None:
     with pytest.raises(Exception):  # noqa: B017 -- ZoneInfoNotFoundError, not a project type
         _vintage(schedule_timezone="Not/A_Real_Zone")
+
+
+def test_rejects_blank_occurrence_key() -> None:
+    with pytest.raises(ValueError, match="occurrence_key"):
+        _vintage(occurrence_key="")
 
 
 def test_rejects_negative_revision_sequence() -> None:

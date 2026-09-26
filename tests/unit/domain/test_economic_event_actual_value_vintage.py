@@ -9,14 +9,12 @@ from forex_agent.domain.economic_event_actual_value_vintage import (
 )
 from forex_agent.domain.timestamps import UtcTimestamp
 
-_REF = UtcTimestamp(datetime(2026, 8, 1, tzinfo=UTC))
 _AVAIL = UtcTimestamp(datetime(2026, 9, 1, tzinfo=UTC))
 
 
 def _vintage(**overrides: object) -> EconomicEventActualValueVintage:
     defaults: dict[str, object] = {
-        "indicator_key": "US_NONFARM_PAYROLLS",
-        "reference_period": _REF,
+        "occurrence_key": "US_NFP_2026_08",
         "revision_sequence": 0,
         "actual_value": Decimal("150"),
         "availability": _AVAIL,
@@ -49,6 +47,11 @@ def test_first_release_and_revision_are_distinct_immutable_rows() -> None:
     assert first.actual_value == Decimal("150")
     assert revision.actual_value == Decimal("140")
     assert first != revision
+
+
+def test_rejects_blank_occurrence_key() -> None:
+    with pytest.raises(ValueError, match="occurrence_key"):
+        _vintage(occurrence_key="")
 
 
 def test_has_no_previous_value_field() -> None:

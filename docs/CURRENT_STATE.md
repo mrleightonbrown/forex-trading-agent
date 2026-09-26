@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-51)_
+_Last updated: 2026-09-26 (FX-51H)_
 
 ## What exists
 
@@ -1225,7 +1225,54 @@ _Last updated: 2026-09-26 (FX-51)_
   trade-off. **Stop after FX-51 -- FX-52 (economic calendar + surprise
   ingestion) has NOT been started; no calendar provider chosen; no
   real event data populated; no surprise calculation implemented; no
-  trading rule or risk weight added for any event.**
+  trading rule or risk weight added for any event.** **Superseded in
+  part by FX-51H** (below): occurrence identity is no longer
+  `(indicator_key, reference_period)` -- see FX-51H's own bullet for
+  the corrected model; everything else in this bullet (vintage shape,
+  fail-closed availability, no persisted previous/surprise) remains
+  accurate.
+- **FX-51H: point-in-time economic event model hardening (complete)**.
+  Hardens FX-51's model in place, before FX-52 began. (1) **Occurrence
+  identity decoupled from reference period**:
+  `EconomicEventOccurrence.occurrence_key` (a stable, caller-assigned
+  string) replaces `(indicator_key, reference_period)` as identity;
+  `reference_period` is now `UtcTimestamp | None` -- a qualitative/
+  irregular event (an FOMC press conference, meeting minutes) can exist
+  with no reference period at all, rather than one being fabricated.
+  Every vintage table's own `FOREIGN KEY`/unique constraint is re-keyed
+  onto `occurrence_key` alone. (2) **New fact type**:
+  `domain/economic_event_release_vintage.py`
+  (`EconomicEventReleaseVintage`) records the provider-neutral "this
+  occurrence actually occurred/was released on `released_date`[/
+  `released_time`]" fact, independent of whether a numeric value
+  exists -- fixing FX-51's own gap where a qualitative event had no
+  honest way to record its own occurrence at all. Same immutable
+  one-row-per-revision shape as every other FX-51 vintage; own
+  `released_time: time | None` never-fabricate-an-unknown-time contract
+  mirroring `scheduled_time`'s. (3) **`known_events_in_window` now
+  resolves true timezone instants**: `domain/economic_event_state.py::
+  schedule_within_window` (pure, independently unit-tested) replaces
+  FX-51's own local-date-vs-UTC-date comparison with an exact UTC
+  instant test for a known-time schedule, and a full local-day UTC
+  instant-range overlap test for a date-only/TBD one (never a
+  fabricated single instant). (4) **`release_group_key` may be attached
+  after occurrence creation**: `attach_release_group`, a second
+  narrowly-scoped legitimate mutation (an atomic conditional `UPDATE
+  ... WHERE release_group_key IS NULL`, idempotent for a repeat,
+  `ValueError` for a genuine conflict) -- mirrors FX-43H's own
+  `replace_provisional_release_timing` precedent; legitimate because
+  grouping was never a vintaged, temporal fact. (5) The repository/use-
+  case PIT contract gained a `release`/`release_as_of` axis, and every
+  occurrence-identifying parameter changed to `occurrence_key` alone.
+  Migration `76a4b23b2129` performs the re-keying with columns added
+  directly as `NOT NULL` (no backfill step) because all affected tables
+  were verified EMPTY immediately before the migration was written --
+  documented as a one-off, not a general pattern. Verified up/down/up
+  against live Postgres. 67 domain unit tests + 32 live-Postgres
+  integration tests, all passing; full details in `docs/DECISIONS.md`'s
+  FX-51H entry. No new ADR. **Stop after FX-51H -- FX-52 still has NOT
+  been started; no calendar provider chosen; no real event data
+  populated.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

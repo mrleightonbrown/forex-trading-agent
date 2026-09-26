@@ -44,17 +44,24 @@ class EconomicEventActualValueVintage:
     with its own explicit provenance, never silently treated as either
     of the two canonical values above.
 
+    Not every occurrence has one of these at all -- a qualitative
+    event (FX-51 Section 18; hardened further by FX-51H) simply never
+    has an `EconomicEventActualValueVintage`, rather than one existing
+    with a null value. What such an event DOES get, if and when it
+    actually occurs, is an `EconomicEventReleaseVintage` -- the
+    provider-neutral "this occurrence happened" fact that exists
+    independently of whether a numeric value exists (FX-51H Section
+    1/2). This type remains solely for occurrences that genuinely have
+    a NUMBER to preserve.
+
     Fields:
-        indicator_key: the `EconomicIndicatorDefinition.key` this
-            actual-value vintage's occurrence belongs to.
-        reference_period: the occurrence's own reference period (see
-            `EconomicEventOccurrence`).
+        occurrence_key: the `EconomicEventOccurrence.occurrence_key`
+            this actual-value vintage belongs to (FX-51H: identity
+            moved off `(indicator_key, reference_period)` onto this
+            single stable key).
         revision_sequence: 0 for the first release, incrementing for
             each subsequent revision.
-        actual_value: the released value itself. Not every occurrence
-            has one -- a qualitative event (FX-51 Section 18) simply
-            never has an `EconomicEventActualValueVintage` at all,
-            rather than one existing with a null value.
+        actual_value: the released value itself.
         availability: when this exact actual-value fact became
             knowable, or `None` if genuinely `UNKNOWN` -- see
             `AvailabilityConfidence`. This is the field a backfill's
@@ -70,8 +77,7 @@ class EconomicEventActualValueVintage:
             `None` if not captured. Never interpreted by domain logic.
     """
 
-    indicator_key: str
-    reference_period: UtcTimestamp
+    occurrence_key: str
     revision_sequence: int
     actual_value: Decimal
     availability: UtcTimestamp | None
@@ -80,14 +86,9 @@ class EconomicEventActualValueVintage:
     raw_source_value: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.indicator_key, str) or not self.indicator_key.strip():
+        if not isinstance(self.occurrence_key, str) or not self.occurrence_key.strip():
             raise ValueError(
-                f"indicator_key must be a non-empty string, got {self.indicator_key!r}"
-            )
-        if not isinstance(self.reference_period, UtcTimestamp):
-            raise TypeError(
-                "reference_period must be a UtcTimestamp, "
-                f"got {type(self.reference_period).__name__}"
+                f"occurrence_key must be a non-empty string, got {self.occurrence_key!r}"
             )
         require_revision_sequence(self.revision_sequence)
         require_decimal("actual_value", self.actual_value)

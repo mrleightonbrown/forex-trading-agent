@@ -31,10 +31,10 @@ class EconomicEventConsensusVintage:
     already makes for its own `value`.
 
     Fields:
-        indicator_key: the `EconomicIndicatorDefinition.key` this
-            consensus vintage's occurrence belongs to.
-        reference_period: the occurrence's own reference period (see
-            `EconomicEventOccurrence`).
+        occurrence_key: the `EconomicEventOccurrence.occurrence_key`
+            this consensus vintage belongs to (FX-51H: identity moved
+            off `(indicator_key, reference_period)` onto this single
+            stable key).
         revision_sequence: 0 for the first-known consensus of this
             occurrence, incrementing for each subsequent revision.
         consensus_value: the consensus/forecast value itself.
@@ -52,8 +52,7 @@ class EconomicEventConsensusVintage:
             by domain logic -- provenance only.
     """
 
-    indicator_key: str
-    reference_period: UtcTimestamp
+    occurrence_key: str
     revision_sequence: int
     consensus_value: Decimal
     availability: UtcTimestamp | None
@@ -62,14 +61,9 @@ class EconomicEventConsensusVintage:
     raw_source_value: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.indicator_key, str) or not self.indicator_key.strip():
+        if not isinstance(self.occurrence_key, str) or not self.occurrence_key.strip():
             raise ValueError(
-                f"indicator_key must be a non-empty string, got {self.indicator_key!r}"
-            )
-        if not isinstance(self.reference_period, UtcTimestamp):
-            raise TypeError(
-                "reference_period must be a UtcTimestamp, "
-                f"got {type(self.reference_period).__name__}"
+                f"occurrence_key must be a non-empty string, got {self.occurrence_key!r}"
             )
         require_revision_sequence(self.revision_sequence)
         require_decimal("consensus_value", self.consensus_value)

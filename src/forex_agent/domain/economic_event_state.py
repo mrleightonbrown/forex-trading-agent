@@ -15,19 +15,32 @@ require_availability_consistency`) AND `availability <= as_of`. A
 vintage with unknown availability is never visible at ANY `as_of`, no
 matter how far in the future -- FX-51 Section 13's fail-closed
 requirement, enforced here rather than left to callers to remember.
+
+FX-51H additionally adds `latest_release_as_of` (for the new
+`EconomicEventReleaseVintage`, distinct from `latest_actual_as_of`'s
+numeric-value fact -- see that type's own docstring) and
+`schedule_within_window`, the pure timezone-resolved instant-window
+test `known_events_in_window` (infrastructure layer) uses instead of
+comparing a local calendar date against a UTC one.
 """
 
 from collections.abc import Sequence
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from forex_agent.domain.economic_event_actual_value_vintage import (
     EconomicEventActualValueVintage,
 )
 from forex_agent.domain.economic_event_consensus_vintage import EconomicEventConsensusVintage
+from forex_agent.domain.economic_event_release_vintage import EconomicEventReleaseVintage
 from forex_agent.domain.economic_event_schedule_vintage import EconomicEventScheduleVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 
 _HasAvailability = (
-    EconomicEventScheduleVintage | EconomicEventConsensusVintage | EconomicEventActualValueVintage
+    EconomicEventScheduleVintage
+    | EconomicEventConsensusVintage
+    | EconomicEventActualValueVintage
+    | EconomicEventReleaseVintage
 )
 
 
@@ -115,3 +128,56 @@ def first_release_as_of(
     available = _available_as_of(vintages, as_of)
     first = [v for v in available if v.revision_sequence == 0]
     return _latest(first)
+
+
+def latest_release_as_of(
+    vintages: Sequence[EconomicEventReleaseVintage], as_of: UtcTimestamp
+) -> EconomicEventReleaseVintage | None:
+    """The release-occurred state known as of `as_of` -- i.e. whether,
+    and when, the system knew this occurrence had actually happened
+    (FX-51H). Distinct from `latest_actual_as_of`: this answers "did it
+    occur, and on what date/time" for ANY occurrence, numeric or
+    qualitative; `latest_actual_as_of` answers "what number was
+    released" and only exists for occurrences that have one. `None` if
+    no release vintage of this occurrence has known availability at or
+    before `as_of` (including "it hasn't happened yet, as far as the
+    system could know at `as_of`")."""
+    return _latest(_available_as_of(vintages, as_of))
+
+
+def schedule_within_window(
+    schedule: EconomicEventScheduleVintage, start: UtcTimestamp, end: UtcTimestamp
+) -> bool:
+    """Whether `schedule`'s own claimed date/time falls within
+    `[start, end)`, resolved through `schedule.schedule_timezone` --
+    the true-timezone-instant test `known_events_in_window`
+    (infrastructure layer) uses instead of comparing a local calendar
+    date against a UTC one (FX-51H Section 4: FX-51's original
+    implementation compared `scheduled_date` to `start`/`end`'s own
+    UTC calendar dates, which is timezone-UNAWARE and could place an
+    event on the wrong side of a window boundary by a day).
+
+    When `scheduled_time` is known, this resolves to a single exact
+    UTC instant (`scheduled_date`+`scheduled_time` interpreted in
+    `schedule_timezone`) and tests it against `[start, end)` directly.
+
+    When `scheduled_time` is `None` (date known, time genuinely
+    unknown -- see `EconomicEventScheduleVintage`'s own docstring),
+    this NEVER fabricates a time of day to get a single instant.
+    Instead it resolves the entire local calendar day (local midnight
+    to the next local midnight, in `schedule_timezone`) to its own UTC
+    instant range and tests that range for ANY overlap with
+    `[start, end)` -- correctly timezone-aware without inventing
+    precision the source never provided.
+    """
+    tz = ZoneInfo(schedule.schedule_timezone)
+    if schedule.scheduled_time is not None:
+        instant = datetime.combine(
+            schedule.scheduled_date, schedule.scheduled_time, tzinfo=tz
+        ).astimezone(UTC)
+        return start.value <= instant < end.value
+
+    local_midnight = datetime.combine(schedule.scheduled_date, time(0, 0), tzinfo=tz)
+    day_start = local_midnight.astimezone(UTC)
+    day_end = (local_midnight + timedelta(days=1)).astimezone(UTC)
+    return day_start < end.value and day_end > start.value

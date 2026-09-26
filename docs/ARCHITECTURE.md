@@ -813,12 +813,13 @@ fingerprint/count/max `released_at`) -- FX-47's own first version had
 regressed to recording only query bounds. See `docs/DECISIONS.md`'s
 FX-47H entry.
 
-## Point-in-time economic event model (FX-51)
+## Point-in-time economic event model (FX-51; identity/release model hardened by FX-51H)
 
 First story of `FX-EPIC-07 Economic Event Risk`. `domain/economic_
-event_occurrence.py` and its three vintage siblings
+event_occurrence.py` and its vintage siblings
 (`economic_event_schedule_vintage.py`/`economic_event_consensus_
-vintage.py`/`economic_event_actual_value_vintage.py`) give the
+vintage.py`/`economic_event_actual_value_vintage.py`/`economic_event_
+release_vintage.py`) give the
 codebase a provider-independent way to represent a scheduled economic
 release (a CPI print, an NFP report, a central-bank rate decision)
 without collapsing what the system knew at a past instant into what is
@@ -830,13 +831,18 @@ rationale.
 Five invariants this data model exists to protect, directly
 paralleling FX-41's own five for macro observations:
 
-1. **Occurrence identity is never a scheduled timestamp.**
-   `EconomicEventOccurrence`'s identity is `(indicator_key,
-   reference_period)` — a reschedule, even one moving an event to a
-   completely different calendar date, is a new SCHEDULE VINTAGE of
-   the same occurrence, never a new occurrence. `reference_period` is
-   the one fact that defines "which release this is"; it does not
-   change when the release's own timing does.
+1. **Occurrence identity is never a scheduled timestamp -- and (FX-51H)
+   never requires a reference period either.** `EconomicEventOccurrence`'s
+   identity is `occurrence_key` alone -- a stable, caller-assigned,
+   provider-neutral string, never a provider ID. FX-51's original
+   design used `(indicator_key, reference_period)` as identity; FX-51H
+   replaced it because that pair cannot represent an occurrence for
+   which a reference period is not meaningful at all (an FOMC press
+   conference is not "for" a calendar period the way a CPI print is).
+   A reschedule, even one moving an event to a completely different
+   calendar date, is a new SCHEDULE VINTAGE of the same occurrence
+   (same `occurrence_key`), never a new occurrence and never a change
+   to that key.
 2. **Multiple kinds of time are modelled explicitly, and PIT queries
    key off `availability`, never a scheduled or ingestion timestamp.**
    Every vintage type carries its own claimed fact (a schedule, a
@@ -855,9 +861,9 @@ paralleling FX-41's own five for macro observations:
    far in the future.
 3. **Revisions/vintages are preserved, never overwritten.** A
    reschedule, postponement, cancellation, reinstatement, consensus
-   revision, or actual-value revision is a NEW vintage row with a
-   later `availability` and a higher `revision_sequence` for the same
-   `(indicator_key, reference_period)`. `SqlAlchemyEconomicEventRepository`
+   revision, actual-value revision, or release-timing correction is a
+   NEW vintage row with a later `availability` and a higher `revision_
+   sequence` for the same `occurrence_key`. `SqlAlchemyEconomicEventRepository`
    has no UPDATE anywhere in it — every write is `INSERT ... ON
    CONFLICT DO NOTHING`, exactly `SqlAlchemyMacroObservationRepository`'s
    (FX-41) own shape, so a historical vintage can never be mutated once
@@ -889,11 +895,86 @@ unlike `EconomicIndicatorDefinition`, which — mirroring FX-41's own
 only by its `key` string; a canonical indicator's own identity/unit/
 category never changes over time the way a schedule or value does, so
 it needs no vintage history of its own. Vintage tables reference their
-occurrence through a genuine composite `FOREIGN KEY` on the natural key
-`(indicator_key, reference_period)` rather than the occurrence's UUID
-surrogate primary key — deliberately mirroring `MacroObservationVintage`'s
-own natural-key-reference pattern, while every table still carries a
-UUID PK per this project's DB-wide convention.
+occurrence through a genuine `FOREIGN KEY` on the single natural key
+`occurrence_key` (FX-51H; originally a composite `(indicator_key,
+reference_period)` FK) rather than the occurrence's UUID surrogate
+primary key — deliberately mirroring `MacroObservationVintage`'s own
+natural-key-reference pattern, while every table still carries a UUID
+PK per this project's DB-wide convention.
+
+## Point-in-time economic event model hardening (FX-51H)
+
+Hardens FX-51's own conceptual model in place, per an explicit set of
+gaps identified before FX-52 (calendar ingestion) began. Six changes:
+
+1. **Occurrence identity decoupled from reference period.**
+   `EconomicEventOccurrence.occurrence_key` (a stable, caller-assigned
+   string) replaces `(indicator_key, reference_period)` as identity;
+   `reference_period` becomes optional (`UtcTimestamp | None`) so a
+   qualitative/irregular event (a press conference, meeting minutes)
+   can exist without inventing a period for it. Every vintage type,
+   and every vintage table's own `FOREIGN KEY`, is re-keyed onto
+   `occurrence_key` alone. Provider IDs remain out of scope for this
+   story (FX-52's own job) but the identity model now has a clean,
+   already-correct place for a future provider-ID mapping to attach --
+   never as the identity itself.
+2. **A new fact type separates "did it happen" from "what number was
+   released."** `domain/economic_event_release_vintage.py`
+   (`EconomicEventReleaseVintage`) records the provider-neutral
+   "occurrence X actually occurred/was released on `released_date`[/
+   `released_time`]" fact, independent of `EconomicEventActualValueVintage`'s
+   own numeric value. FX-51's original model could only represent "an
+   occurrence happened" implicitly, via the existence of an actual-
+   value vintage -- which gave qualitative events (no number to
+   invent one for) no honest way to record their own occurrence at
+   all. Same immutable one-row-per-revision shape, own `availability`/
+   `availability_confidence` pair, own `released_time: time | None`
+   mirroring `EconomicEventScheduleVintage.scheduled_time`'s
+   never-fabricate-an-unknown-time contract exactly.
+3. **`known_events_in_window` resolves TRUE timezone instants, not a
+   naive date comparison.** FX-51's original implementation compared
+   `scheduled_date` (a local calendar date) against `start`/`end`'s own
+   UTC calendar dates -- a stated, deliberate simplification that could
+   place a boundary-adjacent event on the wrong side of a window by a
+   day. `domain/economic_event_state.py::schedule_within_window` (pure,
+   unit-tested independent of Postgres) now resolves a known-time
+   schedule to its exact UTC instant via the schedule's own
+   `schedule_timezone`, and a date-only/TBD schedule to its full local-
+   day UTC instant RANGE (never a fabricated single instant) tested for
+   overlap with the window. `SqlAlchemyEconomicEventRepository.
+   known_events_in_window` now does only ranking + availability
+   filtering in SQL, applying this true-instant test in Python
+   afterward.
+4. **`release_group_key` may be attached after occurrence creation.**
+   `EconomicEventRepository.attach_release_group` is a second, narrowly
+   -scoped legitimate mutation (the first being FX-43H's own
+   `replace_provisional_release_timing`) -- an atomic conditional
+   `UPDATE ... WHERE release_group_key IS NULL ... RETURNING id`,
+   idempotent for a repeat of the same value, raising `ValueError` for
+   a conflicting different value or a missing occurrence. Legitimate
+   specifically because grouping was never a vintaged, temporal fact
+   (see the type's own docstring) -- this is not a precedent for adding
+   further ad hoc mutations elsewhere.
+5. **`GetEconomicEventState`/the repository's PIT contract gained a
+   `release`/`release_as_of` axis** alongside schedule/consensus/
+   actual/first-release, and every occurrence-identifying parameter
+   across the port changed from `(indicator_key, reference_period)` to
+   `occurrence_key` alone, matching change #1.
+6. **Every existing FX-51 invariant (no destructive overwrites, fail-
+   closed unknown availability, no persisted `previous_value`/
+   `surprise`, provider neutrality) is preserved unchanged** -- this
+   story is additive/corrective to the identity and release model, not
+   a redesign of the vintage/PIT discipline itself.
+
+Migration `76a4b23b2129` performs this re-keying directly (columns
+added as `NOT NULL` with no intermediate backfill step) because all
+four affected tables were verified EMPTY immediately before the
+migration was written -- explicitly not a general backfill-safe
+pattern, and documented as such in the migration's own docstring.
+Verified up/down/up against live Postgres. Full details in
+`docs/DECISIONS.md`'s FX-51H entry. No new ADR -- this hardens an
+already-approved conceptual model per explicit instruction, not a
+fresh durable architectural trade-off.
 
 ## Current state
 

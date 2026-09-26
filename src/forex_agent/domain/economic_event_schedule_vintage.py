@@ -16,14 +16,15 @@ class EconomicEventScheduleVintage:
 
     A reschedule, postponement, cancellation, or reinstatement is a NEW
     vintage with a later `availability` and a higher `revision_
-    sequence` for the SAME `(indicator_key, reference_period)` --
-    never a mutation of an earlier vintage. This is
-    `MacroObservationVintage`'s own immutable-fact-per-row shape (FX-41),
-    applied to scheduling instead of an economic value: there is no
-    separate "initial schedule" type distinct from "a reschedule" the
-    same way FX-41 deliberately has no separate "first release" type
-    distinct from "a revision" -- both are simply the vintage with
-    `revision_sequence == 0`.
+    sequence` for the SAME `occurrence_key` -- never a mutation of an
+    earlier vintage, and never a change to the occurrence's own
+    identity (FX-51H Section 5): a reschedule is purely a new row in
+    THIS vintage history. This is `MacroObservationVintage`'s own
+    immutable-fact-per-row shape (FX-41), applied to scheduling instead
+    of an economic value: there is no separate "initial schedule" type
+    distinct from "a reschedule" the same way FX-41 deliberately has no
+    separate "first release" type distinct from "a revision" -- both
+    are simply the vintage with `revision_sequence == 0`.
 
     `scheduled_time` is `None` precisely when the source has only
     established a DATE, not a time -- FX-51 Section 11 is explicit:
@@ -34,11 +35,11 @@ class EconomicEventScheduleVintage:
     guess.
 
     Fields:
-        indicator_key: the `EconomicIndicatorDefinition.key` this
-            schedule vintage's occurrence belongs to.
-        reference_period: the occurrence's own reference period --
-            together with `indicator_key`, this occurrence's natural
-            identity (see `EconomicEventOccurrence`).
+        occurrence_key: the `EconomicEventOccurrence.occurrence_key`
+            this schedule vintage belongs to (FX-51H: identity moved
+            off `(indicator_key, reference_period)` onto this single
+            stable key -- see `EconomicEventOccurrence`'s own
+            docstring).
         revision_sequence: 0 for the first-known schedule of this
             occurrence, incrementing for each subsequent change
             (reschedule, postponement, cancellation, reinstatement, or
@@ -75,8 +76,7 @@ class EconomicEventScheduleVintage:
             `MacroObservationVintage.source`).
     """
 
-    indicator_key: str
-    reference_period: UtcTimestamp
+    occurrence_key: str
     revision_sequence: int
     scheduled_date: date
     scheduled_time: time | None
@@ -87,14 +87,9 @@ class EconomicEventScheduleVintage:
     source: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.indicator_key, str) or not self.indicator_key.strip():
+        if not isinstance(self.occurrence_key, str) or not self.occurrence_key.strip():
             raise ValueError(
-                f"indicator_key must be a non-empty string, got {self.indicator_key!r}"
-            )
-        if not isinstance(self.reference_period, UtcTimestamp):
-            raise TypeError(
-                "reference_period must be a UtcTimestamp, "
-                f"got {type(self.reference_period).__name__}"
+                f"occurrence_key must be a non-empty string, got {self.occurrence_key!r}"
             )
         require_revision_sequence(self.revision_sequence)
         if not isinstance(self.scheduled_date, date):

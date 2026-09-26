@@ -1369,6 +1369,40 @@ populated; no surprise calculation was implemented; no trading rule,
 risk weight, or auto-block was added for any event or its provider-
 supplied importance label.
 
+## FX-51H: point-in-time economic event model hardening (complete)
+
+Hardens FX-51's own conceptual model in place -- before FX-52 began --
+per an explicit set of gaps identified in FX-51's original design.
+Six changes: (1) occurrence identity moved from `(indicator_key,
+reference_period)` onto a single stable `occurrence_key`, with
+`reference_period` now optional so a qualitative/irregular event (an
+FOMC press conference, meeting minutes) can exist without a fabricated
+period; (2) a new `EconomicEventReleaseVintage` type records "this
+occurrence actually happened," independent of whether it has a numeric
+value -- fixing FX-51's own gap where a qualitative event had no
+honest way to record its own occurrence; (3) `known_events_in_window`
+now resolves TRUE timezone instants (an exact UTC instant for a
+known-time schedule, a full local-day UTC range for a date-only one)
+via a new pure `schedule_within_window` function, replacing FX-51's
+own local-date-vs-UTC-date comparison; (4) `release_group_key` may now
+be attached to an occurrence after creation via a second narrowly-
+scoped legitimate mutation, `attach_release_group` (idempotent,
+conflict-detecting); (5) the repository/use-case PIT contract gained a
+`release`/`release_as_of` axis; (6) every existing FX-51 invariant
+(insert-only vintages, fail-closed unknown availability, no persisted
+`previous_value`/`surprise`, provider neutrality) is preserved
+unchanged. Migration `76a4b23b2129` re-keys all four tables and adds
+`economic_event_release_vintages`; verified up/down/up against live
+Postgres. 67 domain unit tests + 32 live-Postgres integration tests,
+all passing. Full details in `docs/DECISIONS.md`'s FX-51H entry. No
+new ADR -- this hardens an already-approved conceptual model per
+explicit instruction, not a fresh durable architectural trade-off.
+
+**Per this story's own explicit stop instruction**: FX-52 still has
+NOT been started; no calendar provider was chosen or integrated; no
+real economic-event data was populated; no surprise calculation was
+implemented; no trading rule or risk weight was added.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-52 (not started), FX-50 (gated on
 FX-49's own reopening conditions, not started), the proposed
@@ -1386,10 +1420,10 @@ carry TRADING strategies, execution logic, live trading, economic-
 calendar provider integration, or event-risk trading rules — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51 above are
-the explicitly-scoped exceptions (domain model, storage-integrity
-hardening, canonical registry/provider-mapping definitions, real
-policy-rate ingestion, hardening and correction rounds, genuine
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H
+above are the explicitly-scoped exceptions (domain model, storage-
+integrity hardening, canonical registry/provider-mapping definitions,
+real policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
 policy-rate differential feature plus two rounds of its own
 point-in-time hardening, one pre-registered, honestly-reported RESEARCH
@@ -1398,14 +1432,15 @@ validity and artifact reproducibility, a pure attribution
 cross-reference against existing technical strategies, a correction to
 that cross-reference's own inferential methodology and provenance, a
 data-sourcing feasibility investigation for tradable carry, a
-data-sourcing feasibility investigation for rate expectations, and a
-provider-neutral point-in-time economic-event domain/persistence model
--- still no strategy, no decision logic, no "carry"/"expected rate"
-framing, no tradability claim, no calendar provider, no event-risk
-scoring) and do not open the door to the rest of this phase. The same
-goes for the downstream epics not in this list at all (Decision
-Engine, Risk Engine, Paper Trading Execution, Performance Analytics,
-Shadow Trading) — none are part of the current phase.
+data-sourcing feasibility investigation for rate expectations, a
+provider-neutral point-in-time economic-event domain/persistence model,
+and a hardening pass on that model's identity/release/timezone
+semantics -- still no strategy, no decision logic, no "carry"/
+"expected rate" framing, no tradability claim, no calendar provider,
+no event-risk scoring) and do not open the door to the rest of this
+phase. The same goes for the downstream epics not in this list at all
+(Decision Engine, Risk Engine, Paper Trading Execution, Performance
+Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
