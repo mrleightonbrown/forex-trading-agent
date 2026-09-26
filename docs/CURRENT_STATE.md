@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-51H.1)_
+_Last updated: 2026-09-26 (FX-52)_
 
 ## What exists
 
@@ -1293,6 +1293,43 @@ _Last updated: 2026-09-26 (FX-51H.1)_
   1338 tests pass overall. Full details in `docs/DECISIONS.md`'s
   FX-51H.1 entry. No new ADR. **Stop after FX-51H.1 -- FX-52 still has
   NOT been started.**
+- **FX-52: economic calendar + surprise ingestion (DEFER)**. A source-
+  feasibility investigation with an explicit GO/DEFER/NO-GO gate, not
+  an assumed build. This project's third ADR:
+  `docs/adr/0003-economic-calendar-data-source-feasibility.md`. Three
+  candidate classes investigated -- commercial calendar APIs (Trading
+  Economics, Financial Modeling Prep, Finnhub), official government/
+  central-bank sources (BLS/BEA/FOMC/ALFRED for US, Eurostat/ECB for
+  EUR, ONS/BoE for GBP, StatCan/BoC for CAD), and consumer/aggregator
+  sites (ForexFactory, Investing.com, DailyFX, Econoday, Nasdaq Data
+  Link) -- **nothing cleared the gate**. Trading Economics is
+  structurally closest (a documented Point-in-Time endpoint, a stable
+  `CalendarId`, UTC timestamps) but its own schema page defines
+  `Actual` as "latest released value," directly contradicting the
+  Point-in-Time endpoint's own pre-revision-snapshot claim -- an
+  unresolved documentation contradiction -- plus no free tier and
+  unknown real pricing. FMP's calendar endpoint is free-tier-accessible
+  but self-tagged `"staging"` with zero documented PIT semantics.
+  Finnhub gates historical data to unpriced Enterprise AND has no
+  event/occurrence ID field at all. Official sources structurally
+  cannot supply consensus/forecast (a private-sector product) but
+  ALFRED (US-only) is a verified genuine vintage mechanism for actual
+  values; EUR/GBP/CAD official-source vintage mechanisms remain
+  UNKNOWN. All 5 consumer/aggregator sites ruled out (no permitted
+  API, ToS-prohibited, discontinued, or unpriced enterprise-only).
+  **Decision: DEFER** -- reopening requires resolving Trading
+  Economics' own documentation contradiction (or finding a clearer
+  provider), a real quoted price put to the user for approval,
+  confirmed research-use rights at that tier, deeper EUR/GBP/CAD
+  official-source verification, and an explicit (not unilateral)
+  scope decision if consensus were ever to be dropped. No FX-53
+  implementation contract written (only required on GO). Full details
+  in `docs/DECISIONS.md`'s FX-52 entry. **Stop after FX-52 -- FX-53
+  (Macro Surprise and Post-Release Drift Research) and FX-54
+  (Event-Risk Evidence Snapshot) remain gated on FX-52's own DEFER
+  reopening conditions; no commercial data subscription or trial
+  requiring payment was started; no calendar provider was integrated;
+  no production ingestion code was written.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

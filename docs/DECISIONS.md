@@ -8824,3 +8824,86 @@ Per this story's own explicit stop instruction: FX-52 has NOT been
 started; no economic-calendar provider was chosen or integrated; no
 real event data was populated; no further work on this epic without an
 explicit new story.
+
+## 2026-09-26 — FX-52: economic calendar + surprise ingestion (DEFER)
+
+A source-feasibility investigation with an explicit gate -- GO/DEFER/
+NO-GO -- into whether the FX-51/FX-51H/FX-51H.1 model can be populated
+with real, provider-backed economic-calendar data. Full findings and
+the decision itself are in `docs/adr/0003-economic-calendar-data-
+source-feasibility.md` (this project's third ADR) -- this entry
+summarizes them. **Verdict: DEFER**, not NO-GO and not GO. No
+implementation code, HTTP client, provider-mapping table, canonical
+indicator registry instance, or migration was written.
+
+**Required coverage confirmed unchanged**: USD, EUR, GBP, CAD --
+verified directly against `PAIRS` in `scripts/run_fx46_*` (unchanged
+since FX-46). JPY/XAU remain out of scope.
+
+**Research method**: three parallel primary-source research passes
+(commercial calendar APIs; official government/central-bank sources;
+consumer/aggregator sites), each required to cite primary
+documentation for every claim and mark anything unconfirmed UNKNOWN
+rather than infer it favorably from a plausible field name -- the same
+discipline FX-49's own three-pass research established.
+
+**The core finding**: no candidate source clears this project's own
+bar today, but for different reasons per category. **Commercial APIs**:
+Trading Economics is the most structurally promising (a documented
+Point-in-Time endpoint, a stable per-occurrence `CalendarId`, UTC
+timestamps, a TBD-time flag) but its OWN schema-reference page defines
+`Actual` as "latest released value" -- directly contradicting the
+Point-in-Time endpoint's own claim of preserving pre-revision
+snapshots, an unresolved internal documentation contradiction, not
+something inference should paper over; it also has no free tier and
+unknown real pricing. Financial Modeling Prep's calendar endpoint has a
+genuine free tier but is self-tagged `"staging"` in its own metadata
+with zero documented PIT semantics and no confirmed response schema.
+Finnhub explicitly gates historical calendar data to Enterprise
+(unpriced) AND has no event-type or occurrence ID field of any kind in
+its documented schema -- a structural identity failure independent of
+cost, corroborated by an unresolved public GitHub issue asking Finnhub
+directly whether its fields reflect first-release or continuously-
+restated values, unanswered. **Official government/central-bank
+sources**: structurally cannot supply consensus/forecast at all (a
+private-sector survey product, confirmed absent everywhere, as
+expected) -- but ARE the strongest source for schedule + first-release
+actual for the US specifically, via FRED's own **ALFRED** vintage
+system ("retrieve each economic data release (vintage) that was
+available on a specific date in history" -- verified from ALFRED's own
+site, and this project already has a working FRED adapter precedent to
+build on). EUR/GBP/CAD's own official sources (Eurostat SDMX, ONS API,
+StatCan WDS) all appear to expose current-(revised)-value-only data
+with no vintage mechanism confirmed in this pass -- genuinely
+UNKNOWN, not ruled out. **Consumer/aggregator sites** (ForexFactory,
+Investing.com, DailyFX, Econoday, Nasdaq Data Link/Wall Street
+Horizon): all five ruled out -- no official API and an explicit ToS
+reuse prohibition (ForexFactory, Investing.com), permanent site
+closure since 2024-09-04 (DailyFX), sales-quote-only unpriced access
+(Econoday), or no qualifying calendar product at all (Nasdaq Data
+Link; its one affiliated near-miss, Wall Street Horizon's calendar, is
+timing-only with no consensus/actual fields and ships through the SAME
+TMX Datalinx channel FX-49's own ADR 0002 already found licensing-
+restricted for CAD futures data).
+
+**Decision: DEFER**, not NO-GO and not GO -- reopening requires, in
+order: (1) resolving Trading Economics' Point-in-Time-vs-schema
+contradiction directly with the vendor, or finding a provider whose
+docs unambiguously establish historical consensus-freeze and first-
+release-actual semantics; (2) obtaining real quoted pricing for
+whatever tier is actually required and putting that number to the user
+for explicit approval -- this story has no authority to commit to a
+subscription cost, the same constraint FX-48/FX-49 already
+established; (3) confirming internal-research-use/redistribution
+rights at that tier are compatible with this project's own non-
+redistributive use; (4) a deeper dive into EUR/GBP/CAD official-source
+vintage mechanisms not found in this pass; (5) an EXPLICIT, non-
+unilateral decision about whether any narrower scope (e.g. dropping
+consensus, which no official source can ever supply) would still
+satisfy FX-52's own stated purpose, rather than silently redefining the
+story. No FX-53/FX-54 implementation contract was written (only
+required on GO, per this story's own instruction). Full details in
+ADR 0003. **Stop after FX-52 -- FX-53/FX-54 remain gated on FX-52's own
+DEFER reopening conditions; no commercial data subscription or trial
+requiring payment was started or authorized; no economic-calendar
+provider was integrated.**

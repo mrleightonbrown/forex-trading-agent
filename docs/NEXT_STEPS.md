@@ -1428,17 +1428,74 @@ FX-51H.1 entry. No new ADR.
 NOT been started; no calendar provider was chosen or integrated; no
 real economic-event data was populated.
 
+## FX-52: economic calendar + surprise ingestion (DEFER)
+
+A source-feasibility investigation with an explicit GO/DEFER/NO-GO
+gate -- not an assumed build -- into whether the FX-51/FX-51H/FX-51H.1
+model can be populated with real, provider-backed economic-calendar
+data. This project's third ADR:
+`docs/adr/0003-economic-calendar-data-source-feasibility.md`. Three
+candidate classes investigated (commercial calendar APIs, official
+government/central-bank sources, consumer/aggregator sites) -- nothing
+cleared the gate. Trading Economics is structurally closest (a
+documented Point-in-Time endpoint, a stable `CalendarId`, UTC
+timestamps, a TBD-time flag) but its own schema-reference page defines
+`Actual` as "latest released value," directly contradicting the
+Point-in-Time endpoint's own claim of preserving pre-revision
+snapshots -- an unresolved documentation contradiction, plus no free
+tier and no confirmed real pricing. Financial Modeling Prep's calendar
+endpoint has a genuine free tier but is self-tagged `"staging"` with
+zero documented PIT semantics. Finnhub gates historical calendar data
+to unpriced Enterprise access AND has no event-type or occurrence ID
+field of any kind. Official government/central-bank sources
+structurally cannot supply consensus/forecast at all (a private-sector
+survey product, confirmed absent everywhere, as expected), but ALFRED
+(US-only) is a verified genuine point-in-time vintage mechanism for
+actual values; EUR/GBP/CAD official-source vintage mechanisms remain
+UNKNOWN, not ruled out. All 5 consumer/aggregator sites (ForexFactory,
+Investing.com, DailyFX, Econoday, Nasdaq Data Link) were ruled out --
+no permitted API, explicit ToS reuse prohibition, permanent site
+closure, or unpriced enterprise-only access.
+
+**Decision: DEFER**, not NO-GO and not GO. Reopening requires, in
+order: (1) resolving Trading Economics' own Point-in-Time-vs-schema
+contradiction directly with the vendor, or finding a provider whose
+documentation unambiguously establishes historical consensus-freeze
+and first-release-actual semantics; (2) obtaining real quoted pricing
+for whatever tier is actually required and putting that number to the
+user for explicit approval -- this story has no authority to commit to
+a subscription cost, the same constraint FX-48/FX-49 already
+established; (3) confirming internal-research-use/redistribution
+rights at that tier are compatible with this project's own non-
+redistributive use; (4) a deeper dive into EUR/GBP/CAD official-source
+vintage mechanisms not found in this pass; (5) an explicit, non-
+unilateral decision about whether any narrower scope (e.g. dropping
+consensus, which no official source can ever supply) would still
+satisfy FX-52's own stated purpose. No FX-53 implementation contract
+was written (only required on GO, per this story's own instruction).
+Full details in `docs/DECISIONS.md`'s FX-52 entry.
+
+**Per this story's own explicit stop instruction**: FX-53 (Macro
+Surprise and Post-Release Drift Research) and FX-54 (Event-Risk
+Evidence Snapshot) remain gated on FX-52's own DEFER reopening
+conditions above and have NOT been started; no economic-calendar
+provider was chosen or integrated; no commercial data subscription or
+trial requiring payment was started or authorized; no real event data
+was populated; no production ingestion code, HTTP client, provider-
+mapping table, canonical indicator registry instance, or migration was
+written.
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-52 (not started), FX-50 (gated on
-FX-49's own reopening conditions, not started), the proposed
-overnight-benchmark-rate-differential ingestion from FX-48 (scoped in
-ADR 0001 but not started), the future declassification-mechanism need
-noted above (not yet needed, not yet built), the 18 still-provisional
-pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD known-irregular
-dates left unresolved, JPY provider mapping, the pre-2009 CAD gap, or
-any carry-strategy/tradability work (explicitly out of scope for
-FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research, per FX-46's own
-section 14).
+new here or elsewhere — including FX-53/FX-54 (gated, not started),
+FX-50 (gated on FX-49's own reopening conditions, not started), the
+proposed overnight-benchmark-rate-differential ingestion from FX-48
+(scoped in ADR 0001 but not started), the future declassification-
+mechanism need noted above (not yet needed, not yet built), the 18
+still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
+known-irregular dates left unresolved, JPY provider mapping, the
+pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
+out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research,
+per FX-46's own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
 carry TRADING strategies, execution logic, live trading, economic-
@@ -1446,28 +1503,29 @@ calendar provider integration, or event-risk trading rules — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
 FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/
-FX-51H.1 above are the explicitly-scoped exceptions (domain model,
-storage-integrity hardening, canonical registry/provider-mapping
-definitions, real policy-rate ingestion, hardening and correction
-rounds, genuine release-timing verification, a deterministic,
-auditable, scoring-free policy-rate differential feature plus two
-rounds of its own point-in-time hardening, one pre-registered,
-honestly-reported RESEARCH experiment against it, a correction to that
-experiment's own bootstrap validity and artifact reproducibility, a
-pure attribution cross-reference against existing technical
-strategies, a correction to that cross-reference's own inferential
-methodology and provenance, a data-sourcing feasibility investigation
-for tradable carry, a data-sourcing feasibility investigation for rate
-expectations, a provider-neutral point-in-time economic-event
-domain/persistence model, a hardening pass on that model's identity/
-release/timezone semantics, and a final integrity patch closing two
-remaining validation/migration-safety gaps -- still no strategy, no
-decision logic, no "carry"/"expected rate" framing, no tradability
-claim, no calendar provider, no event-risk scoring) and do not open the
-door to the rest of this phase. The same goes for the downstream
-epics not in this list at all (Decision Engine, Risk Engine, Paper
-Trading Execution, Performance Analytics, Shadow Trading) — none are
-part of the current phase.
+FX-51H.1/FX-52 above are the explicitly-scoped exceptions (domain
+model, storage-integrity hardening, canonical registry/provider-
+mapping definitions, real policy-rate ingestion, hardening and
+correction rounds, genuine release-timing verification, a
+deterministic, auditable, scoring-free policy-rate differential
+feature plus two rounds of its own point-in-time hardening, one
+pre-registered, honestly-reported RESEARCH experiment against it, a
+correction to that experiment's own bootstrap validity and artifact
+reproducibility, a pure attribution cross-reference against existing
+technical strategies, a correction to that cross-reference's own
+inferential methodology and provenance, a data-sourcing feasibility
+investigation for tradable carry, a data-sourcing feasibility
+investigation for rate expectations, a provider-neutral point-in-time
+economic-event domain/persistence model, a hardening pass on that
+model's identity/release/timezone semantics, a final integrity patch
+closing two remaining validation/migration-safety gaps, and a
+data-sourcing feasibility investigation for economic-calendar
+ingestion -- still no strategy, no decision logic, no "carry"/
+"expected rate" framing, no tradability claim, no calendar provider,
+no event-risk scoring) and do not open the door to the rest of this
+phase. The same goes for the downstream epics not in this list at all
+(Decision Engine, Risk Engine, Paper Trading Execution, Performance
+Analytics, Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
