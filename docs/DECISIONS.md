@@ -8331,3 +8331,203 @@ started and remains gated on FX-49's own DEFER reopening conditions
 above; no commercial data subscription was added or implicitly
 authorized; no further work on this epic without an explicit new
 story.
+
+## 2026-09-26 — FX-51: point-in-time economic event model
+
+First story of a new epic, `FX-EPIC-07 Economic Event Risk`. Older
+architecture notes may call this story FX-49 — this codebase's own
+FX-49 is the rate-expectations feasibility story immediately above, so
+this one is recorded as FX-51 throughout. Builds the canonical,
+provider-neutral, point-in-time-safe domain and persistence model for
+scheduled economic events and their released values — explicitly NOT
+an economic-calendar ingestion story: no calendar provider was chosen
+or integrated, no real event data was populated, no surprise
+calculation was implemented, no trading rule was added. FX-52
+(Economic Calendar + Surprise Ingestion), FX-53 (Macro Surprise and
+Post-Release Drift Research), and FX-54 (Event-Risk Evidence Snapshot)
+remain the later stories of this epic and were NOT started.
+
+**Core principle carried through every design choice**: never overwrite
+history in a way that changes what the system would have known at an
+earlier timestamp. Every fact this story models — a schedule, a
+consensus value, an actual value — is represented as an immutable,
+one-row-per-revision vintage, the exact shape `MacroObservationVintage`
+(FX-41) already established for macro data; there is no UPDATE path
+anywhere in `SqlAlchemyEconomicEventRepository`.
+
+**Multiple kinds of time, modelled explicitly, PIT keyed off
+`availability` alone**: each vintage type separates the claimed fact
+(a schedule's `scheduled_date`/`scheduled_time`, a `consensus_value`,
+an `actual_value`) from `availability` — when that fact became
+knowable to the system — and PIT queries (`schedule_as_of`/
+`consensus_as_of`/`actual_value_as_of`/`first_release_as_of`) filter
+strictly on `availability <= as_of`, never on `scheduled_date`, an
+official release timestamp, or any database insertion time.
+`AvailabilityConfidence` (`VERIFIED`/`ESTIMATED`/`UNKNOWN`) records how
+strongly `availability` is evidenced; `require_availability_
+consistency` (`domain/_guards.py`) and a matching database `CHECK`
+constraint both enforce `availability is None` if and only if
+confidence is `UNKNOWN` — a backfilled fact whose true historical
+availability was never established can never be silently substituted
+with an ingestion timestamp and can never become visible at any
+`as_of`, however far in the future (worked example D in this story's
+own test suite: an `UNKNOWN`-confidence actual value stays invisible
+even queried from the year 2099).
+
+**Occurrence identity is never a scheduled timestamp.**
+`EconomicEventOccurrence`'s identity is `(indicator_key,
+reference_period)` — a reschedule, even one moving an event to a
+completely different calendar date, is a NEW schedule vintage of the
+SAME occurrence, never a new occurrence (worked example A: an event
+first known scheduled for Oct 2, later rescheduled to Oct 5 — both
+schedule vintages remain independently recoverable, and a PIT query
+before the reschedule's own `availability` still correctly returns Oct
+2). `EconomicIndicatorDefinition` — the canonical, provider-neutral
+definition of what an indicator even is — deliberately mirrors FX-41's
+own `MacroSeriesDefinition` precedent by NOT being persisted at all: a
+pure in-memory value object referenced only by its `key` string,
+because a canonical concept's own identity/unit/category does not
+change over time the way a schedule or value does.
+
+**A provider's "previous" value and a "surprise" are PIT traps, not
+stored facts** (this story's Sections 6/7). `EconomicEventActualValueVintage`
+deliberately has NO `previous_value`/`surprise` field of any kind — a
+provider-displayed "previous" may itself have since been revised, and
+a computed surprise stored once would silently go stale after any
+later consensus or actual-value revision. Both remain honestly
+derivable later (FX-53's own job, not this story's): the canonical
+"prior first-release value" is `first_release_as_of` called on the
+PREVIOUS occurrence's own vintages; the canonical "prior
+latest-known-as-of value" is `latest_actual_as_of` on it instead; a
+raw surprise is `first_release_as_of(this occurrence, release_
+availability) - latest_consensus_as_of(this occurrence, release_
+availability)`. A dedicated regression test
+(`test_has_no_previous_value_field`) asserts neither field name exists
+on the dataclass, guarding against future accidental reintroduction.
+
+**Worked example C (revision, first-release recoverable)**: an actual
+value first released as 150, revised to 140, revised again to 137 — a
+query evaluated immediately after the first release must return 150;
+a query evaluated after both revisions must return 137; and
+`first_release_as_of` must STILL return 150 no matter how much later
+it is queried, because `revision_sequence == 0` is never overwritten.
+Verified both in `tests/unit/domain/test_economic_event_state.py`
+(pure Python) and `tests/integration/test_economic_event_repository.py`
+(live Postgres) with the exact same numbers.
+
+**Release grouping without an event graph** (Section 8):
+`EconomicEventOccurrence.release_group_key` is an optional descriptive
+tag (e.g. linking headline CPI, core CPI, or NFP/unemployment/wages
+from one statistical release) — set once, not vintaged, because
+grouping is a structural fact about which occurrences were published
+together, not something that changes the way a schedule or value does.
+Each grouped occurrence keeps its own fully separate canonical
+identity and its own separate schedule/consensus/actual vintage
+history; FX-51 makes no interpretation of the grouping itself (left to
+FX-54).
+
+**Persistence**: Alembic migration `bb7551fcef3a` adds
+`economic_event_occurrences` and three vintage tables
+(`economic_event_schedule_vintages`/`_consensus_vintages`/
+`_actual_value_vintages`), each vintage table referencing its
+occurrence via a genuine composite `FOREIGN KEY` on the natural key
+`(indicator_key, reference_period)` — deliberately NOT the
+occurrence's UUID surrogate primary key, mirroring
+`MacroObservationVintage`'s own natural-key-reference precedent, while
+every table still carries a UUID PK per this project's DB-wide
+convention. Each vintage table has a `UniqueConstraint` on
+`(indicator_key, reference_period, revision_sequence)`, an index on
+`(indicator_key, reference_period, availability)` supporting every
+`*_as_of` query, and a `CHECK` constraint enforcing the availability/
+confidence consistency rule above. **A real migration failure and
+fix**: the first autogenerated migration attempt used the full
+descriptive constraint name `..._availability_confidence_consistency`,
+which at 78+ characters exceeded Postgres's 63-byte identifier limit
+(`sqlalchemy.exc.IdentifierError`); Postgres's own transactional DDL
+rolled the failed migration back cleanly (verified via `alembic
+current` and a direct table-existence query showing zero partial
+state). Fixed by shortening every occurrence of the constraint-name
+suffix to `..._avail_confidence` (52-56 characters, verified under the
+limit) and regenerating a clean migration (`bb7551fcef3a`).
+
+**A real bug found and fixed during this story, before any external
+review**: the original `known_events_in_window` implementation
+selected the WHOLE `EconomicEventScheduleVintageRow` ORM entity
+alongside an extra `row_number()` window-function column, then
+destructured result rows by FRAGILE POSITIONAL INDEXING
+(`for occurrence_row, *vintage_cols in rows: ... vintage_cols[0], ...`)
+— unsafe because the actual column order of a whole-entity-plus-extra-
+label select is an unverified SQLAlchemy/mixin implementation detail,
+not a documented contract. Fixed by explicitly selecting and
+`.label(...)`-ing each needed column individually in the subquery, then
+reading results back via `row._mapping["column_name"]` (named access),
+never by position. Verified via a live smoke test against the real
+database before any automated test existed for it, and now covered by
+`tests/integration/test_economic_event_repository.py`'s own
+`known_events_in_window` tests.
+
+**A stated, deliberate simplification, not a defect**:
+`known_events_in_window`'s own date-range filter compares
+`scheduled_date` (a plain calendar date, in the schedule's OWN local
+timezone) against `start`/`end` converted to their UTC calendar dates
+— not a fully timezone-resolved instant-range check. An event
+scheduled very late or very early in a local day whose UTC calendar
+date differs from its own local one could, in principle, land on the
+"wrong" side of a window boundary by one day. Documented in the
+module's own docstring rather than solved with a fragile,
+hard-to-verify per-row dynamic-timezone SQL conversion, per this
+story's own Section 26 ("do not overengineer") — `schedule_as_of`
+itself (the single-occurrence query every backtest-relevant PIT check
+actually uses) has no such limitation, since it does no date-range
+comparison at all.
+
+**Timezone/DST handling** (Section 11): `EconomicEventScheduleVintage.
+schedule_timezone` is validated as a real IANA zone via
+`zoneinfo.ZoneInfo(...)` in `__post_init__` (mirrors FX-44's own
+`ReleaseTimingRule` validation); `scheduled_time` is `None` precisely
+when only a date is known, and nothing in this story ever fabricates a
+midnight/market-open/08:30 default for a genuinely unknown time — a
+caller must check for `None` and represent that state explicitly.
+Verified by a round-trip persistence test with `scheduled_time=None`
+and a separate one with a known local time, both preserving
+`schedule_timezone` exactly.
+
+**Event status kept deliberately small** (Section 9):
+`EconomicEventStatus` has exactly three members —
+`SCHEDULED`/`POSTPONED`/`CANCELLED` — with no `RESCHEDULED` member (a
+reschedule is a new vintage, recoverable from vintage HISTORY, never a
+status label on one row) and no `TENTATIVE`/`TIME_UNKNOWN` member (an
+unknown time is `scheduled_time is None`, a scheduling-QUALITY fact
+orthogonal to lifecycle status — an event can be `SCHEDULED` with a
+known date and an unknown time simultaneously).
+
+**Tests**: 43 domain unit tests (`tests/unit/domain/test_economic_
+event_*.py`, `test_economic_indicator_definition.py`) covering the
+worked examples above plus tie-breaks, empty-history, and validation
+edge cases; 20 live-Postgres integration tests
+(`tests/integration/test_economic_event_repository.py`,
+`test_get_economic_event_state.py`) covering schedule history,
+consensus/actual-value revision, backfill/unknown-availability
+exclusion, timezone round-trips, occurrence-conflict/vintage-conflict
+errors, idempotency, release grouping, and `known_events_in_window`
+across multiple occurrences. All passing; `ruff check`/`ruff format
+--check`/`mypy .`/`pre-commit run --all-files` all clean across the
+full repository; full existing pytest suite re-run with no regressions
+(the only failures are the pre-existing, unrelated live-OANDA-candle
+tests that fail on any weekend/market-closed run, already documented
+elsewhere in this file — 2026-09-26 is a Saturday).
+
+**No new ADR.** This story implements an already-fully-specified
+conceptual model handed down in the story itself; it is not a fresh
+durable architectural trade-off the way ADR 0001 (tradable carry) or
+ADR 0002 (rate-expectations feasibility) were, so per this story's own
+explicit instruction ("do not create an ADR just because FX-49 had
+one"), none was created.
+
+Per this story's own explicit stop instruction: FX-52 has NOT been
+started; no economic-calendar provider was chosen or integrated; no
+real event data was populated; no surprise calculation was
+implemented; no event-risk score, trade-blocking rule, or provider
+"importance" label was converted into anything a strategy or risk
+engine consumes; no further work on this epic without an explicit new
+story.

@@ -813,6 +813,88 @@ fingerprint/count/max `released_at`) -- FX-47's own first version had
 regressed to recording only query bounds. See `docs/DECISIONS.md`'s
 FX-47H entry.
 
+## Point-in-time economic event model (FX-51)
+
+First story of `FX-EPIC-07 Economic Event Risk`. `domain/economic_
+event_occurrence.py` and its three vintage siblings
+(`economic_event_schedule_vintage.py`/`economic_event_consensus_
+vintage.py`/`economic_event_actual_value_vintage.py`) give the
+codebase a provider-independent way to represent a scheduled economic
+release (a CPI print, an NFP report, a central-bank rate decision)
+without collapsing what the system knew at a past instant into what is
+true today. This is a foundation-only story: no calendar provider is
+integrated, no ingestion pipeline exists, and no event-risk scoring or
+trading rule consumes this data yet — see `docs/DECISIONS.md` for full
+rationale.
+
+Five invariants this data model exists to protect, directly
+paralleling FX-41's own five for macro observations:
+
+1. **Occurrence identity is never a scheduled timestamp.**
+   `EconomicEventOccurrence`'s identity is `(indicator_key,
+   reference_period)` — a reschedule, even one moving an event to a
+   completely different calendar date, is a new SCHEDULE VINTAGE of
+   the same occurrence, never a new occurrence. `reference_period` is
+   the one fact that defines "which release this is"; it does not
+   change when the release's own timing does.
+2. **Multiple kinds of time are modelled explicitly, and PIT queries
+   key off `availability`, never a scheduled or ingestion timestamp.**
+   Every vintage type carries its own claimed fact (a schedule, a
+   consensus value, an actual value) plus `availability` — when that
+   fact became knowable to the system — as two independent fields.
+   `schedule_as_of`/`consensus_as_of`/`actual_value_as_of`/
+   `first_release_as_of` (`SqlAlchemyEconomicEventRepository`) all
+   filter on `availability <= as_of`; none of them ever compares
+   against `scheduled_date`, a release's official timestamp, or a
+   row's own database insertion time. `availability` must be `None`
+   if and only if `availability_confidence` is
+   `AvailabilityConfidence.UNKNOWN` — enforced in each vintage's own
+   `__post_init__` and, redundantly, by a database `CHECK` constraint
+   — so a backfilled fact with no defensible historical availability
+   can never be silently treated as knowable at any `as_of`, however
+   far in the future.
+3. **Revisions/vintages are preserved, never overwritten.** A
+   reschedule, postponement, cancellation, reinstatement, consensus
+   revision, or actual-value revision is a NEW vintage row with a
+   later `availability` and a higher `revision_sequence` for the same
+   `(indicator_key, reference_period)`. `SqlAlchemyEconomicEventRepository`
+   has no UPDATE anywhere in it — every write is `INSERT ... ON
+   CONFLICT DO NOTHING`, exactly `SqlAlchemyMacroObservationRepository`'s
+   (FX-41) own shape, so a historical vintage can never be mutated once
+   stored. Idempotent for an exact retry; raises
+   `EconomicEventVintageConflictError`/`EconomicEventOccurrenceConflictError`
+   for a same-identity, different-payload write, mirroring FX-41H's
+   own conflict-detection discipline.
+4. **A provider's "previous" value and a "surprise" are PIT traps, not
+   stored facts.** `EconomicEventActualValueVintage` deliberately has
+   no `previous_value`/`surprise` field: the prior release may itself
+   have been revised since, and a surprise computed once would become
+   silently stale after any later consensus or actual-value revision.
+   Both remain correctly and honestly derivable — a future story
+   (FX-53) computes them from this same vintage history via
+   `first_release_as_of`/`latest_actual_as_of` on the PREVIOUS
+   occurrence, never from a mutable field on this one.
+5. **This story contains no trading hypothesis and no calendar
+   integration.** No calendar provider chosen or integrated, no real
+   event data populated, no surprise calculation, no event-risk score,
+   no trade-blocking rule, no conversion of a provider's "high impact"
+   label into anything a strategy or risk engine consumes. Just the
+   data model, its persistence, and its point-in-time safety
+   invariant.
+
+`EconomicEventOccurrence` IS persisted (via `known_events_in_window`'s
+own bulk PIT query, `application/ports/economic_event_repository.py`)
+unlike `EconomicIndicatorDefinition`, which — mirroring FX-41's own
+`MacroSeriesDefinition` — stays a pure in-memory value object referenced
+only by its `key` string; a canonical indicator's own identity/unit/
+category never changes over time the way a schedule or value does, so
+it needs no vintage history of its own. Vintage tables reference their
+occurrence through a genuine composite `FOREIGN KEY` on the natural key
+`(indicator_key, reference_period)` rather than the occurrence's UUID
+surrogate primary key — deliberately mirroring `MacroObservationVintage`'s
+own natural-key-reference pattern, while every table still carries a
+UUID PK per this project's DB-wide convention.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

@@ -10,6 +10,18 @@ from forex_agent.infrastructure.db.base import Base
 # Import all model modules here so they register on Base.metadata before
 # autogenerate compares against it.
 from forex_agent.infrastructure.db.models.candle import CandleRow  # noqa: F401
+from forex_agent.infrastructure.db.models.economic_event_actual_value_vintage import (  # noqa: F401
+    EconomicEventActualValueVintageRow,
+)
+from forex_agent.infrastructure.db.models.economic_event_consensus_vintage import (  # noqa: F401
+    EconomicEventConsensusVintageRow,
+)
+from forex_agent.infrastructure.db.models.economic_event_occurrence import (  # noqa: F401
+    EconomicEventOccurrenceRow,
+)
+from forex_agent.infrastructure.db.models.economic_event_schedule_vintage import (  # noqa: F401
+    EconomicEventScheduleVintageRow,
+)
 from forex_agent.infrastructure.db.models.ingestion_watermark import (  # noqa: F401
     IngestionWatermarkRow,
 )

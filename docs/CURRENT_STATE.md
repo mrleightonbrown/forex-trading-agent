@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-49)_
+_Last updated: 2026-09-26 (FX-51)_
 
 ## What exists
 
@@ -1185,6 +1185,47 @@ _Last updated: 2026-09-26 (FX-49)_
   details in `docs/DECISIONS.md`'s FX-49 entry. **Stop after FX-49 --
   FX-50 remains gated on FX-49's own reopening conditions; no
   commercial data subscription was added or authorized.**
+- **FX-51: point-in-time economic event model (complete)**. First
+  story of a new epic, `FX-EPIC-07 Economic Event Risk` -- a
+  provider-neutral, point-in-time-safe domain and persistence model
+  for scheduled economic events and their released values, explicitly
+  NOT a calendar-ingestion story: no provider chosen or integrated, no
+  real data populated. New domain types
+  (`domain/economic_event_occurrence.py`/`economic_event_schedule_
+  vintage.py`/`economic_event_consensus_vintage.py`/`economic_event_
+  actual_value_vintage.py`/`economic_indicator_definition.py`/
+  `economic_event_state.py`/`economic_event_status.py`/
+  `availability_confidence.py`): an occurrence's identity is
+  `(indicator_key, reference_period)`, never a scheduled timestamp; a
+  reschedule/consensus revision/actual-value revision is always a NEW
+  immutable vintage row (a later `availability`, a higher `revision_
+  sequence`) -- the same one-row-per-revision shape `MacroObservation
+  Vintage` (FX-41) already established, with no UPDATE path anywhere
+  in this story. `EconomicEventActualValueVintage` deliberately has no
+  `previous_value`/`surprise` field (both are PIT traps; both must be
+  derived later, FX-53, from this same vintage history). `availability`
+  is `None` iff `availability_confidence` is `UNKNOWN` (enforced in
+  `__post_init__` and by a database `CHECK` constraint) -- a backfilled
+  fact with genuinely unknown historical availability can never become
+  visible at any `as_of`, however far in the future. Persistence: 4
+  new tables via Alembic migration `bb7551fcef3a`
+  (`economic_event_occurrences` + 3 vintage tables), each vintage table
+  referencing its occurrence through a composite `FOREIGN KEY` on the
+  natural key `(indicator_key, reference_period)` (mirrors
+  `MacroObservationVintage`'s own natural-key-reference pattern, not a
+  surrogate-UUID FK). `application/ports/economic_event_repository.py`
+  / `infrastructure/db/economic_event_repository.py` implement the
+  Section-14 PIT query contract (`schedule_as_of`/`consensus_as_of`/
+  `actual_value_as_of`/`first_release_as_of`/`known_events_in_window`);
+  `application/use_cases/get_economic_event_state.py` assembles all
+  four for one occurrence at one instant. 43 domain unit tests + 20
+  live-Postgres integration tests, all passing; full details in
+  `docs/DECISIONS.md`'s FX-51 entry. No new ADR -- an implementation of
+  an already-approved conceptual model, not a fresh architectural
+  trade-off. **Stop after FX-51 -- FX-52 (economic calendar + surprise
+  ingestion) has NOT been started; no calendar provider chosen; no
+  real event data populated; no surprise calculation implemented; no
+  trading rule or risk weight added for any event.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

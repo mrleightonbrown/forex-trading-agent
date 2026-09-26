@@ -1312,23 +1312,82 @@ has NOT been started.**
 no commercial data subscription added or authorized; no relabeling of
 any existing feature as "expected rate" or "carry."
 
+## FX-51: point-in-time economic event model (complete)
+
+First story of a new epic, `FX-EPIC-07 Economic Event Risk` (older
+architecture notes may call this story FX-49 -- this codebase's FX-49
+is the rate-expectations feasibility story above, so this one is
+FX-51). Provider-neutral, point-in-time-safe domain and persistence
+model for scheduled economic events and their released values --
+explicitly NOT an economic-calendar ingestion story: no calendar
+provider was chosen or integrated, no real data was populated.
+
+New domain types (`domain/economic_event_*.py`): `EconomicIndicatorDefinition`
+(pure in-memory, never persisted -- mirrors FX-41's own
+`MacroSeriesDefinition`), `EconomicEventOccurrence` (identity is
+`(indicator_key, reference_period)`, deliberately never a scheduled
+timestamp), and three vintage types --
+`EconomicEventScheduleVintage`/`EconomicEventConsensusVintage`/
+`EconomicEventActualValueVintage` -- each an immutable one-row-per-
+revision fact, the same shape `MacroObservationVintage` (FX-41)
+already established, with no UPDATE path anywhere in this story: a
+reschedule/consensus revision/value revision is always a new row with
+a later `availability` and a higher `revision_sequence`.
+`EconomicEventActualValueVintage` deliberately has no `previous_value`/
+`surprise` field -- a provider's own "previous" is a known PIT trap,
+and a raw surprise must be derived later (FX-53) from this same
+vintage history, never stored as a single mutable value a later
+revision could silently rewrite. `domain/economic_event_state.py`
+provides the pure PIT-selection functions
+(`latest_schedule_as_of`/`latest_consensus_as_of`/
+`latest_actual_as_of`/`first_release_as_of`), mirroring
+`domain/policy_rate_state.py`'s own shape.
+
+Persistence: 4 new tables via Alembic migration `bb7551fcef3a` --
+`economic_event_occurrences` plus its three vintage tables, each
+vintage table referencing its occurrence through a genuine composite
+`FOREIGN KEY` on the natural key `(indicator_key, reference_period)`
+(the same natural-key-reference pattern `MacroObservationVintage`
+already uses), a `CHECK` constraint enforcing `availability IS NULL`
+iff `availability_confidence = 'UNKNOWN'`, and an index on
+`(indicator_key, reference_period, availability)` supporting every
+`*_as_of` query. `application/ports/economic_event_repository.py` /
+`infrastructure/db/economic_event_repository.py` implement the
+Section-14 PIT query contract (`schedule_as_of`/`consensus_as_of`/
+`actual_value_as_of`/`first_release_as_of`/`known_events_in_window`),
+and `application/use_cases/get_economic_event_state.py` assembles all
+four for one occurrence at one instant. Full details, including the
+worked point-in-time examples this story's own tests exercise, in
+`docs/DECISIONS.md`'s FX-51 entry. No new ADR -- this is an
+implementation of an already-approved conceptual model, not a fresh
+durable architectural trade-off decision the way ADR 0001/0002 were.
+
+**Per this story's own explicit stop instruction**: FX-52 (economic
+calendar + surprise ingestion) has NOT been started; no calendar
+provider was chosen or integrated; no real economic-event data was
+populated; no surprise calculation was implemented; no trading rule,
+risk weight, or auto-block was added for any event or its provider-
+supplied importance label.
+
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-50 (gated, not started), the
-proposed overnight-benchmark-rate-differential ingestion from FX-48
-(scoped in ADR 0001 but not started), the future declassification-
-mechanism need noted above (not yet needed, not yet built), the 18
-still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
-known-irregular dates left unresolved, JPY provider mapping, the
-pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
-out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research,
-per FX-46's own section 14).
+new here or elsewhere — including FX-52 (not started), FX-50 (gated on
+FX-49's own reopening conditions, not started), the proposed
+overnight-benchmark-rate-differential ingestion from FX-48 (scoped in
+ADR 0001 but not started), the future declassification-mechanism need
+noted above (not yet needed, not yet built), the 18 still-provisional
+pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD known-irregular
+dates left unresolved, JPY provider mapping, the pre-2009 CAD gap, or
+any carry-strategy/tradability work (explicitly out of scope for
+FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research, per FX-46's own
+section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
-carry TRADING strategies, execution logic, or live trading — out of
+carry TRADING strategies, execution logic, live trading, economic-
+calendar provider integration, or event-risk trading rules — out of
 scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
 FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49 above are the
-explicitly-scoped exceptions (domain model, storage-integrity
+FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51 above are
+the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -1338,14 +1397,15 @@ experiment against it, a correction to that experiment's own bootstrap
 validity and artifact reproducibility, a pure attribution
 cross-reference against existing technical strategies, a correction to
 that cross-reference's own inferential methodology and provenance, a
-data-sourcing feasibility investigation for tradable carry, and a
-data-sourcing feasibility investigation for rate expectations -- still
-no strategy, no decision logic, no "carry"/"expected rate" framing, no
-tradability claim) and do not open the door to the rest of this phase.
-The same goes for
-the downstream epics not in this list at all (Decision Engine, Risk
-Engine, Paper Trading Execution, Performance Analytics, Shadow
-Trading) — none are part of the current phase.
+data-sourcing feasibility investigation for tradable carry, a
+data-sourcing feasibility investigation for rate expectations, and a
+provider-neutral point-in-time economic-event domain/persistence model
+-- still no strategy, no decision logic, no "carry"/"expected rate"
+framing, no tradability claim, no calendar provider, no event-risk
+scoring) and do not open the door to the rest of this phase. The same
+goes for the downstream epics not in this list at all (Decision
+Engine, Risk Engine, Paper Trading Execution, Performance Analytics,
+Shadow Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
