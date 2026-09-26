@@ -1280,18 +1280,26 @@ horizons, to eventually gate an FX-50 "expected-rate differential."
 
 A real, liquid futures instrument exists for every currency (Fed Funds/
 SOFR futures for USD, SONIA futures for GBP, Euribor/€STR futures for
-EUR, CORRA futures for CAD) and a settlement price is genuinely
-point-in-time-safe. But every instrument's real historical depth is
-gated behind a paid commercial subscription (CME DataMine/ICE Data
-Services/TMX Datalinx) with redistribution-restricted licensing -- no
-free alternative exists for any of the four currencies, unlike FX-48's
-own overnight-benchmark-differential finding. A PIT trap was found and
-avoided: CME's derived "Term SOFR" benchmark only really launched
-2021-04-21 (12-month tenor 2022-05-19) -- any "historical" value dated
-earlier would be a back-calculated reconstruction, not a genuine
-observation. EUR has an additional depth-vs-comparability tension
-(Euribor futures: ~28y but a credit-premium-bearing term rate; €STR
-futures: comparable but <3 years old).
+EUR, CORRA futures for CAD), not all long-established (CAD's cleanest
+instrument dates only to 2020, EUR's most comparable one only to 2023),
+and a settlement price is genuinely point-in-time-safe (a
+contemporaneous exchange-determined settlement value). But the
+multi-year historical backfill this project would need is gated behind
+a paid commercial subscription for every currency (current/same-day
+publication is often free; multi-year depth is not) -- CME DataMine/
+ICE Data Services/TMX Datalinx -- with redistribution-restricted
+licensing, unlike FX-48's own overnight-benchmark-differential finding,
+which had a free alternative. A PIT trap was found and avoided: CME's
+derived "Term SOFR" benchmark only really launched 2021-04-21 for its
+1M/3M/6M tenors and 2021-09-21 for its 12-month tenor (2022-05-19 was
+the ARRC's later, separate endorsement of the already-live 12-month
+tenor, not its first publication) -- any "historical" value dated
+before its own tenor's real launch would be a back-calculated
+reconstruction, not a genuine observation. EUR has an additional
+depth-vs-comparability tension (Euribor futures: ~28y but a
+credit-premium-bearing term rate; €STR futures: improves on Euribor by
+pricing an overnight risk-free rate, but still doesn't match SOFR/
+CORRA's secured-repo character, and is <3 years old).
 
 **Decision: DEFER** -- not NO-GO, not GO. Reopening requires an
 explicit commercial-licensing/cost decision this story has no

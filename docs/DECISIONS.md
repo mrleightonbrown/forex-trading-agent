@@ -8245,41 +8245,53 @@ live paid/authenticated API calls, no schema changes, no FX-50
 feature.
 
 **The core finding, true for every one of the four currencies**: a
-real, liquid, long-established exchange-traded short-term-interest-
-rate future exists (Fed Funds futures for USD, SONIA futures for GBP,
-Euribor/€STR futures for EUR, CORRA futures for CAD), and a futures
-settlement price is genuinely point-in-time-safe — it was a real
-market price on the day it settled, unlike a derived benchmark
-reconstructed after the fact. But **every single instrument's real
-historical depth, beyond a short free rolling window, is gated behind
-a paid commercial data subscription** (CME DataMine for USD, ICE Data
-Services for GBP/EUR, TMX Datalinx for CAD) with licensing terms that
-at minimum restrict redistribution, and in TMX's case leave even
-internal automated research use unclear without a separate data
-agreement.
+real, liquid exchange-traded short-term-interest-rate future exists
+(Fed Funds futures for USD, SONIA futures for GBP, Euribor/€STR
+futures for EUR, CORRA futures for CAD) -- though not all are
+long-established (CAD's cleanest instrument dates only to 2020, EUR's
+most comparable one only to 2023) -- and a futures settlement price is
+genuinely point-in-time-safe: it was a contemporaneous
+exchange-determined settlement value, not a value reconstructed after
+the fact. But **the multi-year historical backfill this project would
+need is gated behind a paid commercial data subscription for every
+one of the four currencies** (current/same-day settlement publication
+is free on several of these exchanges' own sites; genuine multi-year
+historical depth is not) -- CME DataMine for USD, ICE Data Services
+for GBP/EUR, TMX Datalinx for CAD -- with licensing terms that at
+minimum restrict redistribution, and in TMX's case leave even internal
+automated research use unclear without a separate data agreement.
 
 **A critical PIT-safety trap found and avoided**: CME's own "Term
 SOFR Reference Rates" (a benchmark DERIVED from SOFR futures, not raw
-futures data) really launched 2021-04-21 (12-month tenor not endorsed
-until 2022-05-19, per CME's and ARRC's own announcements), yet some
-catalog metadata suggests "historical" data back to September 2020 --
-any value dated before the real launch cannot be a genuine
+futures data) really launched 2021-04-21 for its 1M/3M/6M tenors and
+2021-09-21 for its 12-month tenor (2022-05-19 was the ARRC's later,
+separate formal *endorsement* of the already-live 12-month tenor, not
+its first publication -- confirmed directly), yet some catalog
+metadata suggests "historical" data back to September 2020 -- any
+value dated before its own tenor's real launch cannot be a genuine
 point-in-time observation and must be a back-calculated
-reconstruction, exactly the fabrication FX-49's own directive forbade.
-This disqualifies the derived benchmark specifically, though not the
-raw SOFR futures prices it's built from (genuinely contemporaneous
-from their own 2018-05-07 launch).
+reconstruction, exactly the fabrication FX-49's own directive forbade;
+values published from each tenor's own real launch date onward are
+contemporaneous regardless of the later ARRC endorsement date. This
+disqualifies the derived benchmark specifically before its own launch,
+though not the raw SOFR futures prices it's built from (contemporaneous
+exchange-determined settlement values from their own 2018-05-07
+launch).
 
 **A second, independent complication for EUR**: the two real EUR
 candidates trade off exactly the two properties this story needs.
 Euribor futures have ~28 years of history (unverified exact ICE-primary
 depth) but price a term, panel-bank-quoted rate carrying interbank
 credit/liquidity premium -- structurally different from every other
-currency's leading candidate (all overnight, risk-free benchmarks).
-€STR futures (launched 2023) are economically comparable to the other
-three but have under 3 years of history, which would cap any
-multi-currency comparison to that same short window. No currently-
-available EUR instrument is both deep and comparable.
+currency's leading candidate. €STR futures (launched 2023) improve
+comparability versus Euribor by pricing an overnight risk-free rate
+instead, but this does not make EUR fully comparable to the other
+three: SOFR and CORRA are secured repo rates while €STR and SONIA are
+unsecured, a heterogeneity that remains regardless of which EUR
+instrument is chosen (already documented in FX-48). €STR futures also
+have under 3 years of history, which would cap any multi-currency
+comparison to that same short window. No currently-available EUR
+instrument is both deep and free of both comparability gaps.
 
 **Historical depth verified per currency** (see the ADR for full
 citations): USD Fed Funds futures since ~Oct 1988 (unverified against

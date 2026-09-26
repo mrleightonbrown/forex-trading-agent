@@ -4,17 +4,23 @@
 
 **DEFER.** A defensible method to construct market-implied policy-rate
 expectations exists in principle for every currency this project needs
-(EUR, GBP, USD, CAD) — real, liquid, long-established exchange-traded
-short-term-interest-rate futures exist for each, and a futures
-settlement price is genuinely point-in-time-safe (it was a real,
-observable market price on the day it settled). But responsible
-implementation is blocked by an external dependency this story has no
-authority to resolve: **every single instrument's real historical
-depth is gated behind a paid commercial data subscription** (CME
-DataMine for USD, ICE Data Services for GBP/EUR, TMX Datalinx for
-CAD), each with licensing terms that at minimum restrict
-redistribution and, in one case (TMX), leave even internal automated
-research use unclear without a separate data agreement. This is
+(EUR, GBP, USD, CAD) — real, liquid exchange-traded short-term-
+interest-rate futures exist for each (though not all are
+long-established: CAD's cleanest instrument dates to 2020 and EUR's
+most comparable one to 2023 — see Historical coverage), and a futures
+settlement price is genuinely point-in-time-safe (it was a
+contemporaneous exchange-determined settlement value, not a value
+reconstructed after the fact). But responsible implementation is
+blocked by an external dependency this story has no authority to
+resolve: **the multi-year historical backfill this project would need
+is gated behind a paid commercial data subscription for every one of
+the four currencies** (current/same-day settlement publication is free
+on several of these exchanges' own sites, but genuine multi-year
+historical depth is not) — CME DataMine for USD, ICE Data Services for
+GBP/EUR, TMX Datalinx for CAD — each with licensing terms that at
+minimum restrict redistribution and, in one case (TMX), leave even
+internal automated research use unclear without a separate data
+agreement. This is
 exactly DEFER's own definition: "the concept may be viable, but a
 material unresolved dependency prevents responsible implementation
 now" — a commercial licensing/cost decision is required, which this
@@ -148,17 +154,24 @@ FROM SOFR futures prices, **not raw futures data**. **A critical
 PIT-safety finding**: CME's own press release
 (https://www.cmegroup.com/media-room/press-releases/2021/4/21/cme_group_announceslaunchofcmetermsofrreferencerates.html)
 confirms this benchmark's real public launch was **21 April 2021**
-(1M/3M/6M tenors only); the 12-month tenor was not ARRC-endorsed until
-**19 May 2022**. Some catalog metadata suggests "historical" data back
-to September 2020 or "2021" is available via CME DataMine — **since
-actual first publication was April 2021, any purported value dated
-before that (and any 12-month value dated before May 2022) cannot be
-a genuine point-in-time observation and must be a back-calculated
-reconstruction — exactly the fabrication Section 4 forbids.** This
+(1M/3M/6M tenors only); the 12-month tenor was first published
+**21 September 2021** (~5:00am CT, per CME's own announcement and
+corroborating coverage) — the **19 May 2022** date is when the ARRC
+formally *endorsed* the already-live 12-month tenor, a separate, later
+recognition event, not its first publication. Some catalog metadata
+suggests "historical" data back to September 2020 is available via CME
+DataMine — **since actual first publication was 21 April 2021 for the
+1M/3M/6M tenors and 21 September 2021 for the 12-month tenor, any
+purported value dated before its own tenor's real launch cannot be a
+genuine point-in-time observation and must be a back-calculated
+reconstruction — exactly the fabrication Section 4 forbids. Values
+published from each tenor's own real launch date onward are
+contemporaneous regardless of the later ARRC endorsement date.** This
 finding alone disqualifies the *derived benchmark* as a PIT-safe
 source before its own real launch date, though it does not disqualify
-the *raw futures prices* it's built from (those are genuinely
-contemporaneous market prices from 2018 onward). Term SOFR is also
+the *raw futures prices* it's built from (those are contemporaneous
+exchange-determined settlement values from 2018 onward). Term SOFR is
+also
 explicitly **revisable**: CME's own FAQ and methodology PDF document a
 republication policy for same-day errors exceeding 1bp (before 2:00pm
 CT) and a materiality-based restatement policy (2bp threshold cited)
@@ -211,16 +224,18 @@ quantity for the pre-2018 period.
 publish a daily "UK instantaneous nominal forward curve (OIS)"
 alongside its gilt curves (https://www.bankofengland.co.uk/statistics/yield-curves),
 aimed at noon the following business day, bulk-downloadable as a zip
-file, **explicitly not available over an API**. Its own documentation
-states re-estimation occurs on methodology changes ("This replaces
-earlier models: all data have been re-estimated") — meaning **historical
-curve values can and do change retroactively**, a PIT-safety concern
-distinct from (and, because it is unbounded/methodology-driven rather
-than a bounded-materiality correction, arguably worse than) CME Term
-SOFR's own documented revision policy. The curve's own true historical
-starting date could not be confirmed from the BoE's own published
-pages in this research (a secondary source suggested ~2009) —
-**UNRESOLVED**.
+file, **explicitly not available over an API**. BoE yield-curve archive
+data are subject to revision, and the underlying fitting methodology
+may itself be changed over time — the BoE's own documentation
+describes periodic re-estimation when its models are updated. This
+means **present-day archive values for a past date are not guaranteed
+to be the historical vintage as originally computed on that date**, a
+PIT-safety concern distinct from (and, because it is
+methodology-driven rather than a bounded-materiality correction,
+potentially broader in scope than) CME Term SOFR's own documented
+revision policy. The curve's own true historical starting date could
+not be confirmed from the BoE's own published pages in this research
+(a secondary source suggested ~2009) — **UNRESOLVED**.
 
 ### EUR
 
@@ -240,9 +255,13 @@ below.
 
 **€STR futures** — listed on **both** Eurex (ticker `FST3`, launched
 23 January 2023) and ICE Futures Europe (launched 1 November 2023).
-Settles on compounded daily €STR (an overnight, risk-free benchmark —
-economically comparable in *character* to SONIA/SOFR/CORRA, unlike
-Euribor). Eurex also separately launched **"ECB Dated €STR Futures"
+Settles on compounded daily €STR — an overnight, unsecured benchmark,
+which improves comparability against Euribor's term/credit-premium
+character (both €STR and SONIA are unsecured overnight rates), but
+does not make it comparable to SOFR or CORRA, which are secured repo
+rates, not unsecured overnight rates (see the secured-vs-unsecured
+heterogeneity below). Eurex also separately launched **"ECB Dated
+€STR Futures"
 (`FEMP`)** on 15 December 2025, whose delivery months are tied
 directly to individual ECB reserve-maintenance periods rather than
 calendar IMM quarters — architecturally the closest thing to a
@@ -266,13 +285,19 @@ two real EUR candidates trade off exactly the two properties this
 story cares about most. Euribor futures have deep, multi-decade
 history but price a structurally different, credit/liquidity-premium-
 bearing quantity than every other currency's leading candidate. €STR
-futures are economically comparable to the other three currencies'
-instruments but have under three years of history — far too short to
-support a multi-year backtest alongside USD/GBP/CAD's 7+ years. There
-is no currently-available EUR instrument that is simultaneously deep
-and economically comparable; picking one means either accepting a
-comparability gap or accepting a severely truncated common backtest
-window.
+futures **improve** comparability versus Euribor by pricing an
+overnight risk-free rate instead of a term, credit-premium-bearing
+one — but this does not make EUR fully comparable to the other three:
+the secured-vs-unsecured heterogeneity already documented in FX-48
+(SOFR and CORRA are secured repo rates; SONIA and €STR are unsecured)
+remains regardless of which EUR instrument is chosen. €STR futures
+also have under three years of history — far too short to support a
+multi-year backtest alongside USD/GBP/CAD's 7+ years. There is no
+currently-available EUR instrument that is simultaneously deep and
+free of both comparability gaps; picking one means accepting either a
+term-rate/credit-premium mismatch (Euribor) or a severely truncated
+common backtest window (€STR) — and even €STR leaves the
+secured-vs-unsecured split across the four currencies unresolved.
 
 ### CAD
 
@@ -327,10 +352,10 @@ capability found**.
 Every leading candidate (Fed Funds futures, SOFR futures, SONIA
 futures, Euribor futures, €STR futures, CORRA futures) is a genuinely
 **PIT-safe raw observation**: a futures settlement price on date T was
-a real, tradeable market price on T, and — unlike the CME Term SOFR
-finding above — carries no reconstruction risk, provided the actual
-data obtained is the contemporaneous settlement, not a benchmark
-derived from it after the fact.
+a contemporaneous exchange-determined settlement value on T, and —
+unlike the CME Term SOFR finding above — carries no reconstruction
+risk, provided the actual data obtained is the contemporaneous
+settlement, not a benchmark derived from it after the fact.
 
 The **derived-curve candidates are meaningfully less safe**: CME Term
 SOFR's specific pre-launch-date reconstruction trap is documented
@@ -437,8 +462,9 @@ currencies**.
 - **USD**: no benchmark-administration break in the underlying rates
   used here (EFFR/SOFR have not been re-administered the way
   SONIA/CORRA/€STR/EONIA were) — but CME Term SOFR's own launch
-  (2021-04-21, 12-month tenor 2022-05-19) creates the derived-benchmark
-  reconstruction trap documented above, a different kind of break.
+  (2021-04-21 for 1M/3M/6M, 2021-09-21 for the 12-month tenor) creates
+  the derived-benchmark reconstruction trap documented above, a
+  different kind of break.
 
 ## Exact proposed semantics, if this were ever built (Section 7/18, informational only — no GO)
 

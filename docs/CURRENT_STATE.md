@@ -1150,24 +1150,34 @@ _Last updated: 2026-09-26 (FX-49)_
   opposed to the current/observed rates FX-42-FX-48 already cover.
   This project's second ADR: `docs/adr/0002-rate-expectations-data-
   source-feasibility.md`. Three parallel primary-source research
-  passes (USD; GBP+EUR; CAD) found: a real, liquid, long-established
-  futures instrument exists for every currency (Fed Funds futures/
-  SOFR futures for USD, SONIA futures for GBP, Euribor/€STR futures
-  for EUR, CORRA futures for CAD), and a futures settlement price is
-  genuinely point-in-time-safe -- but every single instrument's real
-  historical depth beyond a short free rolling window is gated behind
-  a paid commercial subscription (CME DataMine/ICE Data Services/TMX
-  Datalinx), each with redistribution-restricted licensing. A critical
+  passes (USD; GBP+EUR; CAD) found: a real, liquid futures instrument
+  exists for every currency (Fed Funds futures/SOFR futures for USD,
+  SONIA futures for GBP, Euribor/€STR futures for EUR, CORRA futures
+  for CAD) -- though not all are long-established (CAD's cleanest
+  instrument dates only to 2020, EUR's most comparable one only to
+  2023) -- and a futures settlement price is genuinely
+  point-in-time-safe (a contemporaneous exchange-determined settlement
+  value, not one reconstructed after the fact) -- but the multi-year
+  historical backfill this project would need is gated behind a paid
+  commercial subscription for every currency (current/same-day
+  publication is free on several of these exchanges' own sites;
+  multi-year depth is not) -- CME DataMine/ICE Data Services/TMX
+  Datalinx -- each with redistribution-restricted licensing. A critical
   PIT trap was found and avoided: CME's derived "Term SOFR" benchmark
-  really launched 2021-04-21 (12-month tenor 2022-05-19), so any
-  "historical" value dated earlier would be a back-calculated
-  reconstruction, not a genuine observation -- the raw SOFR futures
-  prices themselves (from 2018-05-07) don't have this problem. A
-  second complication: EUR's two real candidates trade off depth
-  (Euribor futures, ~28y, but a credit/liquidity-premium-bearing term
-  rate) against comparability (€STR futures, economically comparable
-  to the other three, but <3 years old) -- no currently-available EUR
-  instrument is both. **Decision: DEFER**, not NO-GO, not GO --
+  really launched 2021-04-21 for its 1M/3M/6M tenors and 2021-09-21 for
+  its 12-month tenor (2022-05-19 was the ARRC's later, separate formal
+  endorsement of the already-live 12-month tenor, not its first
+  publication), so any "historical" value dated before its own tenor's
+  real launch would be a back-calculated reconstruction, not a genuine
+  observation -- the raw SOFR futures prices themselves (from
+  2018-05-07) don't have this problem. A second complication: EUR's two
+  real candidates trade off depth (Euribor futures, ~28y, but a
+  credit/liquidity-premium-bearing term rate) against comparability
+  (€STR futures, which improve on Euribor by pricing an overnight
+  risk-free rate but still don't fully match SOFR/CORRA's secured-repo
+  character, and are <3 years old) -- no currently-available EUR
+  instrument is both deep and free of every comparability gap.
+  **Decision: DEFER**, not NO-GO, not GO --
   reopening requires an explicit commercial-licensing decision this
   story has no authority to make, plus the EUR instrument choice, plus
   several UNRESOLVED technical items. No FX-50 implementation contract
