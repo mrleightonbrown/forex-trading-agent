@@ -7,10 +7,11 @@ start at all if configuration would permit live trading — see
 
 from fastapi import FastAPI
 
-from forex_agent.apps.api.routers import health
+from forex_agent.apps.api.routers import health, market_context
 from forex_agent.apps.settings import get_settings
 
 get_settings()  # fail closed before the app is even constructed
 
 app = FastAPI(title="Forex Trading Agent", version="0.1.0")
 app.include_router(health.router)
+app.include_router(market_context.router)

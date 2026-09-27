@@ -1740,6 +1740,75 @@ DEFER; FX-53 remains BLOCKED; no Decision/Risk-Engine integration was
 added; no blackout/trade-blocking logic was implemented; FX-EPIC-08
 (News Intelligence) was not started.
 
+## FX-54V: fundamental & economic-event evidence visualization (complete)
+
+A read-only "Market Context" dashboard over evidence FX-EPIC-06/
+FX-EPIC-07 already produce -- the first trader-facing visualization in
+this project. Explicitly NOT a Decision Engine, Risk Engine, trading
+signal, fundamental-strength model, or event-risk scorer; answers "what
+does the system know," never "what should I trade."
+
+Inspected existing architecture first: a minimal FastAPI app already
+existed (`/health` only) alongside a hand-built, framework-free static
+dashboard precedent (`fta_dashboard_sketch.html`, inline CSS/vanilla
+JS/SVG, no build chain, no charting library, no `package.json`, no
+template engine anywhere in this repository). FX-54V's own dashboard
+(`GET /market-context` plus small JSON routes under `apps.api.routers.
+market_context`) follows that exact convention rather than introducing
+a JS framework or build chain.
+
+Two new, deliberately narrow use cases, `GetFundamentalRateEvidence`/
+`GetPolicyRateHistory`, deliberately bypass FX-45's own `research_
+readiness` gate (a research-safety requirement for a differential-
+CHANGE feature, not a "can we truthfully show today's already-known
+rate" requirement) while reusing the SAME pure domain functions FX-45/
+FX-45H.1 are built on -- plus two new domain functions,
+`announced_history_as_of`/`effective_history_as_of`
+(`domain.policy_rate_state`), and a new domain type,
+`FundamentalRateEvidence`, which lets either leg of a pair be
+individually missing (with an explicit reason) while the OTHER leg's
+real evidence still renders. FX-46's own committed research artifact
+gets a typed, validating, read-only loader (never reruns the research,
+parses every statistical field via `Decimal` never `float`,
+`infrastructure.research.fx46_research_artifact`) and its own view
+model, whose `RESEARCH_CONCLUSION_NOTE` reproduces FX-46's own null/
+general-negative conclusion verbatim in substance -- never
+reinterpreted as a signal, even where one isolated confidence interval
+happens to exclude zero.
+
+Every new domain/view-model type has a dedicated test asserting a
+fixed list of forbidden policy-field names (`risk_score`,
+`should_trade`, `blackout`, `fundamental_advantage`, `signal`, ...) is
+structurally absent from its own fields. An empty event window renders
+"No tracked PIT-visible events in this window" -- never "all clear"/
+"safe to trade." Performs NO network I/O from any route; the ONLY
+place `datetime.now()` is ever called is an explicit UI convenience
+default when `as_of` is omitted, with every use case still receiving
+an explicit, already-resolved instant; a malformed/naive explicitly-
+supplied `as_of` returns `400`. `apps.api.pairs.SUPPORTED_PAIRS`
+(EUR/USD, GBP/USD, USD/CAD) is this dashboard's own presentation-
+facing pair registry, not a domain concept.
+
+Manually verified end-to-end against the real dev database and the
+real committed FX-46 artifact for all three pairs, including seeding
+and then immediately deleting temporary, clearly-prefixed test event
+data to verify grouping/TBD-time/cancellation/pair-role rendering (no
+fake evidence left in any shared table). No new migration, no schema
+change of any kind. ~72 new tests. 1595 tests pass overall (up from
+1523); failures are exactly the pre-existing, unrelated Saturday-
+weekend live-OANDA-candle set. Live-source validation re-run
+separately: unchanged, 3 passing / 1 failing (BLS 403). `ruff check`/
+`ruff format --check`/`mypy .`/`pre-commit run --all-files` all clean.
+No ADR added -- this story's own layering is a direct application of
+CLAUDE.md's already-documented architecture, not a new durable
+trade-off. Full details in `docs/DECISIONS.md`'s FX-54V entry.
+
+**Per this story's own explicit stop instruction**: FX-49 remains
+DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED; no Decision/Risk-
+Engine integration was added; no BUY/SELL/blackout/trade-recommendation
+logic was implemented anywhere; FX-EPIC-08 (News Intelligence) was not
+started.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53 (gated, still not started),
 FX-50 (gated on FX-49's own reopening conditions, not started), the
@@ -1760,7 +1829,7 @@ or event-risk trading rules — out of scope until explicitly assigned
 per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
 FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/FX-46/FX-46H/
 FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A/FX-52AH/
-FX-52AH.1/FX-54 above are the explicitly-scoped exceptions (domain model, storage-integrity
+FX-52AH.1/FX-54/FX-54V above are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -1782,7 +1851,9 @@ pass correcting that ingestion's own occurrence-identity and
 source-safety semantics, a final integrity patch closing a
 timezone bug plus three remaining schema/persistence gaps, and a
 deterministic, provider-neutral, TIMING-ONLY event-risk evidence
-snapshot consuming that timing evidence per FX pair -- still no
+snapshot consuming that timing evidence per FX pair, and a read-only
+visualization of that evidence plus already-committed fundamental
+research, introducing no new charting/UI framework -- still no
 strategy, no decision logic, no "carry"/"expected rate" framing, no
 tradability claim, no commercial calendar provider, no consensus, no
 surprise, no event-risk scoring) and do not open the door to the rest

@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-54)_
+_Last updated: 2026-09-27 (FX-54V)_
 
 ## What exists
 
@@ -12,7 +12,8 @@ _Last updated: 2026-09-26 (FX-54)_
 - `Settings` (pydantic-settings) that fails closed if trading mode / broker
   environment / live-trading-compiled would ever permit live trading.
 - Minimal FastAPI app (`forex_agent.apps.api.main:app`) with a `/health`
-  endpoint that reports trading mode and broker environment.
+  endpoint that reports trading mode and broker environment, plus (FX-54V)
+  a read-only "Market Context" dashboard — see its own bullet below.
 - Async SQLAlchemy engine/session factory and declarative `Base`.
 - Alembic wired to the same `Settings.database_url`. First migration
   (`06755c32d64c`) enables the `pgcrypto` extension; verified up/down/up
@@ -1492,6 +1493,59 @@ _Last updated: 2026-09-26 (FX-54)_
   FX-52 remains DEFER (untouched); FX-53 remains BLOCKED; no Decision/
   Risk-Engine integration; no blackout/trade-blocking logic; FX-EPIC-08
   (News Intelligence) not started.**
+- **FX-54V: Market Context dashboard, read-only visualization
+  (complete)**. The first trader-facing visualization: `GET
+  /market-context` (server-rendered HTML, inline CSS/JS, SVG charts --
+  no framework, no build chain, matching this project's own existing
+  `fta_dashboard_sketch.html` precedent) plus small JSON routes
+  (`GET /api/market-context/{pair}/fundamentals`, `.../policy-rate-history`,
+  `.../events`, `GET /api/research/fx46`), all under
+  `apps.api.routers.market_context`. Explicitly NOT a Decision Engine,
+  Risk Engine, trading signal, fundamental-strength model, or event-
+  risk scorer -- it answers "what does the system know," never "what
+  should I trade." Two new, deliberately narrow use cases,
+  `GetFundamentalRateEvidence`/`GetPolicyRateHistory`, bypass FX-45's
+  own `research_readiness` gate (a differential-CHANGE research
+  safety requirement, not a "can we truthfully show today's rate"
+  requirement) while reusing its same underlying pure domain functions
+  -- plus two new domain functions, `announced_history_as_of`/
+  `effective_history_as_of`, and a new domain type,
+  `FundamentalRateEvidence`, which allows either leg of a pair to be
+  individually missing (with an explicit reason) while the OTHER leg's
+  real evidence still renders. FX-46's own committed research artifact
+  gets a typed, validating, read-only loader
+  (`infrastructure.research.fx46_research_artifact`, never reruns the
+  research, parses every statistical field via `Decimal` never
+  `float`) and its own view model, whose `RESEARCH_CONCLUSION_NOTE`
+  reproduces FX-46's null/general-negative conclusion verbatim in
+  substance -- never reinterpreted as a signal. Every new domain/view-
+  model type has a dedicated test asserting a fixed list of forbidden
+  policy-field names (`risk_score`, `should_trade`, `blackout`,
+  `fundamental_advantage`, `signal`, ...) is structurally absent from
+  its own fields. An empty event window renders "No tracked PIT-
+  visible events in this window" -- never "all clear"/"safe to trade."
+  Performs NO network I/O from any route (every route reads already-
+  persisted evidence or the already-committed FX-46 artifact from
+  local disk); the ONLY place `datetime.now()` is ever called is an
+  explicit UI convenience default when `as_of` is omitted, and a
+  malformed/naive explicitly-supplied `as_of` returns `400` rather than
+  silently substituting "now." `apps.api.pairs.SUPPORTED_PAIRS`
+  (EUR/USD, GBP/USD, USD/CAD) is this dashboard's own presentation-
+  facing pair registry, not a domain concept; an unsupported pair
+  returns `404`. Manually verified end-to-end against the real dev
+  database and the real committed FX-46 artifact for all three pairs,
+  including seeding and then immediately deleting temporary, clearly-
+  prefixed test event data to verify grouping/TBD-time/cancellation/
+  pair-role rendering (no fake evidence left in any shared table). No
+  new migration, no schema change. ~72 new tests. 1595 tests pass
+  overall (up from 1523); failures are exactly the pre-existing,
+  unrelated Saturday-weekend live-OANDA-candle set. Live-source
+  validation re-run separately: unchanged, 3 passing / 1 failing (BLS
+  403). Full details in `docs/DECISIONS.md`'s FX-54V entry. **Stop
+  after FX-54V -- FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; no
+  Decision/Risk-Engine integration; no BUY/SELL/blackout/trade-
+  recommendation logic anywhere; FX-EPIC-08 (News Intelligence) not
+  started.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

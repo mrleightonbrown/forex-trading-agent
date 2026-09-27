@@ -3,7 +3,9 @@ from decimal import Decimal
 
 from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.policy_rate_state import (
+    announced_history_as_of,
     announced_state_as_of,
+    effective_history_as_of,
     effective_state_as_of,
     previous_announced_state,
     previous_effective_state,
@@ -623,3 +625,108 @@ def test_previous_effective_state_unavailable_with_unresolved_same_observation_r
     )
 
     assert result is None  # NOT old_rev0
+
+
+# --- announced_history_as_of / effective_history_as_of (FX-54V) -------------
+
+
+def test_announced_history_as_of_returns_all_knowable_decisions_chronologically() -> None:
+    vintages = [_SEP_2026, _STILL_EARLIER, _EARLIER]  # deliberately out of order
+
+    result = announced_history_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == (_STILL_EARLIER, _EARLIER, _SEP_2026)
+
+
+def test_announced_history_as_of_excludes_not_yet_released_decision() -> None:
+    vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
+    just_before_release = UtcTimestamp(datetime(2026, 9, 16, 17, 59, 59, tzinfo=UTC))
+
+    result = announced_history_as_of(vintages, just_before_release)
+
+    assert result == (_STILL_EARLIER, _EARLIER)
+
+
+def test_announced_history_as_of_empty_for_empty_history() -> None:
+    result = announced_history_as_of([], UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+    assert result == ()
+
+
+def test_announced_history_as_of_never_duplicates_a_revised_observation() -> None:
+    # A later-republished revision of the SAME observation_period must
+    # appear exactly once (its latest admissible revision), never
+    # twice and never resurrected out of order.
+    revision = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_EARLIER.observation_period,
+        value=Decimal("3.630"),
+        released_at=_ts(2025, 12, 15),
+        effective_at=_EARLIER.effective_at,
+        revision_sequence=1,
+        source="FRED",
+        released_at_is_verified=True,
+    )
+    vintages = [_STILL_EARLIER, _EARLIER, revision, _SEP_2026]
+
+    result = announced_history_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == (_STILL_EARLIER, revision, _SEP_2026)
+    assert len(result) == 3
+
+
+def test_effective_history_as_of_returns_all_knowable_decisions_chronologically() -> None:
+    vintages = [_SEP_2026, _STILL_EARLIER, _EARLIER]
+
+    result = effective_history_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == (_STILL_EARLIER, _EARLIER, _SEP_2026)
+
+
+def test_effective_history_as_of_excludes_not_yet_released_decision() -> None:
+    vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026]
+    just_before_release = UtcTimestamp(datetime(2026, 9, 16, 17, 59, 59, tzinfo=UTC))
+
+    result = effective_history_as_of(vintages, just_before_release)
+
+    assert result == (_STILL_EARLIER, _EARLIER)
+
+
+def test_effective_history_as_of_empty_when_no_vintage_has_effective_at() -> None:
+    # FX-46's own documented gap: GBP/CAD have zero EFFECTIVE-dated
+    # history -- this must be an honest empty tuple, never an error.
+    no_effective = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 1, 1),
+        value=Decimal("5.00"),
+        released_at=_ts(2026, 1, 1),
+        revision_sequence=0,
+        source="BOE_DATABASE",
+        released_at_is_verified=True,
+    )
+    result = effective_history_as_of(
+        [no_effective], UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC))
+    )
+    assert result == ()
+
+
+def test_effective_history_as_of_does_not_apply_unresolved_later_decision_check() -> None:
+    # Unlike effective_state_as_of, a historical series of ALREADY-
+    # effective past decisions must still show every one of them even
+    # when a newer decision's own effective timing is unresolved --
+    # that check only ever governs whether a single CURRENT point can
+    # be reported, not whether past points remain visible.
+    unresolved_newer = MacroObservationVintage(
+        series_key=SERIES_KEY,
+        observation_period=_ts(2026, 10, 1),
+        value=Decimal("4.00"),
+        released_at=_ts(2026, 9, 18),
+        revision_sequence=0,
+        source="FRED",
+        released_at_is_verified=True,
+        # effective_at deliberately omitted -- unresolved
+    )
+    vintages = [_STILL_EARLIER, _EARLIER, _SEP_2026, unresolved_newer]
+
+    result = effective_history_as_of(vintages, UtcTimestamp(datetime(2026, 9, 20, tzinfo=UTC)))
+
+    assert result == (_STILL_EARLIER, _EARLIER, _SEP_2026)

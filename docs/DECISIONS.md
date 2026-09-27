@@ -9393,3 +9393,195 @@ Per this story's own explicit stop instruction: FX-52 remains DEFER,
 FX-53 remains BLOCKED, no Decision/Risk-Engine integration was added,
 no blackout/trade-blocking logic was implemented, and FX-EPIC-08 (News
 Intelligence) was not started.
+
+## 2026-09-27 — FX-54V: fundamental & economic-event evidence visualization
+
+A read-only "Market Context" dashboard over evidence FX-EPIC-06
+(policy-rate/macro PIT infrastructure, FX-46's own committed research)
+and FX-EPIC-07 (FX-51..FX-54's PIT economic-event model/evidence
+snapshot) already produce -- the first trader-facing visualization in
+this project. Explicitly NOT a Decision Engine, Risk Engine, trading
+signal, fundamental-strength model, or event-risk scorer.
+
+**Inspected existing architecture before choosing UI technology.** This
+project already had a minimal FastAPI app (`forex_agent.apps.api.main`,
+one `/health` route) and, separately, a hand-built, framework-free
+static dashboard precedent (`fta_dashboard_sketch.html` + generated
+`reports/dashboard_data.js`, produced by `scripts/export_backtest_
+report.py` -- inline CSS, vanilla JS, `<canvas>` charts, no build
+chain). No charting library, no `package.json`, no template engine
+(Jinja2 or otherwise) exists anywhere in this repository. FX-54V
+therefore adds a new FastAPI router (`apps.api.routers.market_
+context`) serving server-rendered HTML with inline CSS/JS and SVG
+charts -- matching the project's own established "no framework, no
+build chain" convention exactly, rather than introducing React/Vue/
+Streamlit/Gradio or a JS bundler for this one story.
+
+**Three layers, strictly separated, per this story's own instruction.**
+(A) Evidence/domain/application: two NEW, deliberately narrow use
+cases, `GetFundamentalRateEvidence` and `GetPolicyRateHistory`
+(`application.use_cases`), plus FX-54's own existing
+`GetEventRiskEvidenceSnapshot`, unmodified. (B) Visualization/read-
+model adapter: `apps.api.view_models.{fundamentals,events,fx46}_
+view_model` -- pure functions, no I/O, converting domain objects into
+JSON-safe dicts. (C) Presentation: `apps.api.market_context_page`
+(HTML/CSS/JS assembly) and `apps.api.routers.market_context` (routing/
+wiring only). SQL never appears in a template; provider-specific
+parsing never appears in view-model builders; trading interpretation
+never appears anywhere in this story at all.
+
+**`GetFundamentalRateEvidence` is deliberately NOT `ComputePolicyRate
+Differential` (FX-45).** FX-45's own use case gates its result behind
+`domain.research_readiness.require_research_ready_interval` -- correct
+for a differential-CHANGE RESEARCH feature (FX-45's own ~3/6-month
+lookback), wrong for truthfully displaying today's already-known
+policy rate on a dashboard: a research-safety window failure there
+would blank out a factual, currently-known rate for no correctness
+reason. The new use case is pure orchestration over the SAME domain
+functions FX-45 itself is built on (`announced_state_as_of`/
+`effective_state_as_of`, `CurrencyRateState.from_vintage`,
+`rate_differential`), with no additional gate. A new domain type,
+`FundamentalRateEvidence` (`domain.policy_rate_differential`), allows
+EITHER leg to be individually missing (with an explicit reason) while
+still reporting the OTHER leg's real evidence -- unlike
+`PolicyRateDifferentialFeature`/`DifferentialUnavailable`, which
+require both legs or return one pair-level unavailability. Verified
+live against real dev-DB data: GBP EFFECTIVE correctly returns "no
+EFFECTIVE policy-rate state is defensibly established for GBP" while
+USD's own EFFECTIVE state (which IS populated) still renders --
+exactly FX-46's own documented GBP/CAD EFFECTIVE-coverage gap, made
+visible rather than hidden.
+
+**`GetPolicyRateHistory` needed two new domain functions,
+`announced_history_as_of`/`effective_history_as_of`
+(`domain.policy_rate_state`)** -- generalizing "the single CURRENT
+decision" (`announced_state_as_of`/`effective_state_as_of`) to "every
+decision on record, chronologically," for a step-chart. Reuses the
+existing `_released_at_on_or_before` PIT filter and the same latest-
+admissible-revision-per-observation-period selection FX-45H.1 already
+established; `effective_history_as_of` deliberately does NOT apply
+`effective_state_as_of`'s own "unresolved later decision" check, since
+that check exists to decide whether a single CURRENT point can be
+defensibly reported, not whether past, already-resolved points remain
+visible. No `research_readiness` gate, for the identical reason as
+`GetFundamentalRateEvidence`.
+
+**FX-46's committed artifact gets a typed, validating loader,
+`infrastructure.research.fx46_research_artifact`** -- read-only, local-
+file, no network, never reruns FX-46's own research. The artifact
+stores every statistical quantity (means, confidence bounds) as a JSON
+STRING (FX-46's own choice, preserving exact `Decimal` precision
+through JSON's lossy float representation); this loader parses every
+such field via `Decimal(...)`, never `float(...)`, and validates the
+artifact's own declared dimensions (`ANNOUNCED`/`EFFECTIVE` semantics,
+`LEVEL`/`CHANGE` experiments, `1`/`5`/`20` horizons) are all present,
+raising `MalformedFx46ArtifactError` (fail closed, mirroring this
+project's own `MalformedIcsError`/`MalformedFeedError` convention) on
+anything missing, malformed, or reshaped -- never a silently missing
+field. Deliberately does not model FX-46's own `groups`/`by_era`/
+`stats` breakdown (only `disposition_counts`/`primary_contrast`, what
+the forest plot and coverage panel actually need) -- documented as
+scope, not an oversight.
+
+**FX-46's null/general-negative conclusion is reproduced verbatim in
+substance, never reinterpreted.** `RESEARCH_CONCLUSION_NOTE`
+(`apps.api.view_models.fx46_view_model`) is the ONE place this
+wording is authored, matching `research_results/fx46/policy_rate_
+differential_summary.md`'s own "Limitations" conclusion; every
+consumer of the FX-46 view model shows this identical text. A
+`crosses_zero` property on `Fx46ContrastHorizon` (`None` when the
+interval was not computable, never a guess) lets the forest-plot chart
+render a visible zero-crossing without ever labelling a result
+"signal"/"winner"/"validated alpha" -- verified directly against GBP/
+USD's own real ANNOUNCED/LEVEL/1-day result (`crosses_zero is True`)
+and its EFFECTIVE/LEVEL "not computable" cell (`crosses_zero is None`,
+`observed_diff is None`, FX-46's own `note` string preserved verbatim).
+
+**Every new domain/view-model type was checked with a dedicated test
+asserting a fixed list of forbidden policy-field names is structurally
+absent from `__dataclass_fields__`** (`risk_score`, `importance`,
+`should_trade`, `blackout`, `safe_to_trade`, `clear_of_events`,
+`fundamental_advantage`, `signal`, ...) -- the same discipline FX-54's
+own evidence types already established, extended to every new FX-54V
+type. `EMPTY_SCHEDULE_WINDOW_MESSAGE`/`EMPTY_RELEASE_WINDOW_MESSAGE`
+(`apps.api.view_models.events_view_model`) are the exact, restrained
+wording an empty window uses ("No tracked PIT-visible events in this
+window") -- never "all clear"/"safe to trade"/"no event risk."
+`SOURCE_HEALTH_NOTE` states plainly that source freshness/health is
+not currently tracked anywhere in this repository for the economic-
+calendar subsystem, rather than inventing a green/yellow/red indicator
+from nothing.
+
+**No network I/O from any route.** Every JSON/HTML route reads already-
+persisted evidence via `MacroObservationRepository`/
+`EconomicEventRepository`, or the already-committed FX-46 artifact
+from local disk -- never BLS/ONS/Bank of Canada/FRED/any central-bank
+or commercial endpoint. FX-46's artifact is loaded once, cached in-
+process (`_fx46_artifact_cache`, a module-level `| None` set exactly
+once, since it is immutable research output that never changes at
+runtime).
+
+**Explicit `as_of`, never an implicit clock.** `_resolve_as_of`
+(`apps.api.routers.market_context`) is the ONLY place in this entire
+story that calls `datetime.now()` -- only when the caller/UI omits
+`as_of` entirely, as an explicit convenience default; the resolved
+instant is then passed EXPLICITLY into every use case. An explicitly-
+supplied `as_of` must be ISO 8601 and timezone-aware or the route
+returns `400`, never silently substituting "now" for a malformed
+value. `apps.api.pairs.SUPPORTED_PAIRS` (EUR/USD, GBP/USD, USD/CAD) is
+this dashboard's OWN presentation-facing pair registry -- no such
+constant existed anywhere in `domain`/`application` to reuse (every
+research script constructs its own inline `Instrument` list), and
+none was added there either; an unsupported pair returns `404`.
+
+**Manually verified end-to-end against the real dev database and the
+real committed FX-46 artifact** (not just unit tests): confirmed real
+persisted GBP/USD policy rates render correctly (differential
+`-0.125pp`), GBP's own real EFFECTIVE-coverage gap renders as an
+explicit "unavailable" reason rather than hidden, EUR/USD's own real
+event-coverage gap renders `untracked_pair_currencies: ["EUR"]`, and
+FX-46's own real GBP/USD ANNOUNCED/LEVEL result renders with exact
+`Decimal`-string CI bounds. Seeded temporary, clearly-prefixed test
+event data (a date-only US CPI schedule, an exact-time GBP GDP
+schedule, a cancelled-then-still-scheduled NFP/Unemployment release
+package, a date-only CAD policy release with `source_published_at`
+distinct from `availability`) directly via the repository to verify
+grouping/TBD-time/cancellation/pair-role rendering, then deleted it
+immediately after -- no fake evidence was left in any shared table.
+
+**No new migration, no schema change of any kind** -- every route
+computes its view model on request from already-persisted data;
+nothing in this story is itself persisted.
+
+**Tests**: ~72 new tests (domain: `announced_history_as_of`/
+`effective_history_as_of`, `FundamentalRateEvidence`/
+`PolicyRateHistory` validation; application: `GetFundamentalRateEvidence`/
+`GetPolicyRateHistory` against `FakeMacroObservationRepository`;
+infrastructure: the FX-46 loader against both the real committed
+artifact and deliberately malformed fixtures; apps: `SUPPORTED_PAIRS`,
+all three view-model builders, including forbidden-field-name checks;
+integration: HTTP routes via httpx `AsyncClient`/`ASGITransport`
+against the real FastAPI app and live Postgres, covering supported/
+unsupported pairs, malformed/naive `as_of`, negative horizons, and the
+full page rendering for all three pairs). 1595 tests pass overall (up
+from 1523); failures are exactly the pre-existing, unrelated Saturday-
+weekend live-OANDA-candle set. Live-source validation re-run
+separately: unchanged, 3 passing / 1 failing (BLS 403) --
+`live_source`-marked tests remain untouched and irrelevant to this
+story. `ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean.
+
+**Version**: `pyproject.toml` remains at its own existing `0.1.0`,
+matching FX-54's own precedent of inspecting current convention rather
+than inventing one.
+
+No ADR added -- this story's own layering (evidence/application ->
+read-model adapter -> presentation) is a direct application of
+CLAUDE.md's already-documented `apps -> application -> domain`
+architecture, not a new durable trade-off requiring its own record.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no Decision/Risk-Engine
+integration was added, no BUY/SELL/trade-recommendation/blackout logic
+was implemented anywhere, and FX-EPIC-08 (News Intelligence) was not
+started.

@@ -120,6 +120,17 @@ ready_interval` (or `is_research_safe` per-vintage) over the relevant
 window, against the COMPLETE stored history, BEFORE treating either
 function's result as research-safe; see `application.use_cases.
 compute_policy_rate_differential`.
+
+FX-54V adds `announced_history_as_of`/`effective_history_as_of` --
+generalizing "the single CURRENT decision" to "every decision on
+record, in chronological order," for a visualization step-chart. These
+are read-only, presentation-facing queries, never a research feature:
+unlike `compute_policy_rate_differential`, no `research_readiness`
+gate applies here -- a chart showing "what we currently know the rate
+path to be" is a different question from "is this window statistically
+safe for a research comparison," and gating a display-only history
+behind FX-45's research-safety requirement would hide genuinely known,
+correctly-PIT-filtered history from a user for no correctness reason.
 """
 
 from collections.abc import Sequence
@@ -355,3 +366,72 @@ def previous_effective_state(
     if _has_unresolved_later_decision(known, candidate, before=current.observation_period.value):
         return None
     return candidate
+
+
+def announced_history_as_of(
+    vintages: Sequence[MacroObservationVintage], as_of: UtcTimestamp
+) -> tuple[MacroObservationVintage, ...]:
+    """Every distinct policy decision ANNOUNCED (market-known) on or
+    before `as_of` (FX-54V) -- the ANNOUNCED analog of `announced_
+    state_as_of`, generalized from "the single current decision" to
+    "every decision on record up to and including the current one," for
+    a historical step-chart. For each distinct `observation_period`
+    among vintages with `released_at <= as_of`, includes exactly the
+    one vintage `announced_state_as_of` would return if `as_of` were
+    queried against just that period's own history -- its latest
+    admissible revision, never a superseded one -- so a later
+    republished revision of an OLDER observation never appears twice or
+    resurrects that older observation out of order. Returned in
+    ascending `observation_period` order (a chart's x-axis must be
+    chronological, never database/insertion order). Empty if nothing in
+    `vintages` has `released_at <= as_of`.
+    """
+    known = _released_at_on_or_before(vintages, as_of)
+    periods = sorted({v.observation_period.value for v in known})
+    result = []
+    for period in periods:
+        same_period = [v for v in known if v.observation_period.value == period]
+        result.append(max(same_period, key=lambda v: (v.released_at.value, v.revision_sequence)))
+    return tuple(result)
+
+
+def effective_history_as_of(
+    vintages: Sequence[MacroObservationVintage], as_of: UtcTimestamp
+) -> tuple[MacroObservationVintage, ...]:
+    """The EFFECTIVE analog of `announced_history_as_of` -- every
+    distinct policy decision whose own `effective_at` is populated and
+    `<= as_of`, restricted throughout to `released_at <= as_of`
+    (mirrors `effective_state_as_of`'s own PIT gate), one entry per
+    distinct `observation_period` (its latest admissible, effective-
+    dated revision), in ascending `effective_at` order.
+
+    Deliberately does NOT apply `effective_state_as_of`'s own
+    "unresolved later decision" check (`_has_unresolved_later_
+    decision`): that check exists to decide whether a SINGLE point --
+    "the" current effective state -- can be defensibly reported RIGHT
+    NOW; for a historical series of ALREADY-effective past decisions,
+    each entry returned here already has its own confirmed, PIT-safe
+    `effective_at`, so there is nothing left unresolved about any
+    individual entry -- only the question of whether a NEWER decision
+    might supersede it, which is exactly what the omitted check would
+    have answered, and is irrelevant to plotting the past path.
+
+    A currency/series with zero populated `effective_at` values at all
+    (e.g. GBP, CAD -- FX-46's own documented coverage gap) returns an
+    empty tuple, never a fabricated entry.
+    """
+    known = _released_at_on_or_before(vintages, as_of)
+    effective = [
+        v for v in known if v.effective_at is not None and v.effective_at.value <= as_of.value
+    ]
+    periods = sorted({v.observation_period.value for v in effective})
+    picked = []
+    for period in periods:
+        same_period = [v for v in effective if v.observation_period.value == period]
+        picked.append(max(same_period, key=_effective_at_revision_key))
+    return tuple(sorted(picked, key=_effective_at_revision_key))
+
+
+def _effective_at_revision_key(vintage: MacroObservationVintage) -> tuple[datetime, int]:
+    assert vintage.effective_at is not None  # guaranteed by this module's own filtering above
+    return (vintage.effective_at.value, vintage.revision_sequence)

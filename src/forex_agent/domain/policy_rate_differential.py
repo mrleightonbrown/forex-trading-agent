@@ -135,6 +135,79 @@ class DifferentialUnavailable:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class FundamentalRateEvidence:
+    """FX-54V: per-side, partial-tolerant policy-rate evidence for one
+    FX pair -- the "Market Context" dashboard's own Fundamentals card.
+
+    Unlike `PolicyRateDifferentialFeature`/`DifferentialUnavailable`
+    (FX-45), which require BOTH legs to resolve to a defensible state
+    or return a single pair-level unavailability, this type lets EITHER
+    side be individually missing while still reporting the OTHER side's
+    real evidence plus an explicit reason for the missing one (FX-54V
+    Section 8: "the visualization must make data absence visible" --
+    never hide the missing side, never fall back, never display zero).
+
+    Carries NO `domain.research_readiness` gate of any kind: FX-45's
+    ~3/6-month research-safety window is a requirement for a
+    differential-CHANGE research feature, not a requirement for
+    truthfully displaying today's already-known policy-rate state --
+    this type answers only "what does `announced_state_as_of`/
+    `effective_state_as_of` currently say," the same pure selection
+    FX-45 itself is built on, with no additional gate layered on top.
+
+    `differential` is `rate_differential(base.rate, quote.rate)` when
+    BOTH `base`/`quote` resolve, else `None` -- raw arithmetic only,
+    never a directional/bullish/bearish label (FX-54V Section 7):
+    labelled "raw policy-rate differential" by every consumer of this
+    type, never "fundamental advantage."
+    """
+
+    pair: str
+    as_of: UtcTimestamp
+    rate_semantics: RateSemantics
+    base_currency: str
+    quote_currency: str
+    base: CurrencyRateState | None
+    base_unavailable_reason: str | None
+    quote: CurrencyRateState | None
+    quote_unavailable_reason: str | None
+    differential: Decimal | None
+
+    def __post_init__(self) -> None:
+        if (self.base is None) != (self.base_unavailable_reason is not None):
+            raise ValueError("base_unavailable_reason must be set if and only if base is None")
+        if (self.quote is None) != (self.quote_unavailable_reason is not None):
+            raise ValueError("quote_unavailable_reason must be set if and only if quote is None")
+        if (self.base is None or self.quote is None) != (self.differential is None):
+            raise ValueError(
+                "differential must be None if and only if base or quote is unavailable"
+            )
+        if self.differential is not None:
+            require_decimal("differential", self.differential)
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyRateHistory:
+    """FX-54V: the chronological policy-rate PATH for both legs of one
+    FX pair, as currently knowable at `as_of` -- the "Market Context"
+    dashboard's policy-rate history chart. Each of `base_history`/
+    `quote_history` is exactly what `domain.policy_rate_state.
+    announced_history_as_of`/`effective_history_as_of` returns for that
+    currency's canonical series: ascending, one entry per distinct
+    decision, never smoothed, never interpolated, never extended into
+    the future. A currency with zero history (or zero EFFECTIVE-dated
+    history specifically -- e.g. GBP/CAD) has an empty tuple, never a
+    fabricated point.
+    """
+
+    base_currency: str
+    quote_currency: str
+    rate_semantics: RateSemantics
+    base_history: tuple[MacroObservationVintage, ...]
+    quote_history: tuple[MacroObservationVintage, ...]
+
+
 def format_pair(base_currency: str, quote_currency: str) -> str:
     """The display form FX-45 uses throughout: `"BASE/QUOTE"` (a
     slash, matching this story's own convention -- distinct from

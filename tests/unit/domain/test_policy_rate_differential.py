@@ -3,10 +3,13 @@ from decimal import Decimal
 
 import pytest
 
+from forex_agent.domain.macro_observation_vintage import MacroObservationVintage
 from forex_agent.domain.policy_rate_differential import (
     CurrencyRateState,
     DifferentialDirection,
+    FundamentalRateEvidence,
     PolicyRateDifferentialSnapshot,
+    PolicyRateHistory,
     RateSemantics,
     classify_direction,
     format_pair,
@@ -245,3 +248,107 @@ def test_change_since_previous_uses_effective_at_for_effective_semantics() -> No
     # base's effective_at (9/20) is later than quote's (9/1) -- base moved last.
     # previous differential = 3.50 - 5.125 = -1.625; current = -1.375; change = 0.25
     assert change == Decimal("0.25")
+
+
+# ---------------------------------------------------------------------------
+# FundamentalRateEvidence (FX-54V) -- partial-tolerant, per-side evidence
+# ---------------------------------------------------------------------------
+
+
+def _fundamental_evidence(**overrides: object) -> FundamentalRateEvidence:
+    defaults: dict[str, object] = {
+        "pair": "GBP/USD",
+        "as_of": _ts(2026, 9, 20),
+        "rate_semantics": RateSemantics.ANNOUNCED,
+        "base_currency": "GBP",
+        "quote_currency": "USD",
+        "base": _state("GBP", "3.75"),
+        "base_unavailable_reason": None,
+        "quote": _state("USD", "3.875"),
+        "quote_unavailable_reason": None,
+        "differential": Decimal("-0.125"),
+    }
+    defaults.update(overrides)
+    return FundamentalRateEvidence(**defaults)  # type: ignore[arg-type]
+
+
+def test_fundamental_rate_evidence_both_sides_available() -> None:
+    evidence = _fundamental_evidence()
+    assert evidence.base is not None
+    assert evidence.quote is not None
+    assert evidence.differential == Decimal("-0.125")
+
+
+def test_fundamental_rate_evidence_allows_one_side_missing() -> None:
+    # FX-54V Section 8: the missing side must be visible, not hidden.
+    evidence = _fundamental_evidence(
+        base=None,
+        base_unavailable_reason="no EFFECTIVE policy-rate state is defensibly established for GBP",
+        differential=None,
+    )
+    assert evidence.base is None
+    assert evidence.base_unavailable_reason is not None
+    assert evidence.quote is not None  # the OTHER side is still reported
+    assert evidence.differential is None
+
+
+def test_fundamental_rate_evidence_rejects_reason_without_none_base() -> None:
+    with pytest.raises(ValueError, match="base_unavailable_reason"):
+        _fundamental_evidence(base_unavailable_reason="should not have a reason when base is set")
+
+
+def test_fundamental_rate_evidence_rejects_missing_base_without_reason() -> None:
+    with pytest.raises(ValueError, match="base_unavailable_reason"):
+        _fundamental_evidence(base=None, differential=None)
+
+
+def test_fundamental_rate_evidence_rejects_differential_when_a_side_is_missing() -> None:
+    with pytest.raises(ValueError, match="differential"):
+        _fundamental_evidence(
+            base=None, base_unavailable_reason="unavailable", differential=Decimal("1.0")
+        )
+
+
+def test_fundamental_rate_evidence_rejects_missing_differential_when_both_sides_present() -> None:
+    with pytest.raises(ValueError, match="differential"):
+        _fundamental_evidence(differential=None)
+
+
+def test_fundamental_rate_evidence_has_no_directional_field() -> None:
+    # FX-54V Section 7/15: raw arithmetic only, never a "fundamental
+    # advantage"/strength/bias label anywhere on this type.
+    forbidden = {"fundamental_advantage", "strength", "bias", "signal", "direction"}
+    fields = set(FundamentalRateEvidence.__dataclass_fields__)
+    assert fields.isdisjoint(forbidden)
+
+
+# ---------------------------------------------------------------------------
+# PolicyRateHistory (FX-54V)
+# ---------------------------------------------------------------------------
+
+
+def _history_vintage(currency: str, period: tuple[int, ...], value: str) -> MacroObservationVintage:
+    return MacroObservationVintage(
+        series_key=f"{currency}_POLICY_RATE",
+        observation_period=_ts(*period),
+        value=Decimal(value),
+        released_at=_ts(*period),
+        revision_sequence=0,
+        source="test",
+    )
+
+
+def test_policy_rate_history_holds_both_legs_independently() -> None:
+    base_points = (_history_vintage("GBP", (2026, 1, 1), "5.00"),)
+    quote_points = ()  # e.g. a currency with zero stored history
+
+    history = PolicyRateHistory(
+        base_currency="GBP",
+        quote_currency="USD",
+        rate_semantics=RateSemantics.ANNOUNCED,
+        base_history=base_points,
+        quote_history=quote_points,
+    )
+
+    assert history.base_history == base_points
+    assert history.quote_history == ()  # empty, never fabricated

@@ -1248,6 +1248,92 @@ data, never persisted themselves. The only addition is the
 `known_releases_in_window` repository method (no schema change at
 all). Full details in `docs/DECISIONS.md`'s own FX-54 entry.
 
+## Market Context dashboard (FX-54V, read-only visualization)
+
+The first trader-facing visualization: a server-rendered "Market
+Context" page (`GET /market-context`) plus small JSON routes, all
+under `apps.api.routers.market_context`, added to the existing minimal
+FastAPI app (`forex_agent.apps.api.main`). Explicitly NOT a Decision
+Engine, Risk Engine, trading signal, or fundamental/event-risk scorer
+-- it answers "what does the system know," never "what should I
+trade."
+
+**Technology choice matched existing convention, not a new one.** This
+project already had a hand-built, framework-free static dashboard
+precedent (`fta_dashboard_sketch.html` + generated `reports/dashboard_
+data.js`, from `scripts/export_backtest_report.py`) -- inline CSS,
+vanilla JS, SVG/`<canvas>` charts, no build chain, no charting library,
+no `package.json`, no template engine anywhere in this repository.
+FX-54V's dashboard follows that exact convention rather than
+introducing React/Vue/Streamlit/Gradio or a JS bundler.
+
+**Three strictly separated layers** (this story's own explicit
+instruction): (A) evidence/domain/application -- two new use cases,
+`GetFundamentalRateEvidence`/`GetPolicyRateHistory`
+(`application.use_cases`), plus FX-54's existing `GetEventRiskEvidence
+Snapshot`, unmodified; (B) `apps.api.view_models.{fundamentals,
+events,fx46}_view_model` -- pure functions, no I/O, converting domain
+objects into JSON-safe dicts; (C) `apps.api.market_context_page`
+(HTML/CSS/JS assembly) and `apps.api.routers.market_context`
+(routing/wiring only). SQL never appears in a template; no trading
+interpretation appears anywhere in this story.
+
+**`GetFundamentalRateEvidence`/`GetPolicyRateHistory` deliberately
+bypass FX-45's `domain.research_readiness` gate.** That gate exists
+for a differential-CHANGE RESEARCH feature's own safety requirement,
+not for truthfully displaying an already-known policy rate on a
+dashboard. Both use cases are pure orchestration over the SAME domain
+functions FX-45/FX-45H.1 are built on -- `announced_state_as_of`/
+`effective_state_as_of` for the current-rate card, and two NEW
+generalizations, `announced_history_as_of`/`effective_history_as_of`
+(`domain.policy_rate_state`), for the history chart ("every decision
+on record, chronologically" instead of "the single current one," reusing
+the same PIT filter and latest-admissible-revision selection). A new
+domain type, `FundamentalRateEvidence` (`domain.policy_rate_
+differential`), allows either leg to be individually missing (with an
+explicit reason) while the OTHER leg's real evidence still renders --
+unlike `PolicyRateDifferentialFeature`/`DifferentialUnavailable`,
+which require both legs or return one pair-level unavailability.
+
+**FX-46's committed research artifact gets a typed, validating,
+read-only loader** (`infrastructure.research.fx46_research_artifact`)
+-- never reruns FX-46's own research, never touches the network. Every
+statistical field is parsed via `Decimal(...)` (the artifact stores
+them as JSON strings specifically to preserve exact precision), and
+the artifact's own declared dimensions (semantics/experiment/horizon)
+are validated present, raising `MalformedFx46ArtifactError` (fail
+closed) on anything missing or reshaped. `RESEARCH_CONCLUSION_NOTE`
+(`apps.api.view_models.fx46_view_model`) reproduces FX-46's own null/
+general-negative conclusion verbatim in substance -- the ONE place
+that wording is authored, so no consumer can drift from it. A
+`crosses_zero` property (`None` when not computable, never a guess)
+lets the forest-plot chart show a zero-crossing without ever labelling
+a result a "signal."
+
+**No policy field exists anywhere in this story, enforced by tests, not
+just convention.** Every new domain/view-model type has a dedicated
+test asserting a fixed list of forbidden names (`risk_score`,
+`should_trade`, `blackout`, `fundamental_advantage`, `signal`, ...) is
+structurally absent from its own fields. An empty event window renders
+the exact restrained wording "No tracked PIT-visible events in this
+window" -- never "all clear"/"safe to trade." Source freshness/health
+is stated as explicitly NOT tracked anywhere in this repository, rather
+than inventing a green/yellow/red indicator from nothing.
+
+**No network I/O from any route** -- every route reads already-
+persisted evidence or the already-committed FX-46 artifact from local
+disk. **Explicit `as_of` always** -- `_resolve_as_of` is the ONLY place
+in this story that calls `datetime.now()`, only as a UI convenience
+default when the caller omits `as_of`; the resolved instant is then
+passed explicitly into every use case, and a malformed/naive
+explicitly-supplied `as_of` returns `400` rather than silently
+substituting "now." `apps.api.pairs.SUPPORTED_PAIRS` (EUR/USD, GBP/
+USD, USD/CAD) is this dashboard's own presentation-facing pair
+registry, deliberately not a domain concept.
+
+**No new migration, no schema change** -- every view is computed on
+request. Full details in `docs/DECISIONS.md`'s own FX-54V entry.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

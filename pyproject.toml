@@ -61,6 +61,17 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+# FX-54V: FastAPI's own dependency-injection convention requires calling
+# Depends(...)/Query(...) as a parameter default -- flake8-bugbear's B008
+# ("don't call functions in argument defaults") is a well-known false
+# positive against this exact pattern; scoped to routers only, not the
+# whole codebase, since nothing outside apps/api/routers/ uses FastAPI.
+"src/forex_agent/apps/api/routers/*.py" = ["B008"]
+# FX-54V: this module's own content is a large embedded HTML/CSS/JS
+# template (see its module docstring) -- wrapping markup/script lines at
+# 100 chars would harm the template's own readability without improving
+# any actual Python code; scoped to this one file only.
+"src/forex_agent/apps/api/market_context_page.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["forex_agent"]
