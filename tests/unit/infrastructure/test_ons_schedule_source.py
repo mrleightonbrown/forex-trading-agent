@@ -45,11 +45,11 @@ def _client_returning(status_code: int, text: str) -> httpx.AsyncClient:
 @pytest.mark.asyncio
 async def test_gdp_bulletin_mapped_with_reference_period() -> None:
     source = OnsScheduleSource(client=_client_returning(200, _SAMPLE_RSS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    assert len(observations) == 1
-    gdp = observations[0]
+    assert len(result.observations) == 1
+    gdp = result.observations[0]
     assert gdp.indicator_keys == ("GBP_GDP_QOQ",)
     assert gdp.scheduled_date == date(2026, 9, 30)
     assert gdp.scheduled_time == time(6, 0)
@@ -58,17 +58,27 @@ async def test_gdp_bulletin_mapped_with_reference_period() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_trends_is_unmapped() -> None:
+async def test_consumer_trends_is_unmapped_and_counted() -> None:
     source = OnsScheduleSource(client=_client_returning(200, _SAMPLE_RSS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    assert all("Consumer trends" not in o.raw_title for o in observations)
+    assert all("Consumer trends" not in o.raw_title for o in result.observations)
+    assert result.mapped_count == 1
+    assert result.unmapped_count == 1
 
 
 @pytest.mark.asyncio
 async def test_http_error_status_raises_unavailable() -> None:
     source = OnsScheduleSource(client=_client_returning(500, "error"))
+    with pytest.raises(EconomicCalendarSourceUnavailableError):
+        await source.fetch_schedule()
+    await source.aclose()
+
+
+@pytest.mark.asyncio
+async def test_malformed_response_raises_unavailable_not_empty_result() -> None:
+    source = OnsScheduleSource(client=_client_returning(200, "not xml at all"))
     with pytest.raises(EconomicCalendarSourceUnavailableError):
         await source.fetch_schedule()
     await source.aclose()

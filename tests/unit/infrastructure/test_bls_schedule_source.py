@@ -1,6 +1,8 @@
 """FX-52A: unit tests for `BlsScheduleSource` against a mocked HTTP
 transport -- no real network access (see tests/integration/
-test_bls_schedule_source_live.py for the live-feed validation)."""
+test_bls_schedule_source_live.py for the live-feed validation).
+FX-52AH adds malformed-response and disposition-count coverage.
+"""
 
 from datetime import date, time
 
@@ -47,10 +49,10 @@ def _client_returning(status_code: int, text: str) -> httpx.AsyncClient:
 @pytest.mark.asyncio
 async def test_employment_situation_splits_into_two_indicators() -> None:
     source = BlsScheduleSource(client=_client_returning(200, _SAMPLE_ICS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    employment = next(o for o in observations if "Employment" in o.raw_title)
+    employment = next(o for o in result.observations if "Employment" in o.raw_title)
     assert employment.indicator_keys == ("US_NONFARM_PAYROLLS", "US_UNEMPLOYMENT_RATE")
     assert employment.scheduled_date == date(2026, 12, 10)
     assert employment.scheduled_time == time(8, 30)
@@ -60,21 +62,23 @@ async def test_employment_situation_splits_into_two_indicators() -> None:
 @pytest.mark.asyncio
 async def test_cpi_maps_to_single_indicator() -> None:
     source = BlsScheduleSource(client=_client_returning(200, _SAMPLE_ICS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    cpi = next(o for o in observations if "Consumer Price" in o.raw_title)
+    cpi = next(o for o in result.observations if "Consumer Price" in o.raw_title)
     assert cpi.indicator_keys == ("US_CPI_YOY",)
 
 
 @pytest.mark.asyncio
-async def test_unrecognized_release_title_is_unmapped_and_omitted() -> None:
+async def test_unrecognized_release_title_is_unmapped_and_counted() -> None:
     source = BlsScheduleSource(client=_client_returning(200, _SAMPLE_ICS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    assert all("Productivity" not in o.raw_title for o in observations)
-    assert len(observations) == 2
+    assert all("Productivity" not in o.raw_title for o in result.observations)
+    assert result.mapped_count == 2
+    assert result.unmapped_count == 1
+    assert result.invalid_count == 0
 
 
 @pytest.mark.asyncio
@@ -100,8 +104,25 @@ async def test_network_failure_raises_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_ics_yields_empty_result_not_a_crash() -> None:
-    source = BlsScheduleSource(client=_client_returning(200, "not a valid ics document"))
-    observations = await source.fetch_schedule()
+async def test_malformed_html_response_raises_unavailable_not_empty_result() -> None:
+    # FX-52AH: an HTTP 200 carrying an HTML error page (BLS's own real
+    # 403 page shape) must surface as a source failure, never as "zero
+    # events currently scheduled."
+    html = "<!DOCTYPE HTML><html><head><title>Access Denied</title></head></html>"
+    source = BlsScheduleSource(client=_client_returning(200, html))
+    with pytest.raises(EconomicCalendarSourceUnavailableError):
+        await source.fetch_schedule()
     await source.aclose()
-    assert observations == ()
+
+
+@pytest.mark.asyncio
+async def test_valid_empty_calendar_is_a_successful_empty_result() -> None:
+    # A genuinely well-formed, empty calendar remains a valid, non-error
+    # result -- distinct from the malformed case above.
+    source = BlsScheduleSource(client=_client_returning(200, "BEGIN:VCALENDAR\nEND:VCALENDAR\n"))
+    result = await source.fetch_schedule()
+    await source.aclose()
+    assert result.observations == ()
+    assert result.mapped_count == 0
+    assert result.unmapped_count == 0
+    assert result.invalid_count == 0

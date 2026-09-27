@@ -990,7 +990,7 @@ rather than leaving that precondition purely as a documentation
 promise a real production database could silently violate. Full
 details in `docs/DECISIONS.md`'s FX-51H.1 entry.
 
-## Official economic calendar timing ingestion (FX-52A)
+## Official economic calendar timing ingestion (FX-52A, hardened FX-52AH)
 
 Deliberately separate from -- and does not reopen -- FX-52's own DEFER
 verdict (ADR 0003): real ingestion of forward SCHEDULE timing and
@@ -1005,21 +1005,28 @@ never fuzzy matching), and REPOSITORY PERSISTENCE (the two FX-52A use
 cases below, built entirely on FX-51/FX-51H/FX-51H.1's existing
 `EconomicEventRepository`).
 
-**Occurrence identity is a pure, deterministic function, not a
-persisted mapping table.** `domain.economic_calendar_occurrence_
-identity.build_occurrence_key(source, external_event_id,
-indicator_key)` always returns the same string for the same real-world
-occurrence, regardless of what its schedule currently says -- this
-still satisfies FX-51H's "provider IDs must never replace canonical
-occurrence identity" (the result is this project's own namespaced
-string, never the bare external ID) while needing no new database
-table or migration. A single source item identifying more than one
-canonical indicator at once (BLS's "Employment Situation" release
-package -> `US_NONFARM_PAYROLLS` + `US_UNEMPLOYMENT_RATE`) gets one
-`occurrence_key` per indicator, sharing one `release_group_key`
-(`build_release_group_key`, keyed by source item only, never by
-indicator) -- FX-51's own grouping contract, exercised for real here
-for the first time.
+**Occurrence identity is provider-neutral, resolved through a
+persisted mapping table (corrected by FX-52AH).** `domain.economic_
+calendar_occurrence_identity.mint_occurrence_key(indicator_key)` mints
+a fresh `indicator_key:uuid4` string with no source/external_event_id
+involved at all -- FX-52A's original design made `occurrence_key` a
+pure function of `(source, external_event_id, indicator_key)`, which
+satisfied FX-51H's "provider IDs must never replace canonical
+occurrence identity" but made genuine many-external-IDs-to-one-
+occurrence resolution structurally impossible (a second source could
+never resolve to an occurrence a first source had already created).
+`application.ports.economic_event_source_mapping_repository.
+EconomicEventSourceMappingRepository` (`get_occurrence_key`/
+`record_mapping`, backed by the `economic_event_source_mappings` table,
+migration `df99b7796566`) now holds the actual many-to-one mapping:
+many `(source, external_event_id, indicator_key)` triples can each
+independently resolve to the SAME `occurrence_key`. A single source
+item identifying more than one canonical indicator at once (BLS's
+"Employment Situation" release package -> `US_NONFARM_PAYROLLS` +
+`US_UNEMPLOYMENT_RATE`) gets one `occurrence_key` per indicator,
+sharing one `release_group_key` (`build_release_group_key`, keyed by
+source item only, never by indicator) -- FX-51's own grouping contract,
+exercised for real here for the first time.
 
 **Two use cases, one per vintage kind, sharing no code but the same
 change-detection shape**: `application.use_cases.ingest_official_
@@ -1042,20 +1049,62 @@ first published a schedule that has been public for months, so
 never backdated to the schedule's own claimed date.
 
 **Release/schedule cross-source correlation is a documented, date-
-based heuristic, not a guess at content.** Bank of Canada's schedule
-feed (ICS) and press-release feed (RSS) are two independent feeds with
-two independent external IDs for the same real announcement;
-`IngestOfficialCalendarRelease` searches existing occurrences of the
-same canonical indicator for one whose latest known schedule falls on
-the SAME calendar date as the release evidence, attaching there
-instead of creating a duplicate occurrence -- with no match (true for
-any source that has release evidence but no adopted schedule feed at
-all), it creates one lazily instead.
+based RECONCILIATION heuristic, used only once per external identity
+(corrected by FX-52AH).** Bank of Canada's schedule feed (ICS) and
+press-release feed (RSS) are two independent feeds with two independent
+external IDs for the same real announcement. `IngestOfficialCalendar
+Release._resolve_occurrence_key` first checks the mapping repository
+for the exact `(source, external_event_id, indicator_key)` triple; only
+on a genuine first sighting does it search existing occurrences of the
+same canonical indicator for ones whose latest known schedule falls on
+the SAME calendar date as the release evidence. Exactly one match
+correlates and PERSISTS the mapping, so every later poll of that same
+triple resolves via the mapping directly and never repeats the
+heuristic; zero matches mints a new occurrence lazily (true for any
+source with release evidence but no adopted schedule feed at all); MORE
+THAN ONE match is an explicit `AMBIGUOUS_CORRELATION` disposition that
+writes nothing at all this poll -- silently choosing among multiple
+candidates is never permitted.
+
+**Malformed HTTP-200 responses fail closed, distinct from a genuinely
+empty result (FX-52AH).** `parse_ics_events`/`parse_rss_items` raise
+`MalformedIcsError`/`MalformedFeedError` when a document is not a
+VCALENDAR/RSS-or-RDF document at all (an HTML error page, garbage
+text); every schedule/release adapter catches this at the parser
+boundary and re-raises `EconomicCalendarSourceUnavailableError`, so a
+source outage disguised as HTML never reads as "zero events currently
+scheduled." A well-formed but genuinely empty calendar/feed remains a
+valid, non-error result. Parser/adapter results (`IcsParseResult`/
+`RssParseResult`/`ScheduleFetchResult`/`ReleaseFetchResult`) carry
+`mapped_count`/`unmapped_count`/`invalid_count` so dispositions are
+caller-visible counts, never silently swallowed.
+
+**Bank of Canada's RSS `dc:date` is provenance, not exact release
+time (FX-52AH).** `BocReleaseSource` never promotes `dc:date` to
+`released_time` -- no primary Bank of Canada documentation establishes
+that a feed-publication timestamp equals the announcement's own exact
+release instant. `dc:date` is preserved separately as
+`RawReleaseObservation.source_published_at`; `released_time` for BoC
+release evidence is always `None`, and `released_date` prefers the
+CBWiki "Central Bank RSS" schema's own `cb:news/cb:occurrenceDate`
+element when the feed carries it.
 
 Full source-by-source verification (which fed sources were adopted,
 which were excluded and why, and the two real bugs/limitations found
 during this story's own required real-source validation step) is in
-`docs/adr/0004-official-economic-calendar-timing-sources.md`.
+`docs/adr/0004-official-economic-calendar-timing-sources.md`; the
+FX-52AH corrections above are recorded in full in `docs/DECISIONS.md`'s
+FX-52AH entry.
+
+**Live-source tests are isolated from ordinary CI (FX-52AH).** A
+`pytest.mark.live_source` marker plus `addopts -m "not live_source"`
+means `pytest`/CI never depends on a real network call reaching
+BLS/ONS/BoC; the four adopted sources' own live-validation tests run
+separately via `pytest -m live_source` (as of FX-52AH: 3 passing --
+ONS, BoC schedule, BoC release -- 1 honestly failing, BLS's own
+unresolved 403). **BLS's adapter is implemented and unit-tested but
+operationally BLOCKED by this 403 and must not be treated as a live
+source of US CPI/Employment-Situation timing until it is resolved.**
 
 ## Current state
 

@@ -1,51 +1,53 @@
-"""FX-52A: unit tests for deterministic occurrence/release-group key
-derivation."""
+"""FX-52A: unit tests for `build_release_group_key`. FX-52AH replaces
+the old source-derived `build_occurrence_key` with `mint_occurrence_key`
+(a genuinely provider-neutral internal identity) -- see the module's
+own docstring for why."""
+
+import re
 
 import pytest
 
 from forex_agent.domain.economic_calendar_occurrence_identity import (
-    build_occurrence_key,
     build_release_group_key,
+    mint_occurrence_key,
+)
+
+_UUID4_SUFFIX_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.IGNORECASE
 )
 
 
-def test_occurrence_key_is_deterministic() -> None:
-    first = build_occurrence_key("BLS_ICS", "abc-123", "US_CPI_YOY")
-    second = build_occurrence_key("BLS_ICS", "abc-123", "US_CPI_YOY")
-    assert first == second
+def test_mint_occurrence_key_is_prefixed_by_indicator_key() -> None:
+    key = mint_occurrence_key("US_CPI_YOY")
+    assert key.startswith("US_CPI_YOY:")
 
 
-def test_occurrence_key_differs_by_source() -> None:
-    a = build_occurrence_key("BLS_ICS", "abc-123", "US_CPI_YOY")
-    b = build_occurrence_key("OTHER_SOURCE", "abc-123", "US_CPI_YOY")
-    assert a != b
+def test_mint_occurrence_key_suffix_is_a_uuid4() -> None:
+    key = mint_occurrence_key("US_CPI_YOY")
+    suffix = key.split(":", 1)[1]
+    assert _UUID4_SUFFIX_PATTERN.match(suffix) is not None
 
 
-def test_occurrence_key_differs_by_indicator_for_a_release_package() -> None:
-    payrolls = build_occurrence_key("BLS_ICS", "xyz", "US_NONFARM_PAYROLLS")
-    unemployment = build_occurrence_key("BLS_ICS", "xyz", "US_UNEMPLOYMENT_RATE")
-    assert payrolls != unemployment
+def test_mint_occurrence_key_is_never_derived_from_any_source_identity() -> None:
+    # No source/external_event_id parameter exists at all -- this test
+    # documents that by construction, guarding against a future
+    # signature change that would silently reintroduce FX-52A's own
+    # original, corrected mistake (source-derived occurrence identity).
+    import inspect
+
+    signature = inspect.signature(mint_occurrence_key)
+    assert list(signature.parameters) == ["indicator_key"]
 
 
-def test_occurrence_key_survives_a_reschedule_conceptually() -> None:
-    # A reschedule never changes source/external_event_id/indicator_key
-    # -- the same three inputs must always yield the same key,
-    # regardless of what the schedule itself later says.
-    external_id = "247309@bank-banque-canada.ca"
-    before = build_occurrence_key("BOC_ICS", external_id, "CAD_POLICY_RATE_DECISION")
-    after = build_occurrence_key("BOC_ICS", external_id, "CAD_POLICY_RATE_DECISION")
-    assert before == after
+def test_mint_occurrence_key_produces_a_different_key_each_call() -> None:
+    first = mint_occurrence_key("US_CPI_YOY")
+    second = mint_occurrence_key("US_CPI_YOY")
+    assert first != second
 
 
-@pytest.mark.parametrize(
-    "source,external_event_id,indicator_key",
-    [("", "x", "Y"), ("S", "", "Y"), ("S", "x", "")],
-)
-def test_occurrence_key_rejects_blank_components(
-    source: str, external_event_id: str, indicator_key: str
-) -> None:
+def test_mint_occurrence_key_rejects_blank_indicator_key() -> None:
     with pytest.raises(ValueError, match="non-empty"):
-        build_occurrence_key(source, external_event_id, indicator_key)
+        mint_occurrence_key("")
 
 
 def test_release_group_key_shared_across_package_members() -> None:

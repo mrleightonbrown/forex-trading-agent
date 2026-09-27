@@ -95,7 +95,16 @@ asyncio_mode = "auto"
 # agree, or fixtures and test functions still end up on different loops.
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-addopts = "--cov=forex_agent --cov-report=term-missing"
+# FX-52AH: live_source-marked tests make real network calls to external
+# official economic-calendar sources (BLS/ONS/Bank of Canada) and must
+# never gate ordinary CI/local runs -- excluded by default here; run them
+# explicitly and separately via `pytest -m live_source`. This is distinct
+# from this project's older, unmarked "*_live.py" OANDA convention, which
+# is unaffected by this option.
+addopts = "--cov=forex_agent --cov-report=term-missing -m \"not live_source\""
+markers = [
+    "live_source: makes a real network call to an external official economic-calendar source; excluded by default, run via `pytest -m live_source`",
+]
 
 [tool.coverage.run]
 source = ["src/forex_agent"]

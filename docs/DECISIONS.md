@@ -9012,3 +9012,112 @@ ingested; no numeric actual values were ingested into canonical
 `EconomicEventActualValueVintage`; no surprise was calculated; no
 event-risk score or trading rule was added; no further work on this
 epic without an explicit new story.
+
+## 2026-09-26 — FX-52AH: official calendar identity & source-safety hardening
+
+A hardening pass on FX-52A, found necessary before FX-54 could safely
+build on it. Four defects in FX-52A's own design, each corrected here:
+
+**1. Occurrence identity was source-derived, not provider-neutral.**
+FX-52A's `build_occurrence_key(source, external_event_id,
+indicator_key)` baked the external identity straight into the
+canonical `occurrence_key` string -- so "many external IDs, one
+occurrence" was structurally impossible; a second source could never
+resolve to the same occurrence a first source had already created.
+Replaced with `mint_occurrence_key(indicator_key)` (a fresh
+`indicator_key:uuid4` string, no source/external_event_id involved at
+all) plus a genuinely persisted many-to-one mapping table,
+`economic_event_source_mappings` (migration `df99b7796566`; unique on
+`(source, external_event_id, indicator_key)`, indexed on
+`occurrence_key`, deliberately no FK to the occurrence table since a
+mapping may be written in the same transaction as the occurrence it
+points to). `EconomicEventSourceMappingRepository`
+(`get_occurrence_key`/`record_mapping`) is the new port; both ingestion
+use cases now take it as a required second constructor argument.
+`EconomicEventSourceMappingConflictError` guards against ever silently
+overwriting one occurrence's mapping with another's.
+
+**2. Date-based correlation had no ambiguity handling and was never
+persisted.** FX-52A's release/schedule date-match heuristic
+(Section above) picked "a" matching occurrence without checking
+whether there might be more than one, and re-ran on every single poll
+forever. `IngestOfficialCalendarRelease._resolve_occurrence_key` now
+enumerates ALL same-indicator candidates whose latest known schedule
+falls on the release's date: zero candidates mints a new occurrence
+(`NEW_OCCURRENCE`); exactly one correlates and PERSISTS the mapping
+(`CORRELATED`, disposition seen exactly once -- every subsequent poll
+of that same `(source, external_event_id)` resolves via the mapping in
+step 1, never repeats the heuristic); more than one is
+`AMBIGUOUS_CORRELATION` and writes NOTHING at all this poll (no
+occurrence, no mapping, no vintage) -- silently choosing among
+multiple matches was the one behaviour this story was explicitly told
+never to allow.
+
+**3. Bank of Canada's RSS `dc:date` was wrongly promoted to exact
+`released_time`.** FX-52A treated the Dublin Core `dc:date` timestamp
+on a BoC press-release RSS item as the announcement's own exact
+release time. `dc:date` is a generic feed-publication timestamp with
+no primary BoC documentation establishing it as the announcement's
+occurrence time. `BocReleaseSource` now always sets `released_time =
+None`; `dc:date` is preserved separately as `RawReleaseObservation
+.source_published_at` (a new, explicitly-named provenance field,
+distinct from both `observed_at` -- our own fetch time -- and
+`released_date`/`released_time` -- the claimed occurrence). Where the
+feed additionally carries the CBWiki "Central Bank RSS" schema's
+`cb:news/cb:occurrenceDate` element, `released_date` prefers that over
+`dc:date`'s own calendar date, since it is the schema's own
+purpose-built occurrence-date field. A confirmed press release still
+establishes `EconomicEventReleaseVintage.released_date` (and hence
+release occurrence) with `released_time` honestly `None`, rather than
+fabricating precision the source never actually claimed.
+
+**4. Malformed HTTP-200 responses could silently pass as empty
+results.** `parse_ics_events`/`parse_rss_items` now raise
+`MalformedIcsError`/`MalformedFeedError` when a document simply is not
+a VCALENDAR/RSS-or-RDF document at all (an HTML error page, garbage
+text, an empty string) -- distinct from a genuinely well-formed but
+empty calendar/feed, which remains a valid empty result. Every
+schedule/release adapter now catches this at the parser boundary and
+re-raises `EconomicCalendarSourceUnavailableError`, so a source outage
+disguised as HTML never again reads as "zero events currently
+scheduled" (the exact failure mode FX-52A's own BoC-redirect bug had
+already demonstrated once, at the HTTP layer rather than the body
+layer). Parser results also now carry `mapped_count`/`unmapped_count`/
+`invalid_count` (`IcsParseResult`/`RssParseResult`, threaded up through
+`ScheduleFetchResult`/`ReleaseFetchResult`), so silent unmapped/invalid
+dispositions are caller-visible counts, not swallowed.
+
+**Test isolation from live sources.** New `pytest.mark.live_source`
+marker plus `addopts = ... -m "not live_source"` in `pyproject.toml`:
+ordinary `pytest`/CI now never depends on a real network call reaching
+BLS/ONS/BoC. The four adopted sources' own live-validation tests
+(`tests/integration/test_{bls_schedule,ons_schedule,boc_schedule,
+boc_release}_source_live.py`) are marked and run separately via
+`pytest -m live_source`. Deliberately scoped to leave the project's
+older, differently-conventioned unmarked OANDA `*_live.py` tests
+untouched.
+
+**Corrected coverage claim (this story's own requirement 8)**: BLS's
+adapter is implemented and unit-tested, but its live feed still
+returns HTTP 403 to a plain server-side request (unchanged from
+FX-52A's own finding, re-confirmed here via a separate live-source
+run) -- `docs/CURRENT_STATE.md` and `docs/NEXT_STEPS.md` are corrected
+so FX-54-ready timing coverage is never described as including live US
+CPI/Employment-Situation availability until BLS's 403 is actually
+resolved.
+
+**Verification**: full deterministic suite green (1423 passed, 4
+`live_source`-deselected; failures are exactly the pre-existing,
+unrelated Saturday-weekend live-OANDA-candle set, unchanged from prior
+stories) -- `ruff check`/`ruff format --check`/`mypy .`/`pre-commit
+run --all-files` all clean. Live-source validation run separately
+(`pytest -m live_source`): 3 passed (ONS, BoC schedule, BoC release), 1
+failed (BLS 403, documented above, not a regression from this story).
+Migration `df99b7796566` verified up/down/up against live Postgres.
+
+Per this story's own explicit stop instruction: FX-52/FX-53 remain
+DEFER/BLOCKED, untouched; FX-54 has NOT been started; all of FX-52A's
+own successful behaviour (prospective ESTIMATED availability,
+immutable schedule vintages, disappearance-is-not-cancellation,
+explicit status changes, no numeric actuals/consensus/surprise) is
+preserved unchanged.

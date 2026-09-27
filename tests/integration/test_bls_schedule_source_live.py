@@ -5,6 +5,11 @@ suite (see tests/unit/infrastructure/test_bls_schedule_source.py for
 that); this proves today's real feed still parses and maps the way
 this story's own research pass found it to.
 
+FX-52AH: marked `live_source` -- excluded from ordinary `pytest`/CI
+runs (see `pyproject.toml`'s `addopts`); run explicitly and separately
+via `pytest -m live_source` and report that result on its own, never
+folded into the deterministic suite's own pass/fail count.
+
 KNOWN, EXPECTED FAILURE (confirmed during this story's own real-source
 validation pass, not a regression to chase): a plain server-side
 `httpx` request to BLS's feed currently receives a 403 "Access Denied"
@@ -25,16 +30,17 @@ from forex_agent.infrastructure.economic_calendar_sources.bls_schedule_source im
 )
 
 
+@pytest.mark.live_source
 @pytest.mark.asyncio
 async def test_bls_feed_is_reachable_and_yields_mapped_observations() -> None:
     source = BlsScheduleSource()
     try:
-        observations = await source.fetch_schedule()
+        result = await source.fetch_schedule()
     finally:
         await source.aclose()
 
-    assert len(observations) > 0, "expected at least one mapped observation from BLS's live feed"
-    for observation in observations:
+    assert result.mapped_count > 0, "expected at least one mapped observation from BLS's live feed"
+    for observation in result.observations:
         assert observation.source == "BLS_ICS"
         assert observation.schedule_timezone == "America/New_York"
         for indicator_key in observation.indicator_keys:

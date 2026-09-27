@@ -14,6 +14,25 @@ reported gap, not an oversight. This ADR does NOT reopen or weaken
 ADR 0003's own DEFER verdict on FX-52's full commercial consensus/
 surprise ingestion, which remains unresolved and untouched.
 
+**FX-52AH correction (2026-09-26):** the "Occurrence identity design"
+and "Release/schedule correlation heuristic" sections below describe
+FX-52A's ORIGINAL design, which has since been corrected -- see
+`docs/DECISIONS.md`'s FX-52AH entry for the full rationale. In summary:
+`occurrence_key` is no longer a pure function of `(source,
+external_event_id, indicator_key)` (that design made genuine
+many-external-IDs-to-one-occurrence resolution structurally
+impossible); it is now a provider-neutral minted identity
+(`mint_occurrence_key`) plus a persisted `economic_event_source_
+mappings` table. Date-based correlation now requires exactly one
+candidate, gives an explicit `AMBIGUOUS_CORRELATION` disposition (and
+writes nothing) for more than one, and persists a successful
+correlation so it is never re-run for the same external identity.
+Bank of Canada's RSS `dc:date` is no longer promoted to exact
+`released_time` (kept only as `source_published_at` provenance);
+`released_time` for BoC release evidence is honestly `None`. The
+sections below are left as first-pass historical record; treat the
+FX-52AH entry in `docs/DECISIONS.md` as authoritative.
+
 ## Context
 
 FX-52 (ADR 0003) DEFERRED because no investigated source could supply

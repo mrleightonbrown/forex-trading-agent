@@ -1,4 +1,5 @@
-"""Ports for official-calendar source adapters (FX-52A).
+"""Ports for official-calendar source adapters (FX-52A; observability
+and fail-closed semantics hardened by FX-52AH).
 
 `RawScheduleObservation`/`RawReleaseObservation` are the normalized,
 provider-neutral intermediate shape every source adapter (ICS/RSS/JSON)
@@ -7,6 +8,15 @@ economic_calendar_sources`), canonical mapping, and repository
 persistence as separate responsibilities (FX-52A Section 30). Neither
 carries a numeric value of any kind: FX-52A ingests TIMING only (see
 each type's own docstring for why).
+
+FX-52AH: `occurrence_key` is no longer derived from `(source,
+external_event_id, indicator_key)` by these observations themselves --
+see `domain.economic_calendar_occurrence_identity`'s own module
+docstring. `fetch_schedule`/`fetch_releases` now return a result object
+carrying `mapped_count`/`unmapped_count`/`invalid_count` alongside the
+observations themselves (FX-52AH's own observability requirement: a
+caller must never be left with zero visibility into how many raw
+records were skipped and why).
 """
 
 from dataclasses import dataclass
@@ -20,10 +30,13 @@ from forex_agent.domain.timestamps import UtcTimestamp
 class EconomicCalendarSourceUnavailableError(Exception):
     """Raised by a source adapter on a genuine network/parse failure --
     mirrors `PolicyRateProviderUnavailableError` (FX-43). A temporary
-    outage must surface as this, never as an empty, successful result
-    (FX-52A Section 34): a caller receiving `()` from `fetch_schedule`/
-    `fetch_releases` must be able to trust that as "the source
-    genuinely reports nothing new," not "the source was unreachable.\""""
+    outage, or a response that is not a recognizable document for this
+    source's own format at all (FX-52AH -- see `ics_parsing.
+    MalformedIcsError`/`rss_parsing.MalformedFeedError`), must surface
+    as this, never as an empty, successful result (FX-52A Section 34):
+    a caller receiving a result with zero observations must be able to
+    trust that as "the source genuinely reports nothing new," not "the
+    source was unreachable or returned garbage.\""""
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +48,8 @@ class RawScheduleObservation:
     item may identify more than one canonical indicator at once (a
     release package -- FX-52A Section 11); every entry maps onto its
     OWN `EconomicEventOccurrence` sharing one `release_group_key`, via
-    `domain.economic_calendar_occurrence_identity`.
+    `domain.economic_calendar_occurrence_identity.build_release_group_
+    key`.
 
     `observed_at` is when THIS adapter retrieved this exact fact, not
     when the official source itself first published the schedule --
@@ -52,10 +66,9 @@ class RawScheduleObservation:
             "BOC_ICS") -- never a full URL, never user-facing.
         external_event_id: the source's own stable identifier for this
             calendar item (an ICS UID, an RSS guid, ...) -- never
-            treated as canonical occurrence identity itself; only used,
-            together with `source` and each indicator key, to DERIVE
-            one via `domain.economic_calendar_occurrence_identity.
-            build_occurrence_key`.
+            canonical occurrence identity itself (FX-52AH); only used,
+            together with `indicator_key`, as the lookup/record key
+            into `EconomicEventSourceMappingRepository`.
         indicator_keys: which canonical `EconomicIndicatorDefinition`
             key(s) this item maps to (already resolved -- an adapter
             that cannot confidently map an item must not construct one
@@ -116,9 +129,23 @@ class RawReleaseObservation:
     `raw_title`).
         released_date: the calendar date the source's own evidence
             claims the event actually occurred/released on.
-        released_time: the local time of day, or `None` if only a date
-            is evidenced -- never fabricated.
+        released_time: the local time of day, or `None` if the source
+            does not establish an exact time with strong enough
+            semantics -- never fabricated, and (FX-52AH) never
+            populated merely because a feed item happens to carry SOME
+            timestamp; see `boc_release_source`'s own docstring for a
+            concrete case where a source's timestamp is preserved as
+            `source_published_at` instead of promoted to this field.
         released_timezone: an IANA timezone name.
+        source_published_at: when the SOURCE ITSELF says this evidence
+            was published/dated (e.g. an RSS `dc:date`), if the source
+            supplies one -- a THIRD, genuinely distinct instant from
+            both `observed_at` (when THIS adapter retrieved it) and
+            `released_date`/`released_time` (the claimed occurrence
+            instant, if established with strong enough semantics).
+            Preserved as provenance only; never interpreted by domain
+            logic and never itself treated as `released_time` merely
+            because it exists (FX-52AH).
     """
 
     source: str
@@ -129,29 +156,60 @@ class RawReleaseObservation:
     released_timezone: str
     observed_at: UtcTimestamp
     raw_title: str
+    source_published_at: UtcTimestamp | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleFetchResult:
+    """`fetch_schedule`'s own result, with observable dispositions
+    (FX-52AH) -- `mapped_count` is the number of source items that
+    resolved to at least one canonical indicator (NOT the number of
+    observations, since one release-package item can yield more than
+    one); `unmapped_count` is source items that parsed fine but matched
+    no canonical mapping; `invalid_count` is raw entries the underlying
+    parser itself could not use at all (missing required fields, an
+    unresolvable timezone, ...), passed through from `IcsParseResult`/
+    `RssParseResult`."""
+
+    observations: tuple[RawScheduleObservation, ...]
+    mapped_count: int
+    unmapped_count: int
+    invalid_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseFetchResult:
+    """`fetch_releases`' own result -- see `ScheduleFetchResult` for
+    what each count means."""
+
+    observations: tuple[RawReleaseObservation, ...]
+    mapped_count: int
+    unmapped_count: int
+    invalid_count: int
 
 
 class EconomicCalendarScheduleSource(Protocol):
     """One official source of forward-looking schedule timing."""
 
-    async def fetch_schedule(self) -> tuple[RawScheduleObservation, ...]:
+    async def fetch_schedule(self) -> ScheduleFetchResult:
         """Every schedule observation this source currently reports,
-        already resolved to known canonical indicator(s) -- an item
-        this adapter cannot confidently map is simply omitted (report
-        UNMAPPED separately; never guess). Raises on a genuine
-        source/network failure (see each adapter's own docstring for
-        which exceptions) -- a temporary outage must never be reported
-        as an empty, successful result, since a caller could mistake
-        that for "nothing is scheduled.\""""
+        already resolved to known canonical indicator(s), plus
+        mapped/unmapped/invalid counts (FX-52AH). Raises
+        `EconomicCalendarSourceUnavailableError` on a genuine source/
+        network failure OR a malformed (not-this-format-at-all)
+        response -- a temporary outage or garbage response must never
+        be reported as an empty, successful result, since a caller
+        could mistake that for "nothing is scheduled.\""""
         ...
 
 
 class EconomicCalendarReleaseSource(Protocol):
     """One official source of positive release-occurrence evidence."""
 
-    async def fetch_releases(self) -> tuple[RawReleaseObservation, ...]:
+    async def fetch_releases(self) -> ReleaseFetchResult:
         """Every release observation this source currently reports,
-        already resolved to known canonical indicator(s). Same
-        UNMAPPED and outage-vs-empty-result discipline as
+        already resolved to known canonical indicator(s), plus
+        mapped/unmapped/invalid counts. Same UNMAPPED and outage-vs-
+        malformed-vs-empty-result discipline as
         `EconomicCalendarScheduleSource.fetch_schedule`."""
         ...

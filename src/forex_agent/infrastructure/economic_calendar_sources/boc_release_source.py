@@ -1,21 +1,41 @@
-"""Bank of Canada official release-occurrence adapter (FX-52A).
+"""Bank of Canada official release-occurrence adapter (FX-52A; release-
+time semantics corrected by FX-52AH).
 
 Source: `https://www.bankofcanada.ca/feed/?content_type=press-
 releases` -- the Bank's own public press-release feed, confirmed live
 in this story's own research pass to be RDF/RSS 1.0 (the CBWiki
 "Central Bank RSS" schema: `<item rdf:about="...">`, `<dc:date>` with
-an explicit UTC offset). This feed mixes rate announcements with
-unrelated press releases (appointments, bank-note launches, ...) --
-only a title matching `_RATE_ANNOUNCEMENT_TITLE_PATTERN` is treated as
-release evidence for `CAD_POLICY_RATE_DECISION`; everything else is
-UNMAPPED by construction.
+an explicit UTC offset, and -- on at least some items -- a nested
+`<cb:news><cb:occurrenceDate>` date-only field). This feed mixes rate
+announcements with unrelated press releases (appointments, bank-note
+launches, ...) -- only a title matching `_RATE_ANNOUNCEMENT_TITLE_
+PATTERN` is treated as release evidence for `CAD_POLICY_RATE_
+DECISION`; everything else is UNMAPPED by construction.
 
-`dc:date` is used directly as the release instant: for a genuine
-PRESS-RELEASE feed specifically (unlike a forward-schedule feed), "when
-this item was published" and "when the underlying event was released"
-are the same real-world fact, not two different things FX-52A Section
-32 warns about conflating -- that warning concerns a SCHEDULE feed's
-`pubDate`, which is not what this adapter reads.
+FX-52AH CORRECTION: FX-52A's original version used `dc:date` directly
+as an EXACT `released_time`, reasoning that "when this item was
+published" and "when the underlying event was released" are the same
+fact for a press-release feed. On reflection this overclaimed:
+`dc:date` is documented by the CBWiki schema only as a generic
+Dublin-Core "date of the resource" -- nothing in Bank of Canada's own
+primary documentation establishes that it carries second-level
+precision equal to the OFFICIAL announcement instant (as opposed to,
+say, whenever the press office's publishing system happened to commit
+the item). This adapter therefore no longer promotes `dc:date` to
+`released_time` at all:
+
+- `released_date` prefers `cb:occurrenceDate` (a field the CBWiki
+  schema defines specifically for "the date this news item's subject
+  actually occurred") when present, falling back to `dc:date`'s own
+  calendar date when it is not -- a same-day publication is a safe
+  enough date-level inference for a press release, even though its
+  own exact TIME is not.
+- `released_time` is always `None` -- genuinely unestablished, never
+  fabricated (FX-52A's own "never fabricate a time" discipline,
+  applied here for the first time to a RELEASE fact rather than a
+  SCHEDULE one).
+- `dc:date` itself is preserved as `source_published_at` -- provenance
+  only, never interpreted as the announcement's own official timing.
 """
 
 import re
@@ -26,9 +46,13 @@ import httpx
 from forex_agent.application.ports.economic_calendar_source import (
     EconomicCalendarSourceUnavailableError,
     RawReleaseObservation,
+    ReleaseFetchResult,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.economic_calendar_sources.rss_parsing import parse_rss_items
+from forex_agent.infrastructure.economic_calendar_sources.rss_parsing import (
+    MalformedFeedError,
+    parse_rss_items,
+)
 
 _BASE_URL = "https://www.bankofcanada.ca"
 _FEED_PATH = "/feed/"
@@ -59,7 +83,7 @@ class BocReleaseSource:
         if self._owns_client:
             await self._client.aclose()
 
-    async def fetch_releases(self) -> tuple[RawReleaseObservation, ...]:
+    async def fetch_releases(self) -> ReleaseFetchResult:
         try:
             response = await self._client.get(_FEED_PATH, params=_FEED_PARAMS)
         except httpx.RequestError as exc:
@@ -72,22 +96,36 @@ class BocReleaseSource:
                 f"{response.status_code}"
             )
 
+        try:
+            parsed = parse_rss_items(response.text)
+        except MalformedFeedError as exc:
+            raise EconomicCalendarSourceUnavailableError(
+                f"Bank of Canada press-release feed did not parse as RSS: {exc}"
+            ) from exc
+
         observed_at = UtcTimestamp(datetime.now(UTC))
-        items = parse_rss_items(response.text)
         observations: list[RawReleaseObservation] = []
-        for item in items:
+        unmapped_count = 0
+        for item in parsed.items:
             if not _RATE_ANNOUNCEMENT_TITLE_PATTERN.match(item.title):
-                continue  # UNMAPPED -- not a rate-announcement press release
+                unmapped_count += 1  # not a rate-announcement press release
+                continue
             observations.append(
                 RawReleaseObservation(
                     source=_SOURCE_NAME,
                     external_event_id=item.guid,
                     indicator_keys=_INDICATOR_KEYS,
-                    released_date=item.pub_date.date(),
-                    released_time=item.pub_date.time(),
+                    released_date=item.occurrence_date or item.pub_date.date(),
+                    released_time=None,
                     released_timezone=_RELEASE_TIMEZONE,
                     observed_at=observed_at,
                     raw_title=item.title,
+                    source_published_at=UtcTimestamp(item.pub_date),
                 )
             )
-        return tuple(observations)
+        return ReleaseFetchResult(
+            observations=tuple(observations),
+            mapped_count=len(observations),
+            unmapped_count=unmapped_count,
+            invalid_count=parsed.invalid_count,
+        )

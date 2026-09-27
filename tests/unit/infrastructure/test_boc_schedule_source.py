@@ -1,11 +1,14 @@
 """FX-52A: unit tests for `BocScheduleSource` against a mocked HTTP
-transport."""
+transport. FX-52AH adds malformed-response coverage."""
 
 from datetime import date, time
 
 import httpx
 import pytest
 
+from forex_agent.application.ports.economic_calendar_source import (
+    EconomicCalendarSourceUnavailableError,
+)
 from forex_agent.infrastructure.economic_calendar_sources.boc_schedule_source import (
     BocScheduleSource,
 )
@@ -40,11 +43,11 @@ def _client_returning(status_code: int, text: str) -> httpx.AsyncClient:
 @pytest.mark.asyncio
 async def test_rate_announcement_mapped() -> None:
     source = BocScheduleSource(client=_client_returning(200, _SAMPLE_ICS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    assert len(observations) == 1
-    obs = observations[0]
+    assert len(result.observations) == 1
+    obs = result.observations[0]
     assert obs.indicator_keys == ("CAD_POLICY_RATE_DECISION",)
     assert obs.scheduled_date == date(2026, 10, 28)
     assert obs.scheduled_time == time(13, 45)
@@ -53,9 +56,19 @@ async def test_rate_announcement_mapped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_holiday_is_unmapped() -> None:
+async def test_holiday_is_unmapped_and_counted() -> None:
     source = BocScheduleSource(client=_client_returning(200, _SAMPLE_ICS))
-    observations = await source.fetch_schedule()
+    result = await source.fetch_schedule()
     await source.aclose()
 
-    assert all("Thanksgiving" not in o.raw_title for o in observations)
+    assert all("Thanksgiving" not in o.raw_title for o in result.observations)
+    assert result.mapped_count == 1
+    assert result.unmapped_count == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_response_raises_unavailable_not_empty_result() -> None:
+    source = BocScheduleSource(client=_client_returning(200, "<html>not ics</html>"))
+    with pytest.raises(EconomicCalendarSourceUnavailableError):
+        await source.fetch_schedule()
+    await source.aclose()

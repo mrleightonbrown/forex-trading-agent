@@ -49,10 +49,14 @@ import httpx
 from forex_agent.application.ports.economic_calendar_source import (
     EconomicCalendarSourceUnavailableError,
     RawScheduleObservation,
+    ScheduleFetchResult,
 )
 from forex_agent.domain.economic_event_status import EconomicEventStatus
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.economic_calendar_sources.ics_parsing import parse_ics_events
+from forex_agent.infrastructure.economic_calendar_sources.ics_parsing import (
+    MalformedIcsError,
+    parse_ics_events,
+)
 
 _BASE_URL = "https://www.bls.gov"
 _FEED_PATH = "/schedule/news_release/bls.ics"
@@ -80,7 +84,7 @@ class BlsScheduleSource:
         if self._owns_client:
             await self._client.aclose()
 
-    async def fetch_schedule(self) -> tuple[RawScheduleObservation, ...]:
+    async def fetch_schedule(self) -> ScheduleFetchResult:
         try:
             response = await self._client.get(_FEED_PATH)
         except httpx.RequestError as exc:
@@ -92,13 +96,21 @@ class BlsScheduleSource:
                 f"BLS calendar feed request failed with status {response.status_code}"
             )
 
+        try:
+            parsed = parse_ics_events(response.text, default_timezone=_DEFAULT_TIMEZONE)
+        except MalformedIcsError as exc:
+            raise EconomicCalendarSourceUnavailableError(
+                f"BLS calendar feed did not parse as ICS: {exc}"
+            ) from exc
+
         observed_at = UtcTimestamp(datetime.now(UTC))
-        events = parse_ics_events(response.text, default_timezone=_DEFAULT_TIMEZONE)
         observations: list[RawScheduleObservation] = []
-        for event in events:
+        unmapped_count = 0
+        for event in parsed.events:
             indicator_keys = _SUMMARY_TO_INDICATORS.get(event.summary)
             if indicator_keys is None:
-                continue  # UNMAPPED -- not a release title this registry covers
+                unmapped_count += 1  # not a release title this registry covers
+                continue
             observations.append(
                 RawScheduleObservation(
                     source=_SOURCE_NAME,
@@ -112,4 +124,9 @@ class BlsScheduleSource:
                     raw_title=event.summary,
                 )
             )
-        return tuple(observations)
+        return ScheduleFetchResult(
+            observations=tuple(observations),
+            mapped_count=len(observations),
+            unmapped_count=unmapped_count,
+            invalid_count=parsed.invalid_count,
+        )

@@ -1514,21 +1514,22 @@ title pattern -- the most immediately actionable follow-up increment,
 deferred purely for story-budget reasons); Statistics Canada (HTTP 500
 on every fetch attempt).
 
-Occurrence identity (`domain.economic_calendar_occurrence_identity.
-build_occurrence_key`) is a pure, deterministic function of `(source,
-external_event_id, indicator_key)` -- no persisted mapping table, no
-new migration. Two real, confirmed findings surfaced by this story's
-own REQUIRED real-source validation (Section 43), neither of which
-synthetic-fixture unit tests could have caught: (1) Bank of Canada's
-schedule feed 301-redirects, and an earlier version silently
+Occurrence identity was originally (FX-52A) a pure, deterministic
+function of `(source, external_event_id, indicator_key)` -- corrected
+by FX-52AH below. Two real, confirmed findings surfaced by this
+story's own REQUIRED real-source validation (Section 43), neither of
+which synthetic-fixture unit tests could have caught: (1) Bank of
+Canada's schedule feed 301-redirects, and an earlier version silently
 "succeeded" while parsing an empty redirect body -- fixed with
 `follow_redirects=True` on every adapter; (2) BLS's own feed returns
 HTTP 403 to a plain server-side request even with realistic browser
 headers -- confirmed NOT a parsing/licensing problem, left as an
 honestly-FAILING, documented live test rather than hidden, matching
 this project's own existing weekend-market-closure-OANDA-test
-precedent. The BLS adapter must not be used for real ingestion until
-this is resolved.
+precedent. **BLS is implemented and unit-tested but operationally
+BLOCKED by this 403 -- it must not be treated as a live source of US
+CPI/Employment-Situation timing, and must not be used for real
+ingestion, until this is resolved.**
 
 73 new tests (parsers, occurrence-identity helper, indicator registry,
 4 mocked-HTTP adapter suites, 16 live-Postgres integration tests, 4
@@ -1536,14 +1537,50 @@ real-source validation tests -- 3 passing, 1 honestly failing per the
 BLS finding). 1411 tests pass overall. Full details in
 `docs/DECISIONS.md`'s FX-52A entry.
 
+## FX-52AH: official calendar identity & source-safety hardening (complete)
+
+A hardening pass on FX-52A, required before FX-54 could safely build
+on it. Corrects four defects: (1) occurrence identity is now
+provider-neutral (`mint_occurrence_key`, an `indicator_key:uuid4`
+string) plus a genuinely persisted many-to-one mapping table,
+`economic_event_source_mappings` (migration `df99b7796566`, new port
+`EconomicEventSourceMappingRepository`) -- so Bank of Canada's ICS
+schedule feed and RSS release feed, or any future multi-source case,
+can correctly resolve to the SAME canonical occurrence, which FX-52A's
+original source-derived-key design made structurally impossible; (2)
+date-based release/schedule correlation now requires EXACTLY ONE
+candidate (zero mints a new occurrence; more than one is an explicit
+`AMBIGUOUS_CORRELATION` disposition that writes nothing, never a
+silent choice) and PERSISTS a successful correlation so it is never
+re-run for the same external identity; (3) Bank of Canada's RSS
+`dc:date` is no longer promoted to exact `released_time` (preserved
+instead as `source_published_at` provenance; `released_time` for BoC
+release evidence is honestly `None`; `released_date` prefers the
+CBWiki `cb:news/cb:occurrenceDate` element when present); (4) malformed
+HTTP-200 responses now fail closed (`MalformedIcsError`/
+`MalformedFeedError` -> `EconomicCalendarSourceUnavailableError`),
+distinct from a genuinely well-formed empty result, and parser/adapter
+results now carry `mapped_count`/`unmapped_count`/`invalid_count`.
+A new `pytest.mark.live_source` marker + `addopts -m "not live_source"`
+means ordinary `pytest`/CI never depends on a real network call; the
+four adopted sources' live-validation tests run separately (`pytest -m
+live_source`: 3 passing, 1 honestly failing -- BLS 403, re-confirmed
+unresolved). Full deterministic suite: 1423 passed, 4 `live_source`-
+deselected; failures are exactly the pre-existing, unrelated
+Saturday-weekend live-OANDA-candle set. Full details in
+`docs/DECISIONS.md`'s FX-52AH entry.
+
 **Per this story's own explicit stop instruction**: FX-52 remains
 DEFER, untouched; FX-53 remains BLOCKED; FX-54 has NOT been
 implemented; no consensus, numeric actual value, or surprise was
 ingested or calculated; no event-risk score or trading rule was added;
-no Decision/Risk Engine integration was made.
+no Decision/Risk Engine integration was made; all of FX-52A's own
+successful behaviour is preserved unchanged.
 
 No further work has been requested; check in before starting anything
-new here or elsewhere — including FX-53/FX-54 (gated, not started),
+new here or elsewhere — including FX-53/FX-54 (gated, not started;
+FX-54 additionally still blocked on BLS's own unresolved 403 for any
+US CPI/Employment-Situation timing input),
 FX-50 (gated on FX-49's own reopening conditions, not started), the
 proposed overnight-benchmark-rate-differential ingestion from FX-48
 (scoped in ADR 0001 but not started), the future declassification-
@@ -1561,8 +1598,8 @@ economic-calendar provider integration, consensus/surprise ingestion,
 or event-risk trading rules — out of scope until explicitly assigned
 per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
 FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/FX-46/FX-46H/
-FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A above are
-the explicitly-scoped exceptions (domain model, storage-integrity
+FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A/FX-52AH
+above are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -1578,11 +1615,13 @@ provider-neutral point-in-time economic-event domain/persistence
 model, a hardening pass on that model's identity/release/timezone
 semantics, a final integrity patch closing two remaining validation/
 migration-safety gaps, a data-sourcing feasibility investigation for
-economic-calendar ingestion, and official-source-only schedule/
-release-timing ingestion built on top of that model -- still no
-strategy, no decision logic, no "carry"/"expected rate" framing, no
-tradability claim, no commercial calendar provider, no consensus, no
-surprise, no event-risk scoring) and do not open the door to the rest
+economic-calendar ingestion, official-source-only schedule/
+release-timing ingestion built on top of that model, and a hardening
+pass correcting that ingestion's own occurrence-identity and
+source-safety semantics -- still no strategy, no decision logic, no
+"carry"/"expected rate" framing, no tradability claim, no commercial
+calendar provider, no consensus, no surprise, no event-risk scoring)
+and do not open the door to the rest
 of this phase. The same goes for the downstream epics not in this list
 at all (Decision Engine, Risk Engine, Paper Trading Execution,
 Performance Analytics, Shadow Trading) — none are part of the current

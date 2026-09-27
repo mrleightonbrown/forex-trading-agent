@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-52A)_
+_Last updated: 2026-09-26 (FX-52AH)_
 
 ## What exists
 
@@ -1349,25 +1349,66 @@ _Last updated: 2026-09-26 (FX-52A)_
   ECB: still HTML-only/no timezone; BoE: no forward feed, though its
   general news RSS has a clean release-evidence pattern deferred to a
   follow-up increment; StatCan: HTTP 500 on every fetch). Occurrence
-  identity (`domain.economic_calendar_occurrence_identity.
-  build_occurrence_key`) is a pure, deterministic function of
-  `(source, external_event_id, indicator_key)` -- no persisted mapping
-  table, no new migration. Two real, confirmed findings from this
-  story's own required live-source validation (not from unit tests
-  against synthetic fixtures): a Bank-of-Canada redirect that an
-  earlier version silently mishandled as an empty successful result
-  (fixed: `follow_redirects=True` on every adapter); and BLS's own
-  feed returning HTTP 403 to a plain server-side request even with
-  realistic browser headers -- confirmed NOT a parsing/licensing issue,
-  left as an honestly-failing, documented live test rather than hidden.
-  73 new tests (parsers, occurrence identity, registry, 4 mocked-HTTP
-  adapter suites, 16 live-Postgres integration tests, 4 real-source
-  validation tests -- 3 passing, 1 honestly failing per the BLS
-  finding). 1411 tests pass overall. Full details in
-  `docs/DECISIONS.md`'s FX-52A entry. **Stop after FX-52A -- FX-52
-  remains DEFER (untouched); FX-53 remains BLOCKED; FX-54 has NOT been
-  implemented; no consensus, numeric actual value, or surprise was
-  ingested/calculated; no event-risk score or trading rule was added.**
+  identity was originally (FX-52A) a pure, deterministic function of
+  `(source, external_event_id, indicator_key)` -- corrected by FX-52AH,
+  see below. Two real, confirmed findings from this story's own
+  required live-source validation (not from unit tests against
+  synthetic fixtures): a Bank-of-Canada redirect that an earlier
+  version silently mishandled as an empty successful result (fixed:
+  `follow_redirects=True` on every adapter); and BLS's own feed
+  returning HTTP 403 to a plain server-side request even with
+  realistic browser headers -- confirmed NOT a parsing/licensing issue.
+  **BLS is implemented and unit-tested but operationally BLOCKED by
+  this 403: it must not be treated as a live source of US CPI/
+  Employment-Situation timing until the 403 is actually resolved** --
+  `tests/integration/test_bls_schedule_source_live.py` is left
+  honestly failing, not hidden, and is re-confirmed still failing as of
+  FX-52AH. 73 new tests (parsers, occurrence identity, registry, 4
+  mocked-HTTP adapter suites, 16 live-Postgres integration tests, 4
+  real-source validation tests -- 3 passing, 1 honestly failing per the
+  BLS finding). 1411 tests pass overall. Full details in
+  `docs/DECISIONS.md`'s FX-52A entry.
+- **FX-52AH: official calendar identity & source-safety hardening
+  (complete)**. A hardening pass on FX-52A, required before FX-54 could
+  safely build on it. Occurrence identity is now provider-neutral
+  (`mint_occurrence_key`, an `indicator_key:uuid4` string with no
+  source/external_event_id involved) plus a genuinely persisted
+  many-to-one mapping table, `economic_event_source_mappings`
+  (migration `df99b7796566`; new port `EconomicEventSourceMapping
+  Repository`) -- so multiple external IDs/sources (e.g. Bank of
+  Canada's ICS schedule feed and its RSS release feed) can now
+  correctly resolve to the SAME canonical occurrence, which FX-52A's
+  original source-derived-key design made structurally impossible.
+  Date-based release/schedule correlation now requires EXACTLY ONE
+  candidate (zero mints a new occurrence; more than one is an explicit
+  `AMBIGUOUS_CORRELATION` disposition that writes nothing at all, never
+  a silent choice) and PERSISTS a successful correlation so it is never
+  re-run for the same external identity on a later poll. Bank of
+  Canada's RSS `dc:date` is no longer promoted to exact
+  `released_time` (no primary BoC documentation establishes that
+  semantic) -- it is preserved separately as `source_published_at`
+  provenance, and `released_time` for BoC release evidence is honestly
+  `None`; `released_date` prefers the CBWiki `cb:news/cb:occurrenceDate`
+  element when present. Malformed HTTP-200 responses (HTML error pages,
+  garbage text) now fail closed via `MalformedIcsError`/
+  `MalformedFeedError` -> `EconomicCalendarSourceUnavailableError` at
+  every schedule/release adapter, distinct from a genuinely well-formed
+  empty calendar/feed; parser/adapter results now carry `mapped_count`/
+  `unmapped_count`/`invalid_count` so dispositions are caller-visible,
+  not silent. New `pytest.mark.live_source` marker + `addopts -m "not
+  live_source"` means ordinary `pytest`/CI never depends on a real
+  network call; the four adopted sources' live-validation tests are run
+  separately (`pytest -m live_source`: 3 passing -- ONS, BoC schedule,
+  BoC release -- 1 honestly failing, BLS 403, re-confirmed unresolved).
+  Full deterministic suite: 1423 passed, 4 `live_source`-deselected;
+  failures are exactly the pre-existing, unrelated Saturday-weekend
+  live-OANDA-candle set. Full details in `docs/DECISIONS.md`'s FX-52AH
+  entry. **Stop after FX-52AH -- FX-52 remains DEFER (untouched); FX-53
+  remains BLOCKED; FX-54 has NOT been implemented; all of FX-52A's own
+  successful behaviour (prospective ESTIMATED availability, immutable
+  schedule vintages, disappearance-is-not-cancellation, explicit status
+  changes, no numeric actuals/consensus/surprise) is preserved
+  unchanged.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

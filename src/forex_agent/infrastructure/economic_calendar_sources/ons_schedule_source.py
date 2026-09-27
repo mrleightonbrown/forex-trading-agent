@@ -39,10 +39,14 @@ import httpx
 from forex_agent.application.ports.economic_calendar_source import (
     EconomicCalendarSourceUnavailableError,
     RawScheduleObservation,
+    ScheduleFetchResult,
 )
 from forex_agent.domain.economic_event_status import EconomicEventStatus
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.economic_calendar_sources.rss_parsing import parse_rss_items
+from forex_agent.infrastructure.economic_calendar_sources.rss_parsing import (
+    MalformedFeedError,
+    parse_rss_items,
+)
 
 _BASE_URL = "https://www.ons.gov.uk"
 _FEED_PATH = "/releasecalendar"
@@ -92,7 +96,7 @@ class OnsScheduleSource:
         if self._owns_client:
             await self._client.aclose()
 
-    async def fetch_schedule(self) -> tuple[RawScheduleObservation, ...]:
+    async def fetch_schedule(self) -> ScheduleFetchResult:
         try:
             response = await self._client.get(_FEED_PATH, params=_FEED_PARAMS)
         except httpx.RequestError as exc:
@@ -104,13 +108,21 @@ class OnsScheduleSource:
                 f"ONS release calendar feed request failed with status {response.status_code}"
             )
 
+        try:
+            parsed = parse_rss_items(response.text)
+        except MalformedFeedError as exc:
+            raise EconomicCalendarSourceUnavailableError(
+                f"ONS release calendar feed did not parse as RSS: {exc}"
+            ) from exc
+
         observed_at = UtcTimestamp(datetime.now(UTC))
-        items = parse_rss_items(response.text)
         observations: list[RawScheduleObservation] = []
-        for item in items:
+        unmapped_count = 0
+        for item in parsed.items:
             indicator_keys = _indicator_keys_for_link(item.link)
             if indicator_keys is None:
-                continue  # UNMAPPED -- not a release series this registry covers
+                unmapped_count += 1  # not a release series this registry covers
+                continue
             observations.append(
                 RawScheduleObservation(
                     source=_SOURCE_NAME,
@@ -125,7 +137,12 @@ class OnsScheduleSource:
                     reference_period=reference_period_from_title(item.title),
                 )
             )
-        return tuple(observations)
+        return ScheduleFetchResult(
+            observations=tuple(observations),
+            mapped_count=len(observations),
+            unmapped_count=unmapped_count,
+            invalid_count=parsed.invalid_count,
+        )
 
 
 def _indicator_keys_for_link(link: str) -> tuple[str, ...] | None:

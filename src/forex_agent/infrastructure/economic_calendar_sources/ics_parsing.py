@@ -1,4 +1,5 @@
-"""Minimal, dependency-free iCalendar (RFC 5545) VEVENT parser (FX-52A).
+"""Minimal, dependency-free iCalendar (RFC 5545) VEVENT parser (FX-52A;
+fail-closed/observability hardened by FX-52AH).
 
 Deliberately NOT a general-purpose ICS library -- no `VALARM`, no
 `RRULE`/recurrence expansion (FX-52A Section 31: "recurrence only if
@@ -11,11 +12,22 @@ date-only value (`VALUE=DATE`).
 
 `TZID` resolution is a small, explicit, closed lookup
 (`_KNOWN_TZID_ALIASES`) -- never a guess. An unrecognized `TZID`
-raises `UnresolvedTimezoneError` rather than silently assuming a
-timezone (FX-52A Section 21: "If timezone cannot be established
-safely: do not fabricate it. Treat that source/event as unavailable
-until clarified.") -- a caller (adapter) should catch this per event
-and skip it, not abort the entire feed.
+raises `UnresolvedTimezoneError` internally, counted as one invalid
+event rather than aborting the whole feed (FX-52A Section 21: "If
+timezone cannot be established safely: do not fabricate it.").
+
+FX-52AH: a response that is not a valid ICS document AT ALL (missing
+`BEGIN:VCALENDAR` entirely -- an HTML error page, garbage text, an
+unrelated document) now raises `MalformedIcsError` rather than
+silently returning zero events indistinguishable from a genuinely
+empty, well-formed calendar. A caller (adapter) must treat
+`MalformedIcsError` as a source failure (`EconomicCalendarSource
+UnavailableError`), never as "nothing is currently scheduled." An
+individual malformed/incomplete VEVENT block WITHIN an otherwise-valid
+calendar is still merely counted and skipped (`IcsParseResult.
+invalid_count`), not escalated to a whole-feed failure -- FX-52A's own
+"partial official coverage is preferable to invented certainty"
+applied at event granularity, distinct from whole-DOCUMENT validity.
 """
 
 from dataclasses import dataclass
@@ -31,8 +43,19 @@ _KNOWN_TZID_ALIASES: dict[str, str] = {
 
 
 class UnresolvedTimezoneError(ValueError):
-    """Raised when an event's `TZID` is not in `_KNOWN_TZID_ALIASES` --
-    this project refuses to guess a timezone (FX-52A Section 21)."""
+    """Raised internally when an event's `TZID` is not in
+    `_KNOWN_TZID_ALIASES` -- this project refuses to guess a timezone
+    (FX-52A Section 21). Caught by `parse_ics_events` itself and
+    counted as one invalid event; never escapes to a caller."""
+
+
+class MalformedIcsError(ValueError):
+    """Raised when `text` is not a recognizable ICS document at all
+    (FX-52AH) -- e.g. an HTML error page or unrelated content returned
+    with an HTTP 200. Distinct from a genuinely empty, well-formed
+    calendar (`BEGIN:VCALENDAR`...`END:VCALENDAR` with zero `VEVENT`
+    blocks), which is a valid, non-error result. A caller must treat
+    this as a source failure, never as "nothing is scheduled.\""""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,29 +68,42 @@ class IcsEvent:
     status: str | None
 
 
-def parse_ics_events(text: str, default_timezone: str) -> tuple[IcsEvent, ...]:
-    """Every `VEVENT` in `text`. `default_timezone` is used only for a
-    date-only (`VALUE=DATE`) `DTSTART`, which carries no timezone
-    context of its own -- callers must pass the feed's own known
-    civil-calendar timezone (e.g. the issuing institution's own
+@dataclass(frozen=True, slots=True)
+class IcsParseResult:
+    events: tuple[IcsEvent, ...]
+    invalid_count: int
+
+
+def parse_ics_events(text: str, default_timezone: str) -> IcsParseResult:
+    """Every `VEVENT` in `text`, plus a count of malformed/incomplete
+    VEVENT blocks skipped along the way. `default_timezone` is used
+    only for a date-only (`VALUE=DATE`) `DTSTART`, which carries no
+    timezone context of its own -- callers must pass the feed's own
+    known civil-calendar timezone (e.g. the issuing institution's own
     jurisdiction), never a guess made per event.
 
-    An event whose `TZID` cannot be resolved is OMITTED from the
-    result (with the failure logged by re-raising per-event internally
-    and catching it here) rather than aborting the whole feed --
-    FX-52A's own "partial official coverage is preferable to invented
-    certainty" applied at event granularity, not just source
-    granularity.
+    Raises `MalformedIcsError` if `text` does not contain a
+    `BEGIN:VCALENDAR` line at all -- see the module docstring.
     """
+    lines = _unfold_lines(text)
+    if not any(line.strip() == "BEGIN:VCALENDAR" for line in lines):
+        raise MalformedIcsError(
+            "no BEGIN:VCALENDAR line found -- this does not look like an ICS document"
+        )
+
     events: list[IcsEvent] = []
-    for block in _split_vevent_blocks(_unfold_lines(text)):
+    invalid_count = 0
+    for block in _split_vevent_blocks(lines):
         try:
             event = _parse_one_vevent(block, default_timezone)
         except UnresolvedTimezoneError:
+            invalid_count += 1
             continue
-        if event is not None:
+        if event is None:
+            invalid_count += 1
+        else:
             events.append(event)
-    return tuple(events)
+    return IcsParseResult(events=tuple(events), invalid_count=invalid_count)
 
 
 def _unfold_lines(text: str) -> list[str]:
@@ -132,7 +168,7 @@ def _parse_one_vevent(lines: list[str], default_timezone: str) -> IcsEvent | Non
             dtstart_property = (params, value)
 
     if uid is None or summary is None or dtstart_property is None:
-        return None  # malformed/incomplete event -- caller reports this as a parse gap
+        return None  # malformed/incomplete event -- counted as invalid by the caller
 
     event_date, event_time, event_timezone = _resolve_dtstart(dtstart_property, default_timezone)
     return IcsEvent(

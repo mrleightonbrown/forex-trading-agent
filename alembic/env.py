@@ -25,6 +25,9 @@ from forex_agent.infrastructure.db.models.economic_event_release_vintage import 
 from forex_agent.infrastructure.db.models.economic_event_schedule_vintage import (  # noqa: F401
     EconomicEventScheduleVintageRow,
 )
+from forex_agent.infrastructure.db.models.economic_event_source_mapping import (  # noqa: F401
+    EconomicEventSourceMappingRow,
+)
 from forex_agent.infrastructure.db.models.ingestion_watermark import (  # noqa: F401
     IngestionWatermarkRow,
 )

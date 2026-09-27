@@ -23,10 +23,14 @@ import httpx
 from forex_agent.application.ports.economic_calendar_source import (
     EconomicCalendarSourceUnavailableError,
     RawScheduleObservation,
+    ScheduleFetchResult,
 )
 from forex_agent.domain.economic_event_status import EconomicEventStatus
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.economic_calendar_sources.ics_parsing import parse_ics_events
+from forex_agent.infrastructure.economic_calendar_sources.ics_parsing import (
+    MalformedIcsError,
+    parse_ics_events,
+)
 
 _BASE_URL = "https://www.bankofcanada.ca"
 _FEED_PATH = "/"
@@ -55,7 +59,7 @@ class BocScheduleSource:
         if self._owns_client:
             await self._client.aclose()
 
-    async def fetch_schedule(self) -> tuple[RawScheduleObservation, ...]:
+    async def fetch_schedule(self) -> ScheduleFetchResult:
         try:
             response = await self._client.get(_FEED_PATH, params=_FEED_PARAMS)
         except httpx.RequestError as exc:
@@ -67,13 +71,21 @@ class BocScheduleSource:
                 f"Bank of Canada calendar feed request failed with status {response.status_code}"
             )
 
+        try:
+            parsed = parse_ics_events(response.text, default_timezone=_DEFAULT_TIMEZONE)
+        except MalformedIcsError as exc:
+            raise EconomicCalendarSourceUnavailableError(
+                f"Bank of Canada calendar feed did not parse as ICS: {exc}"
+            ) from exc
+
         observed_at = UtcTimestamp(datetime.now(UTC))
-        events = parse_ics_events(response.text, default_timezone=_DEFAULT_TIMEZONE)
         observations: list[RawScheduleObservation] = []
-        for event in events:
+        unmapped_count = 0
+        for event in parsed.events:
             indicator_keys = _SUMMARY_TO_INDICATORS.get(event.summary)
             if indicator_keys is None:
-                continue  # UNMAPPED -- a speech, holiday, or other non-covered item
+                unmapped_count += 1  # a speech, holiday, or other non-covered item
+                continue
             observations.append(
                 RawScheduleObservation(
                     source=_SOURCE_NAME,
@@ -87,4 +99,9 @@ class BocScheduleSource:
                     raw_title=event.summary,
                 )
             )
-        return tuple(observations)
+        return ScheduleFetchResult(
+            observations=tuple(observations),
+            mapped_count=len(observations),
+            unmapped_count=unmapped_count,
+            invalid_count=parsed.invalid_count,
+        )
