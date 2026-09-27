@@ -60,10 +60,11 @@ class EconomicEventOccurrence:
             known group, or whose group is not yet known. Each grouped
             occurrence keeps its own separate canonical indicator
             identity and its own separate vintage histories; this
-            field is a descriptive tag only, consulted by a future
-            story (FX-54) deciding whether several simultaneous
-            releases should be treated as one event-risk window --
-            FX-51/FX-51H make no such interpretation themselves. Unlike
+            field is a descriptive tag only, consulted by `domain.
+            event_evidence_group`/`event_schedule_evidence`/`event_
+            release_evidence` (FX-54) to GROUP evidence for a release
+            package without collapsing its members -- FX-51/FX-51H
+            make no interpretation of it themselves. Unlike
             every other field on this type, `release_group_key` MAY be
             set once, later, after the occurrence already exists (FX-51H
             Section 5) -- via the repository's own narrowly-scoped

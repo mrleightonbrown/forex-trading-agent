@@ -1144,6 +1144,110 @@ unresolved 403). **BLS's adapter is implemented and unit-tested but
 operationally BLOCKED by this 403 and must not be treated as a live
 source of US CPI/Employment-Situation timing until it is resolved.**
 
+## Event-risk evidence snapshot (FX-54, timing-only)
+
+`application.use_cases.get_event_risk_evidence_snapshot.
+GetEventRiskEvidenceSnapshot` answers "given this FX pair, at this
+exact point in time, what economic-event TIMING evidence did the
+system know?" -- built entirely on FX-51/FX-51H/FX-51H.1's existing
+point-in-time repository and FX-52A/FX-52AH/FX-52AH.1's existing
+canonical indicator registry and occurrence model. **This is evidence,
+not policy**: it never computes a risk score, an importance label, a
+trade veto, a blackout window, or any directional/bullish/bearish
+interpretation -- every new domain type has a dedicated test asserting
+no such field exists on it at all. Explicitly TIMING-ONLY: it never
+reads consensus/forecast/actual-numeric-value data and never computes
+a surprise (FX-52 remains DEFER, FX-53 remains BLOCKED, both
+untouched).
+
+**Explicit input contract, no hidden clock/policy defaults.** Inputs
+are `Instrument`, `as_of: UtcTimestamp`, `lookahead: timedelta`,
+`lookback: timedelta` -- all caller-supplied. The use case never calls
+`datetime.now()` and never invents a fixed 15/30/60-minute policy
+window; negative horizons raise `ValueError` before any repository
+call.
+
+**Pair relevance resolved exclusively through the canonical registry.**
+`domain.pair_currency_role.pair_role_by_indicator_key(instrument)`
+maps every indicator key currently tracked for either of the pair's
+two currencies onto `PairCurrencyRole.BASE`/`QUOTE`, via a new,
+minimal registry addition (`economic_indicator_registry.
+indicators_by_currency`) rather than a second, competing currency
+mapping. `PairCurrencyRole` is deliberately non-directional --
+structural evidence only.
+
+**Release evidence reuses FX-51H's PIT machinery by direct analogy,
+not generalization.** Forward-schedule evidence reuses `known_events_
+in_window`/`schedule_within_window` unchanged. Release evidence needed
+the identical "latest-known-per-occurrence, then a true-instant window
+test" shape applied to `economic_event_release_vintages` instead of
+`economic_event_schedule_vintages`; a new, structurally identical
+repository method, `known_releases_in_window`, was added -- duplicated
+rather than generalized into one callback-parametrized query, since
+the two vintage tables are genuinely different shapes. Its own
+timezone/date-only test, `domain.economic_event_state.release_within_
+window`, is the release-evidence analog of `schedule_within_window`.
+
+**Timezone resolution is now centralized in exactly one place.**
+`resolve_exact_instant`/`resolve_local_day_utc_range` (`domain.
+economic_event_state`) are the SOLE functions in this codebase that
+resolve a date/time/timezone triple to a UTC instant --
+`schedule_within_window` was refactored onto them (behavior-preserving)
+and `release_within_window`/every FX-54 evidence builder are built on
+the same two functions. This closes off FX-52AH.1's own ONS timezone
+bug (silently relabeling a UTC instant as local time without
+converting) permanently: there is no second, independently-written
+piece of `ZoneInfo` arithmetic left to get wrong.
+
+**Exact-time vs date-only is a doubly-enforced first-class state.**
+`EventScheduleEvidence`/`EventReleaseEvidence` both raise `ValueError`
+at construction if an exact instant is set without its corresponding
+local time being known, or if the exact-instant field and its own
+paired duration field (`time_until_event`/`elapsed_since_release`)
+disagree about being `None` -- enforced by the type itself, not merely
+documented. Both duration fields are plain `timedelta`s, never a
+pre-rounded "minutes until" value.
+
+**Release grouping cannot invent an aggregate fact by construction.**
+`domain.event_evidence_group.EventEvidenceGroup[T]` (a small, generic
+container, matching this project's own existing PEP-695-generic-
+function convention) carries only `group_key` and `members` --
+structurally nowhere to put a "primary member" or a group-level exact
+time. Grouping is by `EconomicEventOccurrence.release_group_key` ONLY
+(an ungrouped occurrence is its own one-member group, keyed by its own
+`occurrence_key`); two occurrences that merely share a timestamp are
+never merged. Groups sort by the earliest member's own resolved
+instant (falling back to a date-only fact's local-day-range START,
+computed by an internal helper NEVER exposed on the evidence type
+itself), tie-broken by `group_key`; members sort by `(indicator_key,
+occurrence_key)`, never by an invented "primary" member.
+
+**`domain.event_coverage_evidence.EventCoverageEvidence`** (always
+present on the snapshot, even when both evidence tuples are empty) is
+this story's answer to "empty evidence must never mean safe": it
+reports every tracked indicator key for each of the pair's two
+currencies plus which currencies (if any) have ZERO tracked indicators
+at all (e.g. EUR for any EUR pair today). Deliberately reports NO
+source-health/freshness signal -- no durable source-health/poll-state
+metadata exists anywhere in this repository for the economic-calendar
+subsystem (the closest analog, `IngestionWatermarkRepository`,
+belongs to the unrelated OANDA-candle-backfill bounded context) --
+stated honestly rather than invented. No `all_clear`/`safe_to_trade`/
+`no_event_risk` field exists anywhere in this story's own types.
+
+**Performs no network I/O.** `GetEventRiskEvidenceSnapshot`'s own
+constructor accepts only the repository port (verified by a
+signature-inspection unit test) -- BLS's live HTTP 403 remains purely
+an ingestion-layer limitation; every FX-54 deterministic test persists
+event data directly via the repository using REAL canonical indicator
+keys, never touching BLS/ONS/BoC.
+
+**No new migration** -- `EventRiskEvidenceSnapshot` and every evidence
+type are computed on request from already-persisted canonical event
+data, never persisted themselves. The only addition is the
+`known_releases_in_window` repository method (no schema change at
+all). Full details in `docs/DECISIONS.md`'s own FX-54 entry.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

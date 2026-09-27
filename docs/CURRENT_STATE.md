@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-52AH.1)_
+_Last updated: 2026-09-26 (FX-54)_
 
 ## What exists
 
@@ -1436,9 +1436,62 @@ _Last updated: 2026-09-26 (FX-52AH.1)_
   timezone conversion against the real live feed -- BoC schedule, BoC
   release), 1 failing (BLS 403, unchanged). Both migrations verified
   up/down/up against live Postgres, including a manual guard-firing
-  check. Full details in `docs/DECISIONS.md`'s FX-52AH.1 entry. **Stop
-  after FX-52AH.1 -- FX-52 remains DEFER (untouched); FX-53 remains
-  BLOCKED; FX-54 has NOT been implemented.**
+  check. Full details in `docs/DECISIONS.md`'s FX-52AH.1 entry.
+- **FX-54: event-risk evidence snapshot, timing-only (complete)**.
+  Explicitly authorized by this story's own prompt (superseding every
+  prior "not requested"/"blocked" note). `application.use_cases.
+  get_event_risk_evidence_snapshot.GetEventRiskEvidenceSnapshot`
+  answers "given this FX pair, at this exact instant, what economic-
+  event TIMING evidence did the system know?" -- built entirely on
+  FX-51H's PIT repository and FX-52A/FX-52AH/FX-52AH.1's canonical
+  registry/occurrence model. **Evidence, not policy**: no risk score,
+  importance label, trade veto, blackout window, or directional
+  interpretation anywhere -- every new domain type
+  (`EventScheduleEvidence`/`EventReleaseEvidence`/`EventEvidenceGroup`/
+  `EventCoverageEvidence`/`EventRiskEvidenceSnapshot`) has a dedicated
+  test asserting no such field exists on it. Explicit input contract
+  (`Instrument`/`as_of`/`lookahead`/`lookback`, all caller-supplied, no
+  hidden clock/policy defaults; negative horizons rejected before any
+  repository call). Pair relevance resolved exclusively through the
+  canonical registry (`pair_role_by_indicator_key` + a new,
+  minimal `indicators_by_currency` registry addition -- never a second
+  currency mapping). Release evidence reuses FX-51H's PIT machinery by
+  direct analogy: a new `known_releases_in_window` repository method,
+  structurally identical to `known_events_in_window`, plus a new
+  `release_within_window` domain function analogous to
+  `schedule_within_window`. Centralized ALL date/time/timezone-to-UTC
+  resolution into two shared functions
+  (`resolve_exact_instant`/`resolve_local_day_utc_range`), refactoring
+  `schedule_within_window` onto them (behavior-preserving) so
+  FX-52AH.1's own ONS-timezone-bug class of mistake has no second,
+  independently-written piece of `ZoneInfo` arithmetic left to recur
+  in. Exact-vs-date-only timing is a doubly-enforced first-class state
+  (construction-time `ValueError` if an exact instant exists without
+  its own local time, or if it disagrees with its paired duration
+  field about being `None`). Release grouping cannot invent an
+  aggregate fact by construction (`EventEvidenceGroup[T]` carries only
+  `group_key`/`members`, structurally nowhere to put a "primary
+  member"); grouping is by `release_group_key` only, never by
+  coincidental matching timestamps (verified directly). Deterministic
+  chronological ordering, including for date-only facts (via an
+  internal-only sort key, never exposed on the public evidence type).
+  `EventCoverageEvidence` (always present, even when both evidence
+  tuples are empty) reports tracked indicator keys per currency plus
+  which pair currencies have zero tracked indicators at all (EUR,
+  today) -- deliberately reports no source-health/freshness signal, since
+  none exists anywhere in this repository for the economic-calendar
+  subsystem, stated honestly rather than invented. Performs NO network
+  I/O (verified by signature inspection); BLS's live 403 remains purely
+  an ingestion-layer limitation, confirmed unchanged by this story.
+  No new migration -- the snapshot is computed on request, never
+  persisted. 63 new tests (42 domain unit + 4 application unit + 6
+  `known_releases_in_window` + 12 end-to-end use-case integration
+  tests, including this story's own Section 34 release-PIT worked
+  example verbatim). 1523 tests pass overall (up from 1435). Full
+  details in `docs/DECISIONS.md`'s FX-54 entry. **Stop after FX-54 --
+  FX-52 remains DEFER (untouched); FX-53 remains BLOCKED; no Decision/
+  Risk-Engine integration; no blackout/trade-blocking logic; FX-EPIC-08
+  (News Intelligence) not started.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

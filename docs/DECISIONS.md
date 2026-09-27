@@ -9218,3 +9218,178 @@ inserted mapping row.
 
 Per this story's own explicit stop instruction: FX-52 remains DEFER,
 FX-53 remains BLOCKED, FX-54 has NOT been started.
+
+## 2026-09-26 — FX-54: event-risk evidence snapshot (timing-only)
+
+Explicitly authorized by this story's own prompt, superseding every
+prior "FX-54 not requested"/"do not start FX-54" note in this
+project's own docs. Scoped down to exactly what FX-52A/FX-52AH/
+FX-52AH.1's existing evidence supports: deterministic economic-event
+TIMING evidence for one FX pair at one exact instant. Deliberately
+does NOT implement the surprise-related portion of FX-54's original
+long-term vision -- no consensus, no numeric actual value, no
+surprise, no post-release FX-response research (FX-52 remains DEFER,
+FX-53 remains BLOCKED, both untouched).
+
+**This is evidence, not policy.** `GetEventRiskEvidenceSnapshot`
+answers "what did the system know, as of `as_of`, about pair-relevant
+economic-event timing" -- it never computes a risk score, an
+importance label, a trade veto, a blackout window, or any directional/
+bullish/bearish interpretation. Every new domain type
+(`EventScheduleEvidence`/`EventReleaseEvidence`/`EventEvidenceGroup`/
+`EventCoverageEvidence`/`EventRiskEvidenceSnapshot`) was checked by a
+dedicated unit test asserting none of a list of forbidden policy-field
+names (`risk_score`, `importance`, `should_trade`, `blackout`,
+`safe_to_trade`, `clear_of_events`, `surprise`, ...) exists on its
+`__dataclass_fields__` -- a structural guarantee, not merely a
+docstring promise.
+
+**Explicit input contract, no hidden clock/policy defaults.** Inputs
+are `instrument: Instrument`, `as_of: UtcTimestamp`, `lookahead:
+timedelta`, `lookback: timedelta` -- all caller-supplied; the use case
+never calls `datetime.now()` and never invents a fixed 15/30/60-minute
+window of its own. Negative `lookahead`/`lookback` raise `ValueError`
+before any repository call (verified by a unit test using a repository
+stub that raises `AssertionError` if touched at all).
+
+**Pair relevance resolved exclusively through the canonical registry.**
+`domain.pair_currency_role.pair_role_by_indicator_key(instrument)`
+maps every indicator key currently tracked for either of the pair's
+two currencies onto `PairCurrencyRole.BASE`/`QUOTE`, using
+`domain.economic_indicator_registry.indicators_by_currency` (a new,
+small addition to the existing registry -- never a second, competing
+currency mapping). `Instrument.__post_init__`'s own `base_currency !=
+quote_currency` guarantee means no indicator key can ever receive both
+roles. `PairCurrencyRole` is deliberately non-directional: structural
+evidence only, never "good for base"/"bad for quote."
+
+**Reused FX-51H's PIT machinery unchanged, extended once by direct
+analogy.** Forward-schedule evidence reuses `known_events_in_window`/
+`schedule_within_window` completely as-is. Release evidence needed the
+identical "latest-known-per-occurrence, then a true-instant window
+test" shape applied to `economic_event_release_vintages` instead of
+`economic_event_schedule_vintages`; rather than generalizing into one
+callback-parametrized query (premature abstraction over a genuinely
+different vintage table), a new, structurally identical port method,
+`known_releases_in_window`, was added -- deliberately duplicating
+`known_events_in_window`'s own shape rather than inventing a shared
+generic. Its own timezone/date-only test, `release_within_window`, is
+the release-evidence analog of `schedule_within_window`.
+
+**Centralized timezone resolution to close off the FX-52AH.1 ONS class
+of bug permanently.** Extracted `resolve_exact_instant`/
+`resolve_local_day_utc_range` out of `schedule_within_window` into
+shared functions in `domain.economic_event_state`, refactored
+`schedule_within_window` to use them (behavior-preserving -- all
+pre-existing tests still pass unchanged), and built `release_within_
+window` and every FX-54 evidence builder (`build_schedule_evidence`/
+`build_release_evidence`) on the SAME two functions. There is now
+exactly ONE place in this codebase that resolves a
+date/time/timezone triple to a UTC instant -- the ONS bug FX-52AH.1
+fixed (silently relabeling a UTC instant as local time without
+converting) cannot recur in a second, independently-written piece of
+`ZoneInfo` arithmetic, because there is no second piece left to write
+wrongly.
+
+**Exact-time vs date-only is preserved as a first-class, doubly-
+enforced state.** `EventScheduleEvidence.__post_init__`/
+`EventReleaseEvidence.__post_init__` both raise `ValueError` if an
+exact instant is set while the corresponding local time field is
+`None`, and raise `ValueError` if the exact-instant field and its own
+paired duration field (`time_until_event`/`elapsed_since_release`)
+disagree about being `None` -- these invariants are checked at
+CONSTRUCTION time, not merely documented, so a future edit cannot
+silently reintroduce a fabricated instant. `time_until_event`/
+`elapsed_since_release` are plain `timedelta`s, never a pre-rounded
+"minutes until" value -- this story deliberately does not invent a
+rounding rule nothing requires yet.
+
+**Release grouping never invents an aggregate fact.**
+`EventEvidenceGroup[T]` (a small, generic, PEP-695-style container --
+this project's existing convention already uses that generic-function
+syntax in `domain.economic_event_state`) carries only `group_key` and
+`members`: structurally nowhere to put a "primary member" or a
+group-level exact time, so Section 17's "never silently choose one
+member's time" requirement is enforced by the type's own shape, not by
+caller discipline. Grouping is by `EconomicEventOccurrence.
+release_group_key` ONLY (falling back to the occurrence's own
+`occurrence_key` for an ungrouped occurrence) -- two occurrences that
+merely share a timestamp are never merged. Verified with a dedicated
+test proving exactly that (`test_same_timestamp_without_shared_group_
+key_does_not_merge`, both schedule and release evidence).
+
+**Deterministic ordering, including for date-only facts.** Groups sort
+by the earliest member's own resolved instant (exact when known,
+otherwise the date-only local-day range's own START -- computed by an
+internal, never-exposed `_sort_instant` helper, so no fabricated
+instant leaks onto the public evidence type itself), tie-broken by
+`group_key`; members within a group sort by `(indicator_key,
+occurrence_key)`, never by an invented "primary" member.
+
+**Coverage evidence is the honest answer to "empty is not safe."**
+`EventCoverageEvidence` (always present on the snapshot, even when both
+evidence tuples are empty) reports every tracked indicator key for
+each of the pair's two currencies plus which currencies (if any) have
+ZERO tracked indicators at all -- e.g. EUR for any EUR pair today.
+Deliberately reports NO source-health/freshness signal (whether BLS's
+own 403 means USD coverage is currently degraded): no durable source-
+health/poll-state metadata exists anywhere in this repository for the
+economic-calendar subsystem (the closest analog,
+`IngestionWatermarkRepository`, belongs to the unrelated OANDA-candle-
+backfill bounded context) -- stated honestly in the type's own
+docstring rather than invented. No `all_clear`/`safe_to_trade`/
+`no_event_risk` field exists anywhere, checked by a dedicated test.
+
+**BLS's 403 remains an ingestion-layer limitation, not a snapshot
+concern.** This use case performs NO network I/O of its own (verified
+by a signature-inspection unit test proving its constructor accepts
+only the repository port, matching this project's own `economic_
+calendar_occurrence_identity`-story precedent for guarding a
+constructor's own shape against future drift) and its deterministic
+tests never touch BLS/ONS/BoC at all -- every FX-54 test persists
+event data directly via the repository, using REAL canonical indicator
+keys (`GBP_GDP_QOQ`, `US_NONFARM_PAYROLLS`, `US_UNEMPLOYMENT_RATE`,
+`CAD_POLICY_RATE_DECISION`, `US_CPI_YOY`) so pair-relevance filtering
+is exercised against genuine registry entries, never a fake/
+unrecognized key that would trivially bypass it.
+
+**No new migration.** `EventRiskEvidenceSnapshot` and every evidence
+type are computed on request from already-persisted canonical event
+data, never persisted themselves -- exactly this story's own preferred
+default. The only schema-adjacent addition is the new
+`known_releases_in_window` REPOSITORY METHOD (application/
+infrastructure layers), which required no new column, table, or
+migration at all.
+
+**Tests**: 42 new domain unit tests (timezone helpers,
+`indicators_by_currency`, `PairCurrencyRole`, `EventEvidenceGroup`,
+`EventScheduleEvidence`/`EventReleaseEvidence` build+group+sort,
+`EventCoverageEvidence`, `EventRiskEvidenceSnapshot` validation) + 4
+application-layer unit tests (no-network-I/O guarantee, negative-
+horizon rejection before any repository call, zero-horizon acceptance)
++ 6 new `known_releases_in_window` live-Postgres integration tests
+(mirroring `known_events_in_window`'s own existing test shape) + 12
+new end-to-end `GetEventRiskEvidenceSnapshot` live-Postgres integration
+tests (pair filtering for GBP/USD, USD/CAD, EUR/USD; reschedule/
+cancellation PIT non-leak; exact/date-only timing; the exact
+09:47/09:48/09:50/09:51 release-PIT worked example from this story's
+own Section 34; scheduled-time-passing-does-not-imply-release; release
+grouping; chronological ordering; coverage evidence for an empty
+result). 1523 tests pass overall (up from 1435); failures are exactly
+the pre-existing, unrelated Saturday-weekend live-OANDA-candle set --
+no other regressions. Live-source validation re-run separately
+(`pytest -m live_source`): unchanged, 3 passing / 1 failing (BLS 403).
+`ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean.
+
+**Version**: `pyproject.toml` remains at its own existing `0.1.0` --
+this repository has never actually followed a story-number-aligned
+version scheme (it stayed at `0.1.0` through every prior FX-51..
+FX-52AH.1 story), so no version was bumped and no new scheme was
+invented, per this story's own explicit instruction to inspect current
+convention before changing anything.
+
+Per this story's own explicit stop instruction: FX-52 remains DEFER,
+FX-53 remains BLOCKED, no Decision/Risk-Engine integration was added,
+no blackout/trade-blocking logic was implemented, and FX-EPIC-08 (News
+Intelligence) was not started.

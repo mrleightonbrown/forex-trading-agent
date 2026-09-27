@@ -26,6 +26,17 @@ availability-filters. FX-51H Section 4 replaced FX-51's original SQL-
 only date-range comparison, which compared a local calendar date
 against `start`/`end`'s own UTC calendar dates and could place a
 boundary-adjacent event on the wrong side of the window by a day.
+
+`known_releases_in_window` (FX-54) is `known_events_in_window`'s exact
+same shape, applied to `economic_event_release_vintages` instead of
+`economic_event_schedule_vintages` and resolved through
+`domain.economic_event_state.release_within_window` -- added because
+FX-54's own recent-release-evidence requirement needs the identical
+"latest-known-per-occurrence, then a true-instant window test"
+query, and this project's existing convention already has this exact
+shape once; duplicating that shape for a second, structurally
+different vintage table is the honest choice, not premature
+abstraction into one generic windowed-vintage query.
 """
 
 from sqlalchemy import func, select, update
@@ -45,7 +56,10 @@ from forex_agent.domain.economic_event_consensus_vintage import EconomicEventCon
 from forex_agent.domain.economic_event_occurrence import EconomicEventOccurrence
 from forex_agent.domain.economic_event_release_vintage import EconomicEventReleaseVintage
 from forex_agent.domain.economic_event_schedule_vintage import EconomicEventScheduleVintage
-from forex_agent.domain.economic_event_state import schedule_within_window
+from forex_agent.domain.economic_event_state import (
+    release_within_window,
+    schedule_within_window,
+)
 from forex_agent.domain.economic_event_status import EconomicEventStatus
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.economic_event_actual_value_vintage import (
@@ -446,6 +460,66 @@ class SqlAlchemyEconomicEventRepository:
             )
             if schedule_within_window(schedule, start, end):
                 results.append((_occurrence_to_domain(occurrence_row), schedule))
+        return tuple(results)
+
+    async def known_releases_in_window(
+        self, start: UtcTimestamp, end: UtcTimestamp, as_of: UtcTimestamp
+    ) -> tuple[tuple[EconomicEventOccurrence, EconomicEventReleaseVintage], ...]:
+        # Identical shape to known_events_in_window above, against the
+        # release-vintage table instead of the schedule-vintage table --
+        # see this module's own docstring for why this is duplicated
+        # rather than generalized.
+        r = EconomicEventReleaseVintageRow
+        ranked = (
+            select(
+                r.occurrence_key.label("occurrence_key"),
+                r.revision_sequence.label("revision_sequence"),
+                r.released_date.label("released_date"),
+                r.released_time.label("released_time"),
+                r.released_timezone.label("released_timezone"),
+                r.availability.label("availability"),
+                r.availability_confidence.label("availability_confidence"),
+                r.source.label("source"),
+                r.source_published_at.label("source_published_at"),
+                func.row_number()
+                .over(
+                    partition_by=r.occurrence_key,
+                    order_by=(r.availability.desc(), r.revision_sequence.desc()),
+                )
+                .label("rn"),
+            )
+            .where(r.availability <= as_of.value)
+            .subquery()
+        )
+        occurrence = EconomicEventOccurrenceRow
+        stmt = (
+            select(occurrence, ranked)
+            .join(occurrence, occurrence.occurrence_key == ranked.c.occurrence_key)
+            .where(ranked.c.rn == 1)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        await self._session.commit()
+        results = []
+        for row in rows:
+            m = row._mapping
+            occurrence_row = m[EconomicEventOccurrenceRow]
+            availability = m["availability"]
+            source_published_at = m["source_published_at"]
+            release = EconomicEventReleaseVintage(
+                occurrence_key=m["occurrence_key"],
+                revision_sequence=m["revision_sequence"],
+                released_date=m["released_date"],
+                released_time=m["released_time"],
+                released_timezone=m["released_timezone"],
+                availability=None if availability is None else UtcTimestamp(availability),
+                availability_confidence=AvailabilityConfidence(m["availability_confidence"]),
+                source=m["source"],
+                source_published_at=(
+                    None if source_published_at is None else UtcTimestamp(source_published_at)
+                ),
+            )
+            if release_within_window(release, start, end):
+                results.append((_occurrence_to_domain(occurrence_row), release))
         return tuple(results)
 
     # --- Internal lookups (diagnostic only, never decide a write outcome) -------

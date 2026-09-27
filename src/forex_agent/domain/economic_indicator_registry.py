@@ -110,3 +110,17 @@ def indicator_by_key(key: str) -> EconomicIndicatorDefinition | None:
     this registry -- a source adapter must treat `None` as UNMAPPED,
     never fabricate a definition on the fly."""
     return _BY_KEY.get(key)
+
+
+def indicators_by_currency(currency: str) -> tuple[EconomicIndicatorDefinition, ...]:
+    """Every canonical indicator definition whose `currency` matches,
+    in this registry's own declaration order -- FX-54's sole mechanism
+    for resolving which tracked indicators are relevant to one side of
+    an FX pair. `EconomicIndicatorDefinition.currency` is this
+    registry's own single source of truth for event/currency
+    association; never re-derive currency from an indicator's name
+    text, its source adapter, an occurrence key, or a source URL. An
+    empty result is a genuine, honest structural fact ("this currency
+    currently has zero tracked indicators," e.g. EUR as of FX-52A/
+    FX-54), never an error."""
+    return tuple(d for d in ECONOMIC_INDICATOR_DEFINITIONS if d.currency == currency)

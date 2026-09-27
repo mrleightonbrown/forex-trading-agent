@@ -18,6 +18,9 @@ from forex_agent.domain.economic_event_state import (
     latest_consensus_as_of,
     latest_release_as_of,
     latest_schedule_as_of,
+    release_within_window,
+    resolve_exact_instant,
+    resolve_local_day_utc_range,
     schedule_within_window,
 )
 from forex_agent.domain.economic_event_status import EconomicEventStatus
@@ -355,3 +358,82 @@ def test_unknown_time_uses_local_day_overlap_never_a_fabricated_instant() -> Non
 
     assert schedule_within_window(tbd, *overlapping_window) is True
     assert schedule_within_window(tbd, *non_overlapping_window) is False
+
+
+# --- resolve_exact_instant / resolve_local_day_utc_range (FX-54) -------------
+
+
+def test_resolve_exact_instant_returns_none_for_unknown_time() -> None:
+    assert resolve_exact_instant(date(2026, 9, 4), None, "America/New_York") is None
+
+
+def test_resolve_exact_instant_resolves_through_timezone() -> None:
+    # 2026-09-04 08:30 America/New_York (EDT, UTC-4) == 12:30 UTC.
+    instant = resolve_exact_instant(date(2026, 9, 4), time(8, 30), "America/New_York")
+    assert instant == UtcTimestamp(datetime(2026, 9, 4, 12, 30, tzinfo=UTC))
+
+
+def test_resolve_exact_instant_dst_boundary() -> None:
+    # 2026-01-15 08:30 America/New_York (EST, UTC-5) == 13:30 UTC.
+    instant = resolve_exact_instant(date(2026, 1, 15), time(8, 30), "America/New_York")
+    assert instant == UtcTimestamp(datetime(2026, 1, 15, 13, 30, tzinfo=UTC))
+
+
+def test_resolve_local_day_utc_range_spans_one_local_day() -> None:
+    # 2026-01-15 in America/New_York (EST, UTC-5) spans
+    # [2026-01-15 05:00 UTC, 2026-01-16 05:00 UTC).
+    day_start, day_end = resolve_local_day_utc_range(date(2026, 1, 15), "America/New_York")
+    assert day_start == UtcTimestamp(datetime(2026, 1, 15, 5, 0, tzinfo=UTC))
+    assert day_end == UtcTimestamp(datetime(2026, 1, 16, 5, 0, tzinfo=UTC))
+
+
+# --- release_within_window (FX-54) -------------------------------------------
+
+
+def test_release_known_time_exact_instant_membership() -> None:
+    # 2026-09-02 09:45 UTC.
+    release = _release(0, date(2026, 9, 2), time(9, 45), availability=_ts(9, 2, 9, 50))
+    window_start = UtcTimestamp(datetime(2026, 9, 2, 9, 0, tzinfo=UTC))
+    window_end = UtcTimestamp(datetime(2026, 9, 2, 10, 0, tzinfo=UTC))
+    outside_start = UtcTimestamp(datetime(2026, 9, 2, 10, 0, tzinfo=UTC))
+    outside_end = UtcTimestamp(datetime(2026, 9, 2, 11, 0, tzinfo=UTC))
+
+    assert release_within_window(release, window_start, window_end) is True
+    assert release_within_window(release, outside_start, outside_end) is False
+
+
+def test_release_dst_boundary_resolved_correctly() -> None:
+    # 2026-01-15 23:00 America/New_York (EST, UTC-5) == 2026-01-16 04:00 UTC.
+    late_local = _release(
+        0, date(2026, 1, 15), time(23, 0), availability=_ts(1, 1), timezone="America/New_York"
+    )
+    jan_15_utc_window = (
+        UtcTimestamp(datetime(2026, 1, 15, 0, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 1, 16, 0, 0, tzinfo=UTC)),
+    )
+    jan_16_utc_window = (
+        UtcTimestamp(datetime(2026, 1, 16, 0, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 1, 17, 0, 0, tzinfo=UTC)),
+    )
+
+    assert release_within_window(late_local, *jan_15_utc_window) is False
+    assert release_within_window(late_local, *jan_16_utc_window) is True
+
+
+def test_release_unknown_time_uses_local_day_overlap_never_a_fabricated_instant() -> None:
+    # Bank of Canada-style date-only release evidence (FX-52AH.1
+    # Section 14/FX-54 Section 14): released_time is genuinely None.
+    date_only = _release(0, date(2026, 1, 15), None, availability=_ts(1, 1))
+    # The local day 2026-01-15 in UTC (this helper's default timezone)
+    # spans exactly [2026-01-15 00:00 UTC, 2026-01-16 00:00 UTC).
+    overlapping_window = (
+        UtcTimestamp(datetime(2026, 1, 15, 23, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 1, 16, 1, 0, tzinfo=UTC)),
+    )
+    non_overlapping_window = (
+        UtcTimestamp(datetime(2026, 1, 16, 1, 0, tzinfo=UTC)),
+        UtcTimestamp(datetime(2026, 1, 17, 0, 0, tzinfo=UTC)),
+    )
+
+    assert release_within_window(date_only, *overlapping_window) is True
+    assert release_within_window(date_only, *non_overlapping_window) is False

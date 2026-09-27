@@ -297,3 +297,23 @@ class EconomicEventRepository(Protocol):
         vintage known as of `as_of` at all) is excluded.
         """
         ...
+
+    async def known_releases_in_window(
+        self, start: UtcTimestamp, end: UtcTimestamp, as_of: UtcTimestamp
+    ) -> tuple[tuple[EconomicEventOccurrence, EconomicEventReleaseVintage], ...]:
+        """The release-evidence analog of `known_events_in_window`
+        (FX-54): every occurrence whose release state known as of
+        `as_of` places it within `[start, end)`, resolved through
+        `domain.economic_event_state.release_within_window` -- the
+        SAME exact-time-vs-date-only-local-day-range discipline
+        `schedule_within_window` already applies, extended to release
+        evidence. Each result pairs an occurrence with the SAME
+        release vintage `release_as_of` would return for it
+        individually. An occurrence whose only known-as-of-`as_of`
+        release falls outside `[start, end)` (or one with no release
+        vintage known as of `as_of` at all -- including "it has not
+        been observed released yet, as far as the system could know")
+        is excluded. This method never implies "scheduled time passed
+        therefore released" -- it reflects genuine
+        `EconomicEventReleaseVintage` facts only."""
+        ...

@@ -22,10 +22,21 @@ numeric-value fact -- see that type's own docstring) and
 `schedule_within_window`, the pure timezone-resolved instant-window
 test `known_events_in_window` (infrastructure layer) uses instead of
 comparing a local calendar date against a UTC one.
+
+FX-54 adds `release_within_window` -- the identical discipline applied
+to release-occurrence evidence instead of forward schedules (needed by
+`known_releases_in_window`) -- plus two shared helpers,
+`resolve_exact_instant`/`resolve_local_day_utc_range`, extracted so
+`schedule_within_window`/`release_within_window` and FX-54's own
+evidence builders (`domain.event_schedule_evidence`/
+`event_release_evidence`) all resolve date/time/timezone to a UTC
+instant through ONE piece of code, never by duplicating `ZoneInfo`
+arithmetic across layers (FX-52AH.1's own ONS timezone bug is exactly
+the class of mistake this centralization exists to prevent).
 """
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from forex_agent.domain.economic_event_actual_value_vintage import (
@@ -145,6 +156,42 @@ def latest_release_as_of(
     return _latest(_available_as_of(vintages, as_of))
 
 
+def resolve_exact_instant(
+    local_date: date, local_time: time | None, timezone: str
+) -> UtcTimestamp | None:
+    """`local_date`+`local_time`, interpreted in `timezone`, resolved to
+    a single exact UTC instant -- or `None` when `local_time` is `None`
+    (date known, time genuinely unknown). NEVER fabricates a time of
+    day to manufacture an instant; a caller with a `None` result must
+    represent "date known, exact time unknown" as a first-class state,
+    never substitute midnight or any other guessed time (FX-51 Section
+    11, FX-54 Section 9). The ONE place `schedule_within_window`/
+    `release_within_window` and every FX-54 evidence builder resolve a
+    date/time/timezone triple to UTC, so this arithmetic is never
+    duplicated across layers (see this module's own docstring)."""
+    if local_time is None:
+        return None
+    tz = ZoneInfo(timezone)
+    return UtcTimestamp(datetime.combine(local_date, local_time, tzinfo=tz).astimezone(UTC))
+
+
+def resolve_local_day_utc_range(
+    local_date: date, timezone: str
+) -> tuple[UtcTimestamp, UtcTimestamp]:
+    """The `[day_start, day_end)` UTC instant range spanning one local
+    calendar day (local midnight to the next local midnight) in
+    `timezone` -- shared by `schedule_within_window`/
+    `release_within_window`'s own date-only overlap test, since a
+    date-only fact (time genuinely unknown) is represented as "any
+    instant during this local day," never a fabricated single
+    instant."""
+    tz = ZoneInfo(timezone)
+    local_midnight = datetime.combine(local_date, time(0, 0), tzinfo=tz)
+    day_start = local_midnight.astimezone(UTC)
+    day_end = (local_midnight + timedelta(days=1)).astimezone(UTC)
+    return UtcTimestamp(day_start), UtcTimestamp(day_end)
+
+
 def schedule_within_window(
     schedule: EconomicEventScheduleVintage, start: UtcTimestamp, end: UtcTimestamp
 ) -> bool:
@@ -170,14 +217,38 @@ def schedule_within_window(
     `[start, end)` -- correctly timezone-aware without inventing
     precision the source never provided.
     """
-    tz = ZoneInfo(schedule.schedule_timezone)
-    if schedule.scheduled_time is not None:
-        instant = datetime.combine(
-            schedule.scheduled_date, schedule.scheduled_time, tzinfo=tz
-        ).astimezone(UTC)
-        return start.value <= instant < end.value
+    instant = resolve_exact_instant(
+        schedule.scheduled_date, schedule.scheduled_time, schedule.schedule_timezone
+    )
+    if instant is not None:
+        return start.value <= instant.value < end.value
 
-    local_midnight = datetime.combine(schedule.scheduled_date, time(0, 0), tzinfo=tz)
-    day_start = local_midnight.astimezone(UTC)
-    day_end = (local_midnight + timedelta(days=1)).astimezone(UTC)
-    return day_start < end.value and day_end > start.value
+    day_start, day_end = resolve_local_day_utc_range(
+        schedule.scheduled_date, schedule.schedule_timezone
+    )
+    return day_start.value < end.value and day_end.value > start.value
+
+
+def release_within_window(
+    release: EconomicEventReleaseVintage, start: UtcTimestamp, end: UtcTimestamp
+) -> bool:
+    """Whether `release`'s own claimed released date/time falls within
+    `[start, end)`, resolved through `release.released_timezone` --
+    the release-evidence analog of `schedule_within_window` (FX-54),
+    needed because a recent-release lookback window must apply the
+    identical exact-time-vs-date-only-overlap discipline release
+    evidence already carries (`EconomicEventReleaseVintage.
+    released_time` is `None` exactly when only the date is known, e.g.
+    Bank of Canada's own release evidence -- see that type's own
+    docstring); this function never fabricates a released instant for
+    a date-only fact."""
+    instant = resolve_exact_instant(
+        release.released_date, release.released_time, release.released_timezone
+    )
+    if instant is not None:
+        return start.value <= instant.value < end.value
+
+    day_start, day_end = resolve_local_day_utc_range(
+        release.released_date, release.released_timezone
+    )
+    return day_start.value < end.value and day_end.value > start.value

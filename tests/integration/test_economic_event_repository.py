@@ -866,3 +866,169 @@ async def test_known_events_in_window_date_only_schedule_uses_local_day_overlap(
     assert key not in [o.occurrence_key for o, _s in non_overlapping]
     result_schedule = next(s for o, s in overlapping if o.occurrence_key == key)
     assert result_schedule.scheduled_time is None  # never fabricated
+
+
+# ---------------------------------------------------------------------------
+# known_releases_in_window (FX-54: the release-evidence analog)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_reflects_correction_and_excludes_out_of_window(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    in_window_key = f"{TEST_OCCURRENCE_PREFIX}RWIN1_IN"
+    out_of_window_key = f"{TEST_OCCURRENCE_PREFIX}RWIN1_OUT"
+    await repo.add_occurrence(_occurrence(in_window_key, reference_period=_ts(2026, 9, 1)))
+    await repo.add_occurrence(_occurrence(out_of_window_key, reference_period=_ts(2026, 9, 1)))
+
+    await repo.add_release_vintage(
+        _release(in_window_key, 0, date(2026, 9, 2), time(9, 45), _ts(2026, 9, 2, 9, 50))
+    )
+    await repo.add_release_vintage(
+        _release(in_window_key, 1, date(2026, 9, 3), time(9, 0), _ts(2026, 9, 4, 10, 0))
+    )
+    await repo.add_release_vintage(
+        _release(out_of_window_key, 0, date(2026, 8, 1), time(9, 45), _ts(2026, 8, 1, 9, 50))
+    )
+
+    results = await repo.known_releases_in_window(
+        _ts(2026, 9, 1), _ts(2026, 9, 30), _ts(2026, 9, 5)
+    )
+
+    matching = [r for r in results if r[0].occurrence_key.startswith(TEST_OCCURRENCE_PREFIX)]
+    assert len(matching) == 1
+    occurrence, release = matching[0]
+    assert occurrence.occurrence_key == in_window_key
+    assert release.released_date == date(2026, 9, 3)
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_excludes_unavailable_release(
+    session: AsyncSession,
+) -> None:
+    # FX-54 Section 34's own worked example: availability gates
+    # visibility independently of released_date/source_published_at.
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}RWIN2"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 9, 1)))
+    await repo.add_release_vintage(
+        _release(key, 0, date(2026, 9, 2), time(9, 45), _ts(2026, 9, 2, 9, 50))
+    )
+
+    before_availability = await repo.known_releases_in_window(
+        _ts(2026, 9, 1), _ts(2026, 9, 30), _ts(2026, 9, 2, 9, 48)
+    )
+    after_availability = await repo.known_releases_in_window(
+        _ts(2026, 9, 1), _ts(2026, 9, 30), _ts(2026, 9, 2, 9, 51)
+    )
+
+    assert key not in [o.occurrence_key for o, _r in before_availability]
+    assert key in [o.occurrence_key for o, _r in after_availability]
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_excludes_unknown_availability(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}RWIN3"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 9, 1)))
+    await repo.add_release_vintage(
+        _release(
+            key,
+            0,
+            date(2026, 9, 2),
+            time(9, 45),
+            None,
+            confidence=AvailabilityConfidence.UNKNOWN,
+        )
+    )
+
+    results = await repo.known_releases_in_window(
+        _ts(2026, 9, 1), _ts(2026, 9, 30), _ts(2099, 1, 1)
+    )
+
+    assert key not in [o.occurrence_key for o, _r in results]
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_uses_true_timezone_resolved_instant(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}RWIN4_DST"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 1, 1)))
+    await repo.add_release_vintage(
+        EconomicEventReleaseVintage(
+            occurrence_key=key,
+            revision_sequence=0,
+            released_date=date(2026, 1, 15),
+            released_time=time(23, 0),
+            released_timezone="America/New_York",
+            availability=_ts(2026, 1, 1),
+            availability_confidence=AvailabilityConfidence.VERIFIED,
+            source="test_source",
+        )
+    )
+    # 2026-01-15 23:00 America/New_York (EST, UTC-5) == 2026-01-16 04:00 UTC.
+    jan_15_window = await repo.known_releases_in_window(
+        _ts(2026, 1, 15), _ts(2026, 1, 16), _ts(2026, 1, 2)
+    )
+    jan_16_window = await repo.known_releases_in_window(
+        _ts(2026, 1, 16), _ts(2026, 1, 17), _ts(2026, 1, 2)
+    )
+
+    assert key not in [o.occurrence_key for o, _r in jan_15_window]
+    assert key in [o.occurrence_key for o, _r in jan_16_window]
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_date_only_release_uses_local_day_overlap(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}RWIN5_TBD"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 1, 1)))
+    await repo.add_release_vintage(_release(key, 0, date(2026, 1, 15), None, _ts(2026, 1, 1)))
+    # Local day 2026-01-15 in UTC (this release's default timezone)
+    # spans exactly [2026-01-15 00:00 UTC, 2026-01-16 00:00 UTC).
+    overlapping = await repo.known_releases_in_window(
+        _ts(2026, 1, 15, 23), _ts(2026, 1, 16, 1), _ts(2026, 1, 16)
+    )
+    non_overlapping = await repo.known_releases_in_window(
+        _ts(2026, 1, 16, 1), _ts(2026, 1, 17), _ts(2026, 1, 16)
+    )
+
+    assert key in [o.occurrence_key for o, _r in overlapping]
+    assert key not in [o.occurrence_key for o, _r in non_overlapping]
+    result_release = next(r for o, r in overlapping if o.occurrence_key == key)
+    assert result_release.released_time is None  # never fabricated
+
+
+@pytest.mark.asyncio
+async def test_known_releases_in_window_preserves_source_published_at(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}RWIN6_PROV"
+    await repo.add_occurrence(_occurrence(key, reference_period=None))
+    published_at = _ts(2026, 9, 2, 9, 47)
+    await repo.add_release_vintage(
+        _release(
+            key,
+            0,
+            date(2026, 9, 2),
+            None,
+            _ts(2026, 9, 2, 9, 50),
+            source_published_at=published_at,
+        )
+    )
+
+    results = await repo.known_releases_in_window(
+        _ts(2026, 9, 1), _ts(2026, 9, 30), _ts(2026, 9, 3)
+    )
+
+    matching = next(r for o, r in results if o.occurrence_key == key)
+    assert matching.source_published_at == published_at
