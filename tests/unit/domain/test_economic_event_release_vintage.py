@@ -93,3 +93,33 @@ def test_distinct_type_from_actual_value_vintage() -> None:
     # carries released_date/time and no number.
     assert not issubclass(EconomicEventReleaseVintage, EconomicEventActualValueVintage)
     assert not issubclass(EconomicEventActualValueVintage, EconomicEventReleaseVintage)
+
+
+# --- source_published_at (FX-52AH.1) ------------------------------------------
+
+
+def test_source_published_at_defaults_to_none() -> None:
+    vintage = _vintage()
+    assert vintage.source_published_at is None
+
+
+def test_source_published_at_is_independent_of_availability_and_released_at() -> None:
+    # Three genuinely distinct instants: when the source itself
+    # published this evidence, when THIS system could first know the
+    # release fact, and the release fact's own claimed instant --
+    # collapsing any two would misattribute provenance.
+    published_at = UtcTimestamp(datetime(2026, 9, 4, 9, 47, 53, tzinfo=UTC))
+    vintage = _vintage(
+        released_date=date(2026, 9, 4),
+        released_time=None,
+        availability=UtcTimestamp(datetime(2026, 9, 4, 10, 0, tzinfo=UTC)),
+        source_published_at=published_at,
+    )
+    assert vintage.source_published_at == published_at
+    assert vintage.source_published_at != vintage.availability
+    assert vintage.released_time is None  # unaffected by source_published_at existing
+
+
+def test_source_published_at_rejects_non_utc_timestamp() -> None:
+    with pytest.raises(TypeError, match="source_published_at"):
+        _vintage(source_published_at=datetime(2026, 9, 4, tzinfo=UTC))

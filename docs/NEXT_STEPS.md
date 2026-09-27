@@ -1577,6 +1577,49 @@ ingested or calculated; no event-risk score or trading rule was added;
 no Decision/Risk Engine integration was made; all of FX-52A's own
 successful behaviour is preserved unchanged.
 
+## FX-52AH.1: official calendar final timing & integrity patch (complete)
+
+A narrowly-scoped final integrity patch closing five specific gaps
+found after FX-52AH -- mirrors FX-51H.1's role relative to FX-51H.
+(1) Fixed a real timezone bug: `OnsScheduleSource` took `.date()`/
+`.time()` straight off `pub_date` (always UTC-normalized by
+`rss_parsing`) while claiming `schedule_timezone = "Europe/London"` --
+silently relabeling a UTC instant as London local time, wrong by
+London's own UTC offset for every item published during BST; fixed by
+explicitly converting to `Europe/London` before reading date/time
+components, with new BST- and GMT-dated regression tests proving the
+observation round-trips through `schedule_within_window` back to the
+original UTC instant. (2) `economic_event_source_mappings.
+occurrence_key` gains a genuine `FOREIGN KEY` onto `economic_event_
+occurrences.occurrence_key` (migration `ecdb152af0a8`) -- FX-52AH's
+own original design deliberately omitted this, but both ingestion use
+cases already commit `add_occurrence` before calling `record_mapping`
+(this repository layer commits after every statement), so the FK is
+safely satisfiable with no deferred-constraint machinery; verified a
+dangling `occurrence_key` insert now fails with a real FK violation.
+(3) `df99b7796566`'s downgrade now refuses (`RuntimeError`) when the
+mapping table is non-empty rather than silently discarding resolved
+cross-source identity, mirroring `76a4b23b2129`'s own guard (FX-51H.1
+precedent) -- verified by inserting a real mapping row and confirming
+the guard fires, leaving the schema untouched. (4) `source_published_at`
+is now genuinely persisted (a nullable column on `economic_event_
+release_vintages`, also migration `ecdb152af0a8`) rather than computed
+and silently discarded on every real poll, as it was after FX-52AH
+introduced the field but never carried it through. (5) All of FX-52AH's
+own behaviour preserved unchanged. Full deterministic suite: 1435
+passed (up from 1423), 4 `live_source`-deselected, same pre-existing
+Saturday-weekend live-OANDA-candle failures. Live-source validation run
+separately: 3 passing (ONS -- now exercising the corrected timezone
+conversion against the real live feed -- BoC schedule, BoC release), 1
+failing (BLS 403, unchanged, not a regression from this story). Both
+migrations verified up/down/up against live Postgres, including a
+manual guard-firing check with a real inserted mapping row. Full
+details in `docs/DECISIONS.md`'s FX-52AH.1 entry.
+
+**Per this story's own explicit stop instruction**: FX-52 remains
+DEFER, untouched; FX-53 remains BLOCKED; FX-54 has NOT been
+implemented.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53/FX-54 (gated, not started;
 FX-54 additionally still blocked on BLS's own unresolved 403 for any
@@ -1598,8 +1641,8 @@ economic-calendar provider integration, consensus/surprise ingestion,
 or event-risk trading rules — out of scope until explicitly assigned
 per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
 FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/FX-46/FX-46H/
-FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A/FX-52AH
-above are the explicitly-scoped exceptions (domain model, storage-integrity
+FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A/FX-52AH/
+FX-52AH.1 above are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -1616,12 +1659,13 @@ model, a hardening pass on that model's identity/release/timezone
 semantics, a final integrity patch closing two remaining validation/
 migration-safety gaps, a data-sourcing feasibility investigation for
 economic-calendar ingestion, official-source-only schedule/
-release-timing ingestion built on top of that model, and a hardening
+release-timing ingestion built on top of that model, a hardening
 pass correcting that ingestion's own occurrence-identity and
-source-safety semantics -- still no strategy, no decision logic, no
-"carry"/"expected rate" framing, no tradability claim, no commercial
-calendar provider, no consensus, no surprise, no event-risk scoring)
-and do not open the door to the rest
+source-safety semantics, and a final integrity patch closing a
+timezone bug plus three remaining schema/persistence gaps -- still no
+strategy, no decision logic, no "carry"/"expected rate" framing, no
+tradability claim, no commercial calendar provider, no consensus, no
+surprise, no event-risk scoring) and do not open the door to the rest
 of this phase. The same goes for the downstream epics not in this list
 at all (Decision Engine, Risk Engine, Paper Trading Execution,
 Performance Analytics, Shadow Trading) — none are part of the current

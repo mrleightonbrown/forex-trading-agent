@@ -141,6 +141,7 @@ def _release_observation(
     observed_at: UtcTimestamp,
     released_time: time | None = time(8, 30),
     source: str = _SOURCE,
+    source_published_at: UtcTimestamp | None = None,
 ) -> RawReleaseObservation:
     return RawReleaseObservation(
         source=source,
@@ -151,6 +152,7 @@ def _release_observation(
         released_timezone="America/New_York",
         observed_at=observed_at,
         raw_title="Test Release Evidence",
+        source_published_at=source_published_at,
     )
 
 
@@ -597,3 +599,34 @@ async def test_unmapped_release_indicator_is_reported(session: AsyncSession) -> 
     results = await use_case((observation,))
 
     assert results[0].disposition is ReleaseIngestionDisposition.UNMAPPED
+
+
+@pytest.mark.asyncio
+async def test_source_published_at_flows_through_ingestion_to_persisted_vintage(
+    session: AsyncSession,
+) -> None:
+    # FX-52AH.1: proves the full pipeline, not just the repository layer
+    # in isolation -- FX-52AH introduced source_published_at on the raw
+    # observation but the use case never carried it into the persisted
+    # vintage at all, so it was computed by every real adapter and then
+    # silently discarded on every real poll.
+    repo = SqlAlchemyEconomicEventRepository(session)
+    mapping_repo = SqlAlchemyEconomicEventSourceMappingRepository(session)
+    use_case = IngestOfficialCalendarRelease(repo, mapping_repo)
+    published_at = _ts(2026, 9, 2, 9, 47)
+    observation = _release_observation(
+        "rel5",
+        ("CAD_POLICY_RATE_DECISION",),
+        date(2026, 9, 2),
+        _ts(2026, 9, 2, 9, 50),
+        released_time=None,
+        source_published_at=published_at,
+    )
+
+    results = await use_case((observation,))
+
+    release = await repo.release_as_of(results[0].occurrence_key, _ts(2026, 9, 2, 10, 0))
+    assert release is not None
+    assert release.source_published_at == published_at
+    assert release.released_time is None
+    assert release.source_published_at != release.availability

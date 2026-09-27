@@ -74,6 +74,23 @@ class EconomicEventReleaseVintage:
             only if `availability` is `None`.
         source: free-form provenance label -- never branched on by
             domain logic.
+        source_published_at: when the SOURCE ITSELF said this evidence
+            was published/dated (e.g. an RSS `dc:date`), if the source
+            supplied one -- FX-52AH.1: a genuinely durable, independent
+            THIRD instant, distinct from both `availability` (when
+            THIS system could first know the fact) and any database
+            row-creation timestamp. Mirrors `RawReleaseObservation.
+            source_published_at`'s own docstring exactly; this is where
+            that value is actually persisted, since FX-52AH introduced
+            the field on the port-layer observation but never carried
+            it through into this vintage type or its own storage,
+            leaving it computed and then silently discarded on every
+            real poll. `None` when the source did not supply one, or
+            never interpreted as `released_time` regardless (FX-52AH's
+            own correction already established that a feed's generic
+            publication timestamp must never be promoted to the
+            claimed occurrence time without primary documentation
+            establishing that equivalence).
     """
 
     occurrence_key: str
@@ -84,6 +101,7 @@ class EconomicEventReleaseVintage:
     availability: UtcTimestamp | None
     availability_confidence: AvailabilityConfidence
     source: str
+    source_published_at: UtcTimestamp | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.occurrence_key, str) or not self.occurrence_key.strip():
@@ -105,3 +123,10 @@ class EconomicEventReleaseVintage:
         require_availability_consistency(self.availability, self.availability_confidence)
         if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError(f"source must be a non-empty string, got {self.source!r}")
+        if self.source_published_at is not None and not isinstance(
+            self.source_published_at, UtcTimestamp
+        ):
+            raise TypeError(
+                "source_published_at must be a UtcTimestamp or None, got "
+                f"{type(self.source_published_at).__name__}"
+            )

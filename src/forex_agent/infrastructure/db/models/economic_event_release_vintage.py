@@ -25,6 +25,12 @@ class EconomicEventReleaseVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     `availability` and a higher `revision_sequence` -- never an UPDATE
     of an existing one. Same identity/FK/consistency-check shape as
     `EconomicEventScheduleVintageRow`.
+
+    `source_published_at` (FX-52AH.1): a genuinely independent, nullable
+    column -- never reuses `availability` or `TimestampMixin`'s own
+    `created_at`/`updated_at`, which answer different questions (when
+    THIS system could know the fact / when this ROW itself was written)
+    from "when the source itself said it published this evidence."
     """
 
     __tablename__ = "economic_event_release_vintages"
@@ -58,3 +64,6 @@ class EconomicEventReleaseVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     availability: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     availability_confidence: Mapped[str] = mapped_column(String, nullable=False)
     source: Mapped[str] = mapped_column(String, nullable=False)
+    source_published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

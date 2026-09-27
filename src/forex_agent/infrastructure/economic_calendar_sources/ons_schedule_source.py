@@ -29,10 +29,26 @@ text (e.g. "GDP quarterly national accounts, UK: April to June 2026")
 -- source-established, not derived by this adapter's own arithmetic
 assumption (FX-52A Section 14). A title that does not match the known
 pattern yields `reference_period=None`, never a guess.
+
+FX-52AH.1: `item.pub_date` is always UTC-normalized by `rss_parsing`
+(`.astimezone(UTC)`), but this adapter claims `schedule_timezone =
+"Europe/London"`. The original version took `.date()`/`.time()`
+straight off that UTC value and labeled the result "Europe/London,"
+which silently relabels a UTC wall-clock instant as if it were already
+London local time -- wrong by exactly London's own UTC offset (0h
+during GMT, 1h during BST) whenever the two differ, and a real bug for
+every item published while the UK observes BST. `pub_date` is now
+explicitly converted to `Europe/London` (`.astimezone(ZoneInfo(...))`)
+BEFORE its date/time components are read, so `scheduled_date`/
+`scheduled_time` genuinely are what `schedule_timezone` claims them to
+be, and `schedule_within_window`'s own re-resolution back to UTC
+round-trips to the original instant regardless of which side of a
+DST transition the item falls on.
 """
 
 import re
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -58,6 +74,7 @@ _FEED_PARAMS = {
 _TIMEOUT_SECONDS = 30.0
 _SOURCE_NAME = "ONS_RSS"
 _SCHEDULE_TIMEZONE = "Europe/London"
+_SCHEDULE_ZONE = ZoneInfo(_SCHEDULE_TIMEZONE)
 
 _PATH_PREFIX_TO_INDICATORS: dict[str, tuple[str, ...]] = {
     "/economy/grossdomesticproductgdp/bulletins/quarterlynationalaccounts/": ("GBP_GDP_QOQ",),
@@ -123,13 +140,14 @@ class OnsScheduleSource:
             if indicator_keys is None:
                 unmapped_count += 1  # not a release series this registry covers
                 continue
+            local_pub_date = item.pub_date.astimezone(_SCHEDULE_ZONE)
             observations.append(
                 RawScheduleObservation(
                     source=_SOURCE_NAME,
                     external_event_id=item.guid,
                     indicator_keys=indicator_keys,
-                    scheduled_date=item.pub_date.date(),
-                    scheduled_time=item.pub_date.time(),
+                    scheduled_date=local_pub_date.date(),
+                    scheduled_time=local_pub_date.time(),
                     schedule_timezone=_SCHEDULE_TIMEZONE,
                     status=EconomicEventStatus.SCHEDULED,
                     observed_at=observed_at,

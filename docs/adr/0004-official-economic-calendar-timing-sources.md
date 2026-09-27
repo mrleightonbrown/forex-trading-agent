@@ -33,6 +33,21 @@ Bank of Canada's RSS `dc:date` is no longer promoted to exact
 sections below are left as first-pass historical record; treat the
 FX-52AH entry in `docs/DECISIONS.md` as authoritative.
 
+**FX-52AH.1 correction (2026-09-26):** the ONS schedule section below
+describes `scheduled_date`/`scheduled_time` as taken directly from
+`pubDate` -- this was a real bug, not merely an implementation detail:
+`pub_date` is always UTC-normalized by the shared RSS parser, and
+taking its date/time components directly while claiming
+`schedule_timezone = "Europe/London"` silently relabeled a UTC instant
+as London local time, wrong by London's own UTC offset whenever BST
+(UTC+1) is in effect. Fixed by explicitly converting to `Europe/London`
+before reading those components -- see `docs/DECISIONS.md`'s FX-52AH.1
+entry. That same entry also documents `economic_event_source_mappings.
+occurrence_key` gaining a real `FOREIGN KEY`, `df99b7796566`'s
+downgrade gaining a non-empty-table guard, and `source_published_at`
+becoming genuinely persisted (it was computed but silently discarded
+after FX-52AH introduced it).
+
 ## Context
 
 FX-52 (ADR 0003) DEFERRED because no investigated source could supply

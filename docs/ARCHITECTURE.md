@@ -990,7 +990,7 @@ rather than leaving that precondition purely as a documentation
 promise a real production database could silently violate. Full
 details in `docs/DECISIONS.md`'s FX-51H.1 entry.
 
-## Official economic calendar timing ingestion (FX-52A, hardened FX-52AH)
+## Official economic calendar timing ingestion (FX-52A, hardened FX-52AH/FX-52AH.1)
 
 Deliberately separate from -- and does not reopen -- FX-52's own DEFER
 verdict (ADR 0003): real ingestion of forward SCHEDULE timing and
@@ -1020,7 +1020,15 @@ EconomicEventSourceMappingRepository` (`get_occurrence_key`/
 `record_mapping`, backed by the `economic_event_source_mappings` table,
 migration `df99b7796566`) now holds the actual many-to-one mapping:
 many `(source, external_event_id, indicator_key)` triples can each
-independently resolve to the SAME `occurrence_key`. A single source
+independently resolve to the SAME `occurrence_key`. `occurrence_key`
+carries a genuine `FOREIGN KEY` onto `economic_event_occurrences.
+occurrence_key` (migration `ecdb152af0a8`, FX-52AH.1) -- FX-52AH's own
+original design deliberately omitted this FK, but both ingestion use
+cases already commit `add_occurrence` before calling `record_mapping`
+(this repository layer commits after every single statement), so the
+referenced row is always already durable by the time a mapping
+referencing it is inserted, and the FK needed no deferred-constraint
+machinery to be safely added. A single source
 item identifying more than one canonical indicator at once (BLS's
 "Employment Situation" release package -> `US_NONFARM_PAYROLLS` +
 `US_UNEMPLOYMENT_RATE`) gets one `occurrence_key` per indicator,
@@ -1087,14 +1095,44 @@ release instant. `dc:date` is preserved separately as
 `RawReleaseObservation.source_published_at`; `released_time` for BoC
 release evidence is always `None`, and `released_date` prefers the
 CBWiki "Central Bank RSS" schema's own `cb:news/cb:occurrenceDate`
-element when the feed carries it.
+element when the feed carries it. `source_published_at` is now
+genuinely durable (FX-52AH.1): a nullable `source_published_at` column
+on `economic_event_release_vintages` (migration `ecdb152af0a8`) --
+FX-52AH introduced the field on `RawReleaseObservation` but
+`IngestOfficialCalendarRelease` never carried it into the persisted
+vintage at all, so it was computed and then silently discarded on
+every real poll. Stored independently of `availability` (when THIS
+system could first know the fact) and independent of `TimestampMixin`'s
+own `created_at`/`updated_at` (when the row itself was written).
+
+**ONS's `pubDate` must be converted to `Europe/London` before its
+date/time components are read, never taken directly off the UTC-
+normalized value (FX-52AH.1).** `rss_parsing` always returns `pub_date`
+UTC-normalized; `OnsScheduleSource` originally took `.date()`/`.time()`
+straight off that value while claiming `schedule_timezone =
+"Europe/London"` -- silently relabeling a UTC wall-clock instant as
+London local time, wrong by London's own UTC offset for every item
+published during BST. Fixed by explicitly converting to
+`Europe/London` first. Regression tests cover both a BST- and a
+GMT-dated fixture, each proving the resulting observation round-trips
+through `schedule_within_window` back to the original UTC instant.
+
+**`df99b7796566`'s downgrade is now guarded against real data loss
+(FX-52AH.1).** Its original docstring reasoned that dropping a wholly
+new, independent table is always safe to reverse -- true of the schema
+shape, not of the data: once mappings exist, this table is the only
+record of which external identities have already been resolved to
+which occurrence, and dropping it silently discards that resolution
+history. `downgrade()` now refuses with a clear `RuntimeError` when the
+table is non-empty, mirroring `76a4b23b2129`'s own
+`_raise_if_downgrade_would_lose_data` guard (FX-51H.1 precedent).
 
 Full source-by-source verification (which fed sources were adopted,
 which were excluded and why, and the two real bugs/limitations found
 during this story's own required real-source validation step) is in
 `docs/adr/0004-official-economic-calendar-timing-sources.md`; the
-FX-52AH corrections above are recorded in full in `docs/DECISIONS.md`'s
-FX-52AH entry.
+FX-52AH/FX-52AH.1 corrections above are recorded in full in
+`docs/DECISIONS.md`'s own FX-52AH/FX-52AH.1 entries.
 
 **Live-source tests are isolated from ordinary CI (FX-52AH).** A
 `pytest.mark.live_source` marker plus `addopts -m "not live_source"`

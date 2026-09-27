@@ -201,6 +201,7 @@ class IngestOfficialCalendarRelease:
                 availability=observation.observed_at,
                 availability_confidence=AvailabilityConfidence.ESTIMATED,
                 source=f"{observation.source}:{observation.external_event_id}",
+                source_published_at=observation.source_published_at,
             )
         )
         return (
@@ -229,6 +230,13 @@ def _latest_release_by_revision(
 def _same_release_fact(
     latest: EconomicEventReleaseVintage, observation: RawReleaseObservation
 ) -> bool:
+    # Deliberately excludes source_published_at: it is provenance about
+    # WHEN the source said it published this evidence, not part of the
+    # release fact itself (released_date/released_time/
+    # released_timezone), so a poll that repeats the identical release
+    # fact but observes a marginally different source_published_at
+    # (e.g. a feed's own dc:date drifting by seconds between fetches)
+    # must not be treated as a correction (FX-52AH.1).
     return (
         latest.released_date == observation.released_date
         and latest.released_time == observation.released_time

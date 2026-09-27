@@ -9121,3 +9121,100 @@ own successful behaviour (prospective ESTIMATED availability,
 immutable schedule vintages, disappearance-is-not-cancellation,
 explicit status changes, no numeric actuals/consensus/surprise) is
 preserved unchanged.
+
+## 2026-09-26 — FX-52AH.1: official calendar final timing & integrity patch
+
+A final, narrowly-scoped integrity patch on FX-52AH, closing five
+specific gaps found after that story's own work -- mirrors FX-51H.1's
+role relative to FX-51H exactly (a tight, explicitly-scoped pass, not
+another full hardening story).
+
+**1. A real timezone bug in `OnsScheduleSource`, caught before it ever
+touched real ingestion.** `rss_parsing` always UTC-normalizes
+`pub_date` (`.astimezone(UTC)`), but the ONS adapter took `.date()`/
+`.time()` straight off that UTC-normalized value while claiming
+`schedule_timezone = "Europe/London"` -- silently relabeling a UTC
+wall-clock instant as London local time, wrong by exactly London's own
+UTC offset (0h during GMT, 1h during BST) for every item published
+while the UK observes BST. Fixed by explicitly converting `pub_date`
+to `Europe/London` (`.astimezone(ZoneInfo("Europe/London"))`) BEFORE
+reading its date/time components, so `scheduled_date`/`scheduled_time`
+genuinely are what `schedule_timezone` claims. Regression coverage adds
+both a BST-dated and a GMT-dated fixture, each proving the observation
+round-trips through `schedule_within_window` back to the exact original
+UTC instant `pubDate` claimed -- not just that the adapter's own output
+"looks plausible."
+
+**2. `economic_event_source_mappings.occurrence_key` gains a genuine
+`FOREIGN KEY`** onto `economic_event_occurrences.occurrence_key`
+(migration `ecdb152af0a8`). FX-52AH's own original design deliberately
+omitted this, reasoning that a mapping may be recorded in the same
+transaction as the occurrence it points to; that transaction-scoping
+concern turned out to be moot, since this repository layer commits
+after every single statement (never spanning a wider unit of work) and
+both ingestion use cases already call `add_occurrence` and let it
+commit BEFORE calling `record_mapping` -- so the referenced occurrence
+row is always already durably committed by the time a mapping row
+referencing it is inserted, and the FK is safely satisfiable with no
+deferred-constraint machinery. Verified directly: an attempted insert
+of a mapping row pointing at a non-existent `occurrence_key` now fails
+with a real `ForeignKeyViolationError`, which it did not before.
+
+**3. `df99b7796566`'s own downgrade is now guarded.** That migration's
+original docstring claimed downgrading it was "ordinary, unguarded
+table removal" since it is a wholly new, independent table -- true of
+the SCHEMA shape, but not of the DATA: once mappings exist, this table
+is the only place recording which external identities have already
+been resolved to which occurrence, and dropping it while non-empty
+would silently discard that resolution history (a future poll of an
+already-resolved external identity would have to re-run the date-match
+correlation heuristic from scratch, and could resolve differently, or
+not at all, the second time). `downgrade()` now refuses with a clear
+`RuntimeError` naming the row count when the table is non-empty,
+mirroring `76a4b23b2129`'s own `_raise_if_downgrade_would_lose_data`
+guard (FX-51H.1 precedent) exactly. Verified by manually inserting a
+real mapping row against the live dev database, confirming the
+downgrade attempt raised the expected error and left the schema at its
+prior revision untouched, then cleaning up and confirming a normal
+downgrade/upgrade cycle still works against an empty table.
+
+**4. `source_published_at` is now genuinely durable, not silently
+discarded.** FX-52AH introduced this field on `RawReleaseObservation`
+(the source's own claimed publication instant, e.g. an RSS `dc:date`)
+but never carried it any further -- `IngestOfficialCalendarRelease`
+computed it and then dropped it on the floor on every real poll, since
+neither `EconomicEventReleaseVintage` nor its own database table had
+anywhere to put it. Added `source_published_at: UtcTimestamp | None`
+to the domain type and a nullable `source_published_at` column to
+`economic_event_release_vintages` (migration `ecdb152af0a8`) --
+persisted independently of `availability` (when THIS system could
+first know the release fact) and independent of `TimestampMixin`'s own
+`created_at`/`updated_at` (when the row itself was written), per this
+story's own explicit preference. Deliberately excluded from
+`_same_release_fact`'s own equality check: it is provenance about the
+evidence, not part of the release fact itself, so a poll repeating an
+identical release fact with a marginally different
+`source_published_at` must not be treated as a correction.
+
+**5. All of FX-52AH's own behaviour preserved.** Provider-neutral
+occurrence identity, many-to-one source mappings, correlation ambiguity
+fail-closed with persistence of successful resolutions, malformed-
+response fail-closed handling at both ICS and RSS/RDF layers, caller-
+visible mapped/unmapped/invalid counts, and `live_source`-marked tests
+isolated from ordinary CI are all unchanged.
+
+**Verification**: full deterministic suite green (1435 passed, up from
+1423, 4 `live_source`-deselected; failures are exactly the same
+pre-existing, unrelated Saturday-weekend live-OANDA-candle set) --
+`ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean. Live-source validation run separately (`pytest
+-m live_source`): 3 passed (ONS -- now exercising the corrected
+timezone conversion against the real live feed -- BoC schedule, BoC
+release), 1 failed (BLS 403, unchanged, not a regression from this
+story). Both new migrations (`ecdb152af0a8`'s additive FK/column, and
+`df99b7796566`'s hardened downgrade guard) verified up/down/up against
+live Postgres, including a manual guard-firing check with a real
+inserted mapping row.
+
+Per this story's own explicit stop instruction: FX-52 remains DEFER,
+FX-53 remains BLOCKED, FX-54 has NOT been started.

@@ -594,6 +594,9 @@ def _release_row_values(vintage: EconomicEventReleaseVintage) -> dict[str, objec
         "availability": None if vintage.availability is None else vintage.availability.value,
         "availability_confidence": vintage.availability_confidence.value,
         "source": vintage.source,
+        "source_published_at": (
+            None if vintage.source_published_at is None else vintage.source_published_at.value
+        ),
     }
 
 
@@ -607,4 +610,7 @@ def _release_to_domain(row: EconomicEventReleaseVintageRow) -> EconomicEventRele
         availability=None if row.availability is None else UtcTimestamp(row.availability),
         availability_confidence=AvailabilityConfidence(row.availability_confidence),
         source=row.source,
+        source_published_at=(
+            None if row.source_published_at is None else UtcTimestamp(row.source_published_at)
+        ),
     )

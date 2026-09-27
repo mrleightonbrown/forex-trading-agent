@@ -167,6 +167,7 @@ def _release(
     availability: UtcTimestamp | None,
     released_timezone: str = "UTC",
     confidence: AvailabilityConfidence = AvailabilityConfidence.VERIFIED,
+    source_published_at: UtcTimestamp | None = None,
 ) -> EconomicEventReleaseVintage:
     return EconomicEventReleaseVintage(
         occurrence_key=occurrence_key,
@@ -177,6 +178,7 @@ def _release(
         availability=availability,
         availability_confidence=confidence,
         source="test_source",
+        source_published_at=source_published_at,
     )
 
 
@@ -459,6 +461,57 @@ async def test_release_time_independent_of_availability_time(session: AsyncSessi
     assert after_availability is not None
     assert after_availability.released_date == date(2026, 9, 4)
     assert after_availability.released_time == time(13, 30)
+
+
+@pytest.mark.asyncio
+async def test_source_published_at_persists_independently_of_availability_and_released_at(
+    session: AsyncSession,
+) -> None:
+    # FX-52AH.1: FX-52AH introduced source_published_at on the port-layer
+    # observation but never actually persisted it -- this proves it now
+    # durably round-trips through the real repository, distinct from
+    # both availability and released_date/released_time.
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}REL_PROV"
+    await repo.add_occurrence(_occurrence(key, reference_period=None))
+
+    published_at = _ts(2026, 9, 2, 9, 47)
+    release = _release(
+        key,
+        0,
+        date(2026, 9, 2),
+        None,
+        _ts(2026, 9, 2, 9, 50),
+        source_published_at=published_at,
+    )
+    outcome = await repo.add_release_vintage(release)
+    assert outcome is VintageWriteOutcome.INSERTED
+
+    fetched = await repo.release_as_of(key, _ts(2026, 9, 2, 10, 0))
+    assert fetched is not None
+    assert fetched.source_published_at == published_at
+    assert fetched.source_published_at != fetched.availability
+    assert fetched.released_time is None
+
+    all_vintages = await repo.list_all_release_vintages(key)
+    assert len(all_vintages) == 1
+    assert all_vintages[0].source_published_at == published_at
+
+
+@pytest.mark.asyncio
+async def test_source_published_at_defaults_to_none_when_source_supplies_none(
+    session: AsyncSession,
+) -> None:
+    repo = SqlAlchemyEconomicEventRepository(session)
+    key = f"{TEST_OCCURRENCE_PREFIX}REL_PROV_NONE"
+    await repo.add_occurrence(_occurrence(key, reference_period=_ts(2026, 9, 4)))
+
+    release = _release(key, 0, date(2026, 9, 4), time(13, 30), _ts(2026, 9, 6, 9, 0))
+    await repo.add_release_vintage(release)
+
+    fetched = await repo.release_as_of(key, _ts(2026, 9, 6, 10, 0))
+    assert fetched is not None
+    assert fetched.source_published_at is None
 
 
 @pytest.mark.asyncio

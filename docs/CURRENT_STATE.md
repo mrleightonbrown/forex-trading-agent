@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-52AH)_
+_Last updated: 2026-09-26 (FX-52AH.1)_
 
 ## What exists
 
@@ -1403,12 +1403,42 @@ _Last updated: 2026-09-26 (FX-52AH)_
   Full deterministic suite: 1423 passed, 4 `live_source`-deselected;
   failures are exactly the pre-existing, unrelated Saturday-weekend
   live-OANDA-candle set. Full details in `docs/DECISIONS.md`'s FX-52AH
-  entry. **Stop after FX-52AH -- FX-52 remains DEFER (untouched); FX-53
-  remains BLOCKED; FX-54 has NOT been implemented; all of FX-52A's own
-  successful behaviour (prospective ESTIMATED availability, immutable
-  schedule vintages, disappearance-is-not-cancellation, explicit status
-  changes, no numeric actuals/consensus/surprise) is preserved
-  unchanged.**
+  entry.
+- **FX-52AH.1: official calendar final timing & integrity patch
+  (complete)**. A narrowly-scoped final patch closing five gaps found
+  after FX-52AH. (1) Fixed a real timezone bug: `OnsScheduleSource`
+  took `.date()`/`.time()` straight off `pub_date` (always
+  UTC-normalized by `rss_parsing`) while claiming `schedule_timezone =
+  "Europe/London"` -- silently relabeling a UTC instant as London local
+  time, wrong by London's UTC offset for every item published during
+  BST; fixed by explicitly converting to `Europe/London` first, with
+  new BST- and GMT-dated regression tests proving the round-trip
+  through `schedule_within_window` back to the original UTC instant.
+  (2) `economic_event_source_mappings.occurrence_key` gains a genuine
+  `FOREIGN KEY` onto `economic_event_occurrences.occurrence_key`
+  (migration `ecdb152af0a8`) -- safely addable with no deferred-
+  constraint machinery since this repository layer always commits
+  `add_occurrence` before `record_mapping` runs; verified a dangling
+  `occurrence_key` insert now fails with a real FK violation. (3)
+  `df99b7796566`'s downgrade now refuses (`RuntimeError`) when the
+  mapping table is non-empty, mirroring `76a4b23b2129`'s own guard
+  (FX-51H.1 precedent) -- verified by inserting a real mapping row and
+  confirming the guard fires and the schema is left untouched. (4)
+  `source_published_at` is now genuinely persisted: a nullable column
+  on `economic_event_release_vintages` (also migration `ecdb152af0a8`)
+  -- FX-52AH introduced this field on `RawReleaseObservation` but the
+  ingestion use case never carried it into the persisted vintage,
+  silently discarding it on every real poll. (5) All of FX-52AH's own
+  behaviour preserved unchanged. Full deterministic suite: 1435 passed
+  (up from 1423), 4 `live_source`-deselected, same pre-existing
+  Saturday-weekend live-OANDA-candle failures. Live-source validation
+  run separately: 3 passing (ONS -- now exercising the corrected
+  timezone conversion against the real live feed -- BoC schedule, BoC
+  release), 1 failing (BLS 403, unchanged). Both migrations verified
+  up/down/up against live Postgres, including a manual guard-firing
+  check. Full details in `docs/DECISIONS.md`'s FX-52AH.1 entry. **Stop
+  after FX-52AH.1 -- FX-52 remains DEFER (untouched); FX-53 remains
+  BLOCKED; FX-54 has NOT been implemented.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
