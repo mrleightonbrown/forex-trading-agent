@@ -990,6 +990,73 @@ rather than leaving that precondition purely as a documentation
 promise a real production database could silently violate. Full
 details in `docs/DECISIONS.md`'s FX-51H.1 entry.
 
+## Official economic calendar timing ingestion (FX-52A)
+
+Deliberately separate from -- and does not reopen -- FX-52's own DEFER
+verdict (ADR 0003): real ingestion of forward SCHEDULE timing and
+positive RELEASE-occurrence evidence from OFFICIAL government/central-
+bank sources only, with no consensus and no numeric actual values.
+Three layers, kept deliberately distinct (`infrastructure.economic_
+calendar_sources.ics_parsing`/`rss_parsing` module docstrings):
+source-specific PARSING (a minimal, dependency-free ICS parser and a
+combined RSS-2.0/RDF-RSS-1.0 parser, both stdlib-only), CANONICAL
+MAPPING (each adapter's own explicit summary/title/URL-path table,
+never fuzzy matching), and REPOSITORY PERSISTENCE (the two FX-52A use
+cases below, built entirely on FX-51/FX-51H/FX-51H.1's existing
+`EconomicEventRepository`).
+
+**Occurrence identity is a pure, deterministic function, not a
+persisted mapping table.** `domain.economic_calendar_occurrence_
+identity.build_occurrence_key(source, external_event_id,
+indicator_key)` always returns the same string for the same real-world
+occurrence, regardless of what its schedule currently says -- this
+still satisfies FX-51H's "provider IDs must never replace canonical
+occurrence identity" (the result is this project's own namespaced
+string, never the bare external ID) while needing no new database
+table or migration. A single source item identifying more than one
+canonical indicator at once (BLS's "Employment Situation" release
+package -> `US_NONFARM_PAYROLLS` + `US_UNEMPLOYMENT_RATE`) gets one
+`occurrence_key` per indicator, sharing one `release_group_key`
+(`build_release_group_key`, keyed by source item only, never by
+indicator) -- FX-51's own grouping contract, exercised for real here
+for the first time.
+
+**Two use cases, one per vintage kind, sharing no code but the same
+change-detection shape**: `application.use_cases.ingest_official_
+calendar_schedule.IngestOfficialCalendarSchedule` and `...ingest_
+official_calendar_release.IngestOfficialCalendarRelease`. Each compares
+a newly observed fact against the occurrence's own latest known
+vintage and writes a new one ONLY when something genuinely differs --
+repeated identical polls are idempotent by construction, not merely by
+relying on a database conflict exception. Cancellation/postponement
+are represented exactly as a source's own `RawScheduleObservation.
+status` claims; an item simply absent from the current poll is left
+completely untouched (never inferred as cancelled) because these use
+cases only ever act on observations they were actually given.
+
+**Availability is always the adapter's own retrieval instant, at
+`AvailabilityConfidence.ESTIMATED`** -- FX-52A is prospective-
+collection-only: this project has no way to know when a government
+first published a schedule that has been public for months, so
+"when THIS system first observed it" is the only defensible anchor,
+never backdated to the schedule's own claimed date.
+
+**Release/schedule cross-source correlation is a documented, date-
+based heuristic, not a guess at content.** Bank of Canada's schedule
+feed (ICS) and press-release feed (RSS) are two independent feeds with
+two independent external IDs for the same real announcement;
+`IngestOfficialCalendarRelease` searches existing occurrences of the
+same canonical indicator for one whose latest known schedule falls on
+the SAME calendar date as the release evidence, attaching there
+instead of creating a duplicate occurrence -- with no match (true for
+any source that has release evidence but no adopted schedule feed at
+all), it creates one lazily instead.
+
+Full source-by-source verification (which fed sources were adopted,
+which were excluded and why, and the two real bugs/limitations found
+during this story's own required real-source validation step) is in
+`docs/adr/0004-official-economic-calendar-timing-sources.md`.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

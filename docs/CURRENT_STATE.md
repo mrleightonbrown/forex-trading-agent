@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-26 (FX-52)_
+_Last updated: 2026-09-26 (FX-52A)_
 
 ## What exists
 
@@ -1330,6 +1330,44 @@ _Last updated: 2026-09-26 (FX-52)_
   reopening conditions; no commercial data subscription or trial
   requiring payment was started; no calendar provider was integrated;
   no production ingestion code was written.**
+- **FX-52A: official economic calendar timing ingestion (complete)**.
+  Deliberately separate from, and does not reopen, FX-52's own DEFER
+  (unchanged) -- real, OFFICIAL-source-only ingestion of forward
+  SCHEDULE timing and positive RELEASE-occurrence evidence, no
+  consensus, no numeric actual values. This project's fourth ADR:
+  `docs/adr/0004-official-economic-calendar-timing-sources.md`. Four
+  sources adopted after re-verifying every ADR-0003 lead directly
+  against its own live feed: BLS's public ICS feed (US CPI +
+  Employment Situation, the latter split into `US_NONFARM_PAYROLLS`/
+  `US_UNEMPLOYMENT_RATE` sharing one `release_group_key`); ONS's public
+  RSS feed (UK, `GBP_GDP_QOQ` only); Bank of Canada's public ICS
+  schedule feed AND its separate public press-release feed (CAD,
+  `CAD_POLICY_RATE_DECISION`, both schedule and release evidence). Five
+  sources explicitly excluded with a documented reason each (BEA: no
+  stable ID/reference-period signal; Eurostat: real iCal mechanism but
+  no stable static URL discoverable -- EUR has ZERO FX-52A coverage;
+  ECB: still HTML-only/no timezone; BoE: no forward feed, though its
+  general news RSS has a clean release-evidence pattern deferred to a
+  follow-up increment; StatCan: HTTP 500 on every fetch). Occurrence
+  identity (`domain.economic_calendar_occurrence_identity.
+  build_occurrence_key`) is a pure, deterministic function of
+  `(source, external_event_id, indicator_key)` -- no persisted mapping
+  table, no new migration. Two real, confirmed findings from this
+  story's own required live-source validation (not from unit tests
+  against synthetic fixtures): a Bank-of-Canada redirect that an
+  earlier version silently mishandled as an empty successful result
+  (fixed: `follow_redirects=True` on every adapter); and BLS's own
+  feed returning HTTP 403 to a plain server-side request even with
+  realistic browser headers -- confirmed NOT a parsing/licensing issue,
+  left as an honestly-failing, documented live test rather than hidden.
+  73 new tests (parsers, occurrence identity, registry, 4 mocked-HTTP
+  adapter suites, 16 live-Postgres integration tests, 4 real-source
+  validation tests -- 3 passing, 1 honestly failing per the BLS
+  finding). 1411 tests pass overall. Full details in
+  `docs/DECISIONS.md`'s FX-52A entry. **Stop after FX-52A -- FX-52
+  remains DEFER (untouched); FX-53 remains BLOCKED; FX-54 has NOT been
+  implemented; no consensus, numeric actual value, or surprise was
+  ingested/calculated; no event-risk score or trading rule was added.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

@@ -1485,6 +1485,63 @@ was populated; no production ingestion code, HTTP client, provider-
 mapping table, canonical indicator registry instance, or migration was
 written.
 
+## FX-52A: official economic calendar timing ingestion (complete)
+
+Deliberately separate from FX-52 -- does NOT reopen or weaken FX-52's
+own DEFER (ADR 0003, unchanged). Real, OFFICIAL-source-only ingestion
+of forward SCHEDULE timing and positive RELEASE-occurrence evidence:
+no consensus, no numeric actual values, no commercial provider. This
+project's fourth ADR: `docs/adr/0004-official-economic-calendar-
+timing-sources.md`.
+
+Four sources adopted after re-verifying every ADR-0003 lead directly
+against its own live feed: BLS's public ICS schedule feed (US CPI +
+Employment Situation, the latter split into `US_NONFARM_PAYROLLS`/
+`US_UNEMPLOYMENT_RATE` sharing one `release_group_key` -- this story's
+own worked release-package-split demonstration); ONS's public RSS
+schedule feed (UK, `GBP_GDP_QOQ` only -- the one release series
+directly confirmed against a real live item); Bank of Canada's public
+ICS schedule feed AND its separate public press-release feed (CAD,
+`CAD_POLICY_RATE_DECISION`, both schedule and release evidence). Five
+sources explicitly excluded, each for a different documented reason:
+BEA (no stable ID, no reference-period signal); Eurostat (a real
+iCalendar mechanism exists but its actual URL is client-side-button-
+generated with no stable static URL discoverable -- EUR therefore has
+ZERO FX-52A coverage, an honestly-reported gap, not an oversight); ECB
+(still HTML-only, no timezone); Bank of England (no forward feed,
+though its general news RSS has a clean, matchable release-evidence
+title pattern -- the most immediately actionable follow-up increment,
+deferred purely for story-budget reasons); Statistics Canada (HTTP 500
+on every fetch attempt).
+
+Occurrence identity (`domain.economic_calendar_occurrence_identity.
+build_occurrence_key`) is a pure, deterministic function of `(source,
+external_event_id, indicator_key)` -- no persisted mapping table, no
+new migration. Two real, confirmed findings surfaced by this story's
+own REQUIRED real-source validation (Section 43), neither of which
+synthetic-fixture unit tests could have caught: (1) Bank of Canada's
+schedule feed 301-redirects, and an earlier version silently
+"succeeded" while parsing an empty redirect body -- fixed with
+`follow_redirects=True` on every adapter; (2) BLS's own feed returns
+HTTP 403 to a plain server-side request even with realistic browser
+headers -- confirmed NOT a parsing/licensing problem, left as an
+honestly-FAILING, documented live test rather than hidden, matching
+this project's own existing weekend-market-closure-OANDA-test
+precedent. The BLS adapter must not be used for real ingestion until
+this is resolved.
+
+73 new tests (parsers, occurrence-identity helper, indicator registry,
+4 mocked-HTTP adapter suites, 16 live-Postgres integration tests, 4
+real-source validation tests -- 3 passing, 1 honestly failing per the
+BLS finding). 1411 tests pass overall. Full details in
+`docs/DECISIONS.md`'s FX-52A entry.
+
+**Per this story's own explicit stop instruction**: FX-52 remains
+DEFER, untouched; FX-53 remains BLOCKED; FX-54 has NOT been
+implemented; no consensus, numeric actual value, or surprise was
+ingested or calculated; no event-risk score or trading rule was added;
+no Decision/Risk Engine integration was made.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53/FX-54 (gated, not started),
 FX-50 (gated on FX-49's own reopening conditions, not started), the
@@ -1493,39 +1550,43 @@ proposed overnight-benchmark-rate-differential ingestion from FX-48
 mechanism need noted above (not yet needed, not yet built), the 18
 still-provisional pre-2006 EUR change points, the 8 USD/6 GBP/3 CAD
 known-irregular dates left unresolved, JPY provider mapping, the
-pre-2009 CAD gap, or any carry-strategy/tradability work (explicitly
-out of scope for FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49's own research,
-per FX-46's own section 14).
+pre-2009 CAD gap, the documented BoE-news-RSS follow-up increment or
+any other FX-52A coverage extension, or any carry-strategy/
+tradability work (explicitly out of scope for FX-46/FX-46H/FX-47/
+FX-47H/FX-48/FX-49's own research, per FX-46's own section 14).
 
 Do not start news intelligence, AI decision-making, rate-differential/
-carry TRADING strategies, execution logic, live trading, economic-
-calendar provider integration, or event-risk trading rules — out of
-scope until explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/
-FX-42H/FX-42H.1/FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/
-FX-45H/FX-45H.1/FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/
-FX-51H.1/FX-52 above are the explicitly-scoped exceptions (domain
-model, storage-integrity hardening, canonical registry/provider-
-mapping definitions, real policy-rate ingestion, hardening and
-correction rounds, genuine release-timing verification, a
-deterministic, auditable, scoring-free policy-rate differential
-feature plus two rounds of its own point-in-time hardening, one
-pre-registered, honestly-reported RESEARCH experiment against it, a
-correction to that experiment's own bootstrap validity and artifact
-reproducibility, a pure attribution cross-reference against existing
-technical strategies, a correction to that cross-reference's own
-inferential methodology and provenance, a data-sourcing feasibility
-investigation for tradable carry, a data-sourcing feasibility
-investigation for rate expectations, a provider-neutral point-in-time
-economic-event domain/persistence model, a hardening pass on that
-model's identity/release/timezone semantics, a final integrity patch
-closing two remaining validation/migration-safety gaps, and a
-data-sourcing feasibility investigation for economic-calendar
-ingestion -- still no strategy, no decision logic, no "carry"/
-"expected rate" framing, no tradability claim, no calendar provider,
-no event-risk scoring) and do not open the door to the rest of this
-phase. The same goes for the downstream epics not in this list at all
-(Decision Engine, Risk Engine, Paper Trading Execution, Performance
-Analytics, Shadow Trading) — none are part of the current phase.
+carry TRADING strategies, execution logic, live trading, commercial
+economic-calendar provider integration, consensus/surprise ingestion,
+or event-risk trading rules — out of scope until explicitly assigned
+per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
+FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/FX-46/FX-46H/
+FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A above are
+the explicitly-scoped exceptions (domain model, storage-integrity
+hardening, canonical registry/provider-mapping definitions, real
+policy-rate ingestion, hardening and correction rounds, genuine
+release-timing verification, a deterministic, auditable, scoring-free
+policy-rate differential feature plus two rounds of its own
+point-in-time hardening, one pre-registered, honestly-reported RESEARCH
+experiment against it, a correction to that experiment's own bootstrap
+validity and artifact reproducibility, a pure attribution
+cross-reference against existing technical strategies, a correction to
+that cross-reference's own inferential methodology and provenance, a
+data-sourcing feasibility investigation for tradable carry, a
+data-sourcing feasibility investigation for rate expectations, a
+provider-neutral point-in-time economic-event domain/persistence
+model, a hardening pass on that model's identity/release/timezone
+semantics, a final integrity patch closing two remaining validation/
+migration-safety gaps, a data-sourcing feasibility investigation for
+economic-calendar ingestion, and official-source-only schedule/
+release-timing ingestion built on top of that model -- still no
+strategy, no decision logic, no "carry"/"expected rate" framing, no
+tradability claim, no commercial calendar provider, no consensus, no
+surprise, no event-risk scoring) and do not open the door to the rest
+of this phase. The same goes for the downstream epics not in this list
+at all (Decision Engine, Risk Engine, Paper Trading Execution,
+Performance Analytics, Shadow Trading) — none are part of the current
+phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
