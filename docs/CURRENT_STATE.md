@@ -1584,12 +1584,15 @@ _Last updated: 2026-09-27 (FX-54V)_
   and its speeches feed carries future-dated entries, both
   independently reconfirming FX-52AH's own prior decision not to trust
   BoC RSS `dc:date` as an exact `released_time`. No source anywhere
-  investigated exposes a directly verifiable ingestion timestamp except
-  GOV.UK -- first-seen/retrieval time remains the default FTA
-  availability anchor everywhere else, consistent with FX-51-54's own
-  PIT discipline. No purchase, paid trial, credential signup, or
-  scraping past any bot-protection/robots.txt/terms boundary was
-  performed anywhere in this research; where a publisher's own
+  investigated exposes a directly verifiable ingestion timestamp --
+  **corrected by FX-55H: not even GOV.UK is an exception; FTA
+  availability is always FTA's own `first_seen_at`, with no source
+  ever exempt** (this bullet's own original wording granted GOV.UK an
+  exception, which was wrong -- see below). First-seen/retrieval time
+  is the default FTA availability anchor everywhere, consistent with
+  FX-51-54's own PIT discipline. No purchase, paid trial, credential
+  signup, or scraping past any bot-protection/robots.txt/terms boundary
+  was performed anywhere in this research; where a publisher's own
   `robots.txt` named this project's agent class with `Disallow: /`
   (InvestingLive), that boundary was honored without argument. No
   production code, schema, migration, or dependency change of any
@@ -1599,6 +1602,44 @@ _Last updated: 2026-09-27 (FX-54V)_
   exactly the adopted source set and assumptions ADR 0005 states; no
   news ingestion, deduplication, classification, sentiment, dashboard,
   or Decision/Risk-Engine work was started.**
+- **FX-55H: News source PIT & admission semantics hardening
+  (complete, documentation-only)**. A correction pass on FX-55/ADR
+  0005, performed before starting FX-56, mirroring FX-52AH's own
+  role correcting FX-52A. Corrected a wrong PIT-anchor exception that
+  let GOV.UK's `first_published_at` stand in for FTA's own
+  availability anchor -- FTA availability is now stated, without
+  exception, as FTA's own `first_seen_at` for every source, with
+  GOV.UK's own rich metadata (`first_published_at`/`public_updated_at`/
+  `updated_at`/`change_history`/`withdrawn_notice`) preserved as
+  verified SOURCE provenance, never as a substitute anchor. Corrected
+  parallel BoC wording that presented a verified Toronto-local
+  reinterpretation of `dc:date` as an *alternative* to first-seen time
+  rather than as separate source provenance to store alongside the
+  raw, as-received (malformed) `dc:date` string. Corrected three
+  source-admission statuses whose own unresolved critical rights
+  property had been collapsed into an ADOPT verdict: BEA
+  (ADOPT_PROSPECTIVE -> DEFER, reuse rights UNKNOWN), the ECB's bulk
+  speeches CSV (ADOPT_HISTORICAL -> a new **DEFER_HISTORICAL** label,
+  author-attribution carve-out ambiguity), and GOV.UK's own Search API
+  (implicit ADOPT_HISTORICAL -> DEFER, own terms/rate limits
+  unverified separately from the Content API's). Gave GDELT one
+  canonical disposition, a new **ADOPT_AUXILIARY_METADATA** label,
+  and explicitly excluded it from FX-56's initial text-bearing source
+  set everywhere ADR 0005 previously implied otherwise. Restored the
+  initial baseline test result (1601 passed, 1 failed, 4 deselected)
+  alongside a same-session retry (1602 passed, 0 failed, 4 deselected,
+  the live-OANDA failure did not reproduce) rather than letting the
+  retry silently overwrite the first result in the record. **PARTIAL_GO
+  verdict and the core adopted set (Fed, ECB press feed, Bank of
+  England, GOV.UK Content API, Statistics Canada, Bank of Canada
+  press releases with mandatory timestamp handling) are unchanged.**
+  No production code, schema, migration, dependency, or vendor-contact
+  change of any kind. Full details in `docs/DECISIONS.md`'s FX-55H
+  entry and inline throughout ADR 0005 itself. **Stop after FX-55H --
+  FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; FX-56 may begin,
+  scoped to ADR 0005's own now-corrected adopted-source set and
+  assumptions; no FX-56 implementation, news ingestion, or vendor
+  outreach was started.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

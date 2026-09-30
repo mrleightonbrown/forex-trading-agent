@@ -1334,7 +1334,7 @@ registry, deliberately not a domain concept.
 **No new migration, no schema change** -- every view is computed on
 request. Full details in `docs/DECISIONS.md`'s own FX-54V entry.
 
-## News Intelligence source feasibility (FX-55, FX-EPIC-08's first story)
+## News Intelligence source feasibility (FX-55, hardened FX-55H, FX-EPIC-08's first story)
 
 **FX-EPIC-08 ("News Intelligence") is now started, and FX-55 is
 documentation-only** -- no domain type, no persistence, no adapter, no
@@ -1359,7 +1359,10 @@ rights, stable item identity, publication/update/correction semantics,
 cost, and rate limits -- as VERIFIED/PARTIALLY_VERIFIED/UNKNOWN/
 UNSUITABLE strictly from each vendor's own primary documentation, then
 gave each source an independent ADOPT_PROSPECTIVE/ADOPT_HISTORICAL/
-DEFER/REJECT verdict. No purchase, paid trial, credential signup, or
+DEFER/REJECT verdict -- refined by FX-55H into two axis-specific labels,
+DEFER_HISTORICAL and ADOPT_AUXILIARY_METADATA, once the initial pass's
+own admission calls were re-examined against its own rule that an
+unresolved critical rights property blocks ADOPT status. No purchase, paid trial, credential signup, or
 sales contact was made; no HTML scraping was performed past any
 bot-protection/WAF/robots.txt boundary, and where a publisher's own
 `robots.txt` named this project's agent class with `Disallow: /`
@@ -1381,31 +1384,56 @@ THINK, others) currently clears the rights/PIT/identity bar --
 every one is either commercially gated with no public price/terms, or
 blocked by an explicit rights conflict a written vendor clarification
 could resolve (prepared in the ADR, deliberately not sent). GDELT's
-bulk metadata channel is the sole exception with unrestricted,
-fee-free rights, but it structurally carries no headline or article
-text, so it complements rather than replaces a text-bearing source.
+bulk metadata channel is rights-clear (unrestricted, fee-free) but
+structurally carries no headline or article text at all, so it is
+classified **ADOPT_AUXILIARY_METADATA and explicitly excluded from the
+text-bearing adopted set** (corrected by FX-55H -- an earlier draft of
+this ADR called it "the sole exception," which wrongly implied parity
+with the text-bearing official sources above it).
 
-**Point-in-time consequence for any future ingestion story**: no
-source investigated -- across all four classes -- exposes a directly
-verifiable ingestion/first-seen timestamp except GOV.UK's Content API
-(`first_published_at`). First-seen/retrieval time is therefore the
-required default FTA availability anchor everywhere else, exactly
-extending FX-51-54's own PIT discipline into this new evidence
-category; every provider-stated publication timestamp must be
-persisted as a separate, non-authoritative field. Two independently
+**Point-in-time consequence for any future ingestion story, corrected
+by FX-55H**: no source investigated -- across all four classes,
+GOV.UK's Content API included -- exposes FTA's own directly verifiable
+ingestion/first-seen timestamp; only FTA's own retrieval process can
+produce that value. **FTA availability is therefore FTA's own
+`first_seen_at` for every source, without exception** -- an earlier
+draft of this ADR treated GOV.UK's `first_published_at` as usable
+directly as the availability anchor, which conflated a well-verified
+SOURCE-side publication claim with FTA's own observation time and has
+been withdrawn; see ADR 0005's own "FTA availability invariant"
+section. Every provider-stated publication timestamp must be
+persisted as a separate, non-authoritative field, extending FX-51-54's
+own PIT discipline into this new evidence category. Two independently
 confirmed timestamp defects were found and must be handled by adapter
 code, never trusted directly, if their sources are ever ingested: ONS
 publishes a date-midnight artifact roughly eight hours off its true
 release instant, and the Bank of Canada's `dc:date` mislabels
 America/Toronto local time as `+00:00` -- the latter independently
 reconfirming FX-52AH's own prior decision not to promote BoC RSS
-`dc:date` to an exact `released_time`.
+`dc:date` to an exact `released_time`. A verified Toronto-local
+reinterpretation of BoC's `dc:date`, where produced, is SOURCE
+provenance to store alongside -- never instead of -- FTA's own
+`first_seen_at` and the raw, as-received `dc:date` string.
+
+FX-55H also corrected three source-admission statuses that had
+collapsed an unresolved critical rights property into an ADOPT
+verdict: BEA's news feed (ADOPT_PROSPECTIVE -> **DEFER**, reuse rights
+UNKNOWN), the ECB's bulk speeches CSV (ADOPT_HISTORICAL ->
+**DEFER_HISTORICAL**, author-attribution carve-out ambiguity), and
+GOV.UK's own Search API (implicit ADOPT_HISTORICAL -> **DEFER**, its
+own terms/rate limits unverified separately from the Content API's).
+The core adopted set -- Fed, ECB press feed, Bank of England, GOV.UK
+Content API, Statistics Canada, Bank of Canada press releases -- is
+unchanged by these corrections.
 
 FX-56 (Point-in-Time News Evidence Model) may begin, scoped exactly to
 ADR 0005's own stated adopted-source set and assumptions -- see that
 ADR's "FX-56 readiness" section for the complete list of what may and
-may not yet be assumed. Full details in `docs/DECISIONS.md`'s own
-FX-55 entry.
+may not yet be assumed, including its own five-concept timestamp model
+(FTA `first_seen_at`; source published time; source updated time;
+source revision/correction metadata; raw provider provenance) that
+FX-55H introduced to keep those facts from ever being conflated. Full
+details in `docs/DECISIONS.md`'s own FX-55 and FX-55H entries.
 
 ## Current state
 

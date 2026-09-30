@@ -1,18 +1,41 @@
-# ADR 0005: News Intelligence Source Feasibility and Rights (FX-55)
+# ADR 0005: News Intelligence Source Feasibility and Rights (FX-55, hardened FX-55H)
 
 ## Status
 
-**Accepted -- 2026-09-29.**
+**Accepted -- 2026-09-29. Hardened -- 2026-09-29 (FX-55H).**
 
-**NEWS SOURCE FEASIBILITY VERDICT: PARTIAL_GO.** A bounded,
-rights-clear prospective news-evidence source set is viable today
-using official/primary sources only (see "Decision" below); no
-general financial news provider, commercial news API/aggregator, or
-dedicated FX-commentary publisher currently clears this project's
-rights/PIT/identity bar. This mirrors FX-52A's own official-source-only
-precedent after FX-52's commercial DEFER. **FX-56 may begin**, scoped
-to the adopted source set and assumptions stated in this ADR's own
-"FX-56 readiness" section.
+**NEWS SOURCE FEASIBILITY VERDICT: PARTIAL_GO (unchanged by FX-55H).**
+A bounded, rights-clear prospective news-evidence source set is viable
+today using official/primary, text-bearing sources only (see
+"Decision" below); no general financial news provider, commercial
+news API/aggregator, or dedicated FX-commentary publisher currently
+clears this project's rights/PIT/identity bar. This mirrors FX-52A's
+own official-source-only precedent after FX-52's commercial DEFER.
+**FX-56 may begin**, scoped to the adopted source set and assumptions
+stated in this ADR's own "FX-56 readiness" section.
+
+**FX-55H correction summary** (documentation-only, no code/schema
+touched; full detail inline throughout this ADR, in the "FTA
+availability invariant" section, and in `docs/DECISIONS.md`'s FX-55H
+entry): (1) corrected a wrong PIT exception that let GOV.UK's
+`first_published_at` stand in for FTA's own availability anchor --
+FTA availability is now stated, without exception, as FTA's own
+`first_seen_at` for every source; (2) corrected BoC wording that
+presented a Toronto-local `dc:date` reinterpretation as an alternative
+to first-seen time rather than as separate source provenance to
+preserve alongside the raw value; (3) corrected three source admission
+statuses whose unresolved critical rights properties had been
+collapsed into an ADOPT verdict -- BEA (ADOPT_PROSPECTIVE -> DEFER),
+ECB's bulk speeches CSV (ADOPT_HISTORICAL -> DEFER_HISTORICAL), and
+GOV.UK's Search API (implicit ADOPT_HISTORICAL -> DEFER); (4) gave
+GDELT one canonical disposition, ADOPT_AUXILIARY_METADATA, and
+excluded it from FX-56's initial text-bearing source set everywhere
+this document previously implied otherwise; (5) restated FX-56
+readiness to reflect all of the above. The core adopted prospective
+set -- Fed, ECB press feed, Bank of England, GOV.UK Content API,
+Statistics Canada, and Bank of Canada press releases (with mandatory
+timestamp handling) -- is unchanged, as are FX-49 (DEFER), FX-52
+(DEFER), and FX-53 (BLOCKED).
 
 ## Context
 
@@ -83,6 +106,77 @@ own `robots.txt` named this project's own agent class with `Disallow:
 /`, that boundary was honored without argument and no further content
 paths on that domain were probed.
 
+## FTA availability invariant (corrected by FX-55H)
+
+FX-55's own initial pass treated GOV.UK's `first_published_at` as an
+exception to the availability-anchor rule ("may be used as the anchor
+instead") and treated a corrected Toronto-local reinterpretation of
+BoC's `dc:date` as an alternative anchor to first-seen time. **Both
+were wrong and are corrected here, project-wide, superseding every
+conflicting sentence elsewhere in this document.**
+
+**FTA availability is always FTA's own `first_seen_at`/retrieval
+timestamp -- the instant FTA's own ingestion process actually observed
+the item -- for every prospectively collected news item from every
+source, with NO exception.** A source's own publication timestamp,
+however well-documented or directly verifiable, however precisely it
+appears to describe when the SOURCE published something, is never a
+substitute for FTA's own observation time. This holds even for GOV.UK's
+`first_published_at`, the single most authoritative SOURCE-side
+publication timestamp found in this entire ADR: it tells us when
+GOV.UK itself asserts the item was published, never when FTA itself
+first saw it. Treating it as an availability anchor would have
+reintroduced exactly the failure mode FX-51-54 and FX-52AH exist to
+prevent -- backdating FTA's own knowledge to a provider's claimed
+timestamp -- just with an unusually well-documented provider.
+
+**FX-56 must model at least five separate, never-conflated concepts
+per news item:**
+
+1. **Authoritative FTA availability (`first_seen_at`)** -- FTA's own
+   retrieval/ingestion timestamp; the ONLY field any future PIT
+   evidence query may treat as "what FTA knew, and when."
+2. **Source published timestamp** -- the source's own stated
+   publication time (e.g. GOV.UK's `first_published_at`, the Fed's/
+   ECB's/BoC's `pubDate`/`dc:date`), persisted verbatim as
+   non-authoritative source metadata.
+3. **Source updated timestamp**, where available (e.g. GOV.UK's
+   `public_updated_at`/`updated_at`) -- also non-authoritative,
+   persisted separately from (1) and (2).
+4. **Source revision/correction metadata**, where available (e.g.
+   GOV.UK's `change_history`, `withdrawn_notice`) -- persisted as its
+   own structured record, never collapsed into a single timestamp
+   field.
+5. **Raw provider timestamp/provenance** -- the literal, unmodified
+   value the source transmitted (e.g. BoC's raw, mislabelled `dc:date`
+   string), preserved even when a remediated/reinterpreted value is
+   also stored, so the original provider fact is never lost to a
+   correction.
+
+**Historical backfill is governed by the same invariant, stated
+separately because it is easy to violate silently.** A source's own
+publication timestamp establishes documented PUBLICATION timing, and
+nothing else -- it never establishes that FTA itself possessed the
+item at that historical moment. A backfilled row's own FTA-availability
+field must honestly reflect the actual backfill/ingestion time, or be
+explicitly flagged as backfill-derived and never prospectively
+observed; it must never be silently stamped with the source's own
+historical publish time as if that were equivalent to real-time
+prospective knowledge. This applies to every historical candidate in
+this ADR without exception, GOV.UK's Search API and ECB's bulk
+speeches CSV included.
+
+**BoC-specific corollary.** FTA availability for the Bank of Canada's
+press-releases feed remains first-seen/retrieval time, full stop --
+this is not an alternative to a Toronto-local reinterpretation of
+`dc:date`, it is the only FTA-availability anchor there is. A verified
+Toronto-local reinterpretation of `dc:date`, if and when produced, is
+SOURCE publication provenance only (concept 2 above) and must be
+stored alongside, never instead of, the raw as-received `dc:date`
+string (concept 5 above) -- the raw value must remain queryable even
+after remediation, since it is itself evidence of what the source
+actually transmitted, malformed offset included.
+
 ## Source class A: primary/official government and central-bank sources
 
 Investigated 2026-09-29, live against current endpoints. This is a
@@ -145,8 +239,14 @@ with different semantics even at a source FX-52A already adopted.
   guidance page addresses attribution only, never reuse, storage, or
   automated access; US-federal-works public-domain status is generally
   expected but was not asserted by BEA itself, so it is not claimed
-  here. **Verdict: ADOPT_PROSPECTIVE (secondary)**, pending the
-  reuse-rights question.
+  here. **Verdict: DEFER (corrected by FX-55H)** -- reuse/storage
+  rights are UNKNOWN from any BEA primary source, and per this
+  project's own rule an unresolved critical rights property blocks
+  ADOPT status regardless of an otherwise clean technical fit; the
+  original ADOPT_PROSPECTIVE classification collapsed "a working feed
+  exists" into "licensed for our use," which this ADR's own discipline
+  forbids. Reopens once a primary BEA statement establishes reuse/
+  storage rights.
 
 **Euro area.**
 
@@ -179,8 +279,14 @@ with different semantics even at a source FX-52A already adopted.
   prospective. Whether named, author-attributed speeches fall inside
   the ECB's own Working/Occasional-Paper written-authorisation
   carve-out (see above) is genuinely ambiguous and is the single most
-  important open ECB question. **Verdict: ADOPT_HISTORICAL candidate
-  (high value) / REJECT for prospective.**
+  important open ECB question. **Verdict: DEFER_HISTORICAL (corrected
+  by FX-55H) / REJECT for prospective.** The original ADOPT_HISTORICAL
+  classification treated this ambiguity as a footnote rather than a
+  blocker; per this ADR's own rule, an unresolved critical rights
+  property -- here, whether the author-attribution carve-out reaches
+  named speeches at all -- blocks ADOPT status even for an otherwise
+  excellent, high-value asset. Reopens once the ECB's own carve-out
+  scope is confirmed one way or the other.
 
 - **Eurostat** -- the well-known legacy feed
   (`rss_estat_news.xml`) is **VERIFIED UNSUITABLE**: it returns HTTP 200
@@ -224,14 +330,18 @@ with different semantics even at a source FX-52A already adopted.
   (strong) / REJECT for historical.**
 
 - **HM Treasury via GOV.UK** -- **the single best-instrumented source
-  found across all four research passes.** Three routes verified live:
-  an Atom feed (exposes only `updated`, no `published` -- insufficient
-  alone), the **GOV.UK Content API**
-  (`gov.uk/api/content/<path>`), and the GOV.UK Search API. The Content
-  API VERIFIED-provides, on a real item: a stable UUID (`content_id`)
-  fully decoupled from the URL slug; three genuinely distinct
-  timestamps (`first_published_at`, `public_updated_at`, `updated_at`,
-  all with explicit offsets); an explicit **correction log**
+  found across all four research passes**, and also the source whose
+  own PIT framing this ADR most needed correcting (see "FTA
+  availability invariant" above). Three routes verified live: an Atom
+  feed (exposes only `updated`, no `published` -- insufficient alone),
+  the **GOV.UK Content API** (`gov.uk/api/content/<path>`), and the
+  GOV.UK Search API. The Content API VERIFIED-provides, on a real
+  item: a stable UUID (`content_id`) fully decoupled from the URL
+  slug; three genuinely distinct SOURCE-side timestamps
+  (`first_published_at`, `public_updated_at`, `updated_at`, all with
+  explicit offsets) -- each one authoritative as GOV.UK's own claim
+  about GOV.UK's own publication history, **none of them a substitute
+  for FTA's own `first_seen_at`**; an explicit **correction log**
   (`details.change_history`, each entry with its own timestamped note);
   explicit **retraction representation** (`withdrawn_notice`); embargo
   visibility (`publishing_scheduled_at`); and full body text. VERIFIED
@@ -240,12 +350,26 @@ with different semantics even at a source FX-52A already adopted.
   under Open Government Licence v3.0. VERIFIED rate limit: documented
   10 requests/second, no authentication required. One caveat: the
   Content API is self-described as "beta software" with no versioning
-  guarantee, so schema drift is a live risk; the Search API's own
-  terms/limits are a separate, unverified surface. The Search API
-  itself returned 9,819 HM-Treasury documents, sortable and paginated
-  -- a genuine documented historical-backfill path, which almost no
-  other source in this ADR offers. **Verdict: ADOPT_PROSPECTIVE AND
-  ADOPT_HISTORICAL (strongest overall finding in this ADR).**
+  guarantee, so schema drift is a live risk. **Verdict: ADOPT_PROSPECTIVE
+  (Content API)** -- FTA availability for every item retrieved through
+  it is still FTA's own `first_seen_at`; the Content API's rich
+  timestamps/correction log/retraction flag are adopted as source
+  provenance to persist in full, not as an availability anchor.
+
+- **GOV.UK Search API (corrected by FX-55H, split out from the Content
+  API above)** -- the Search API returned 9,819 HM-Treasury documents,
+  sortable and paginated by `public_timestamp` -- a genuine documented
+  historical-enumeration mechanism, which almost no other source in
+  this ADR offers. The original pass folded this into the Content
+  API's own "ADOPT_HISTORICAL" verdict; that was premature. **The
+  Search API's own terms and rate limits were never separately
+  verified** -- only that it functions -- and per this ADR's own rule,
+  an unresolved critical access property blocks ADOPT status
+  regardless of how useful the mechanism looks. **Verdict: DEFER.**
+  Reopens once the Search API's own governing terms/rate limits are
+  confirmed from a primary GOV.UK source (they may simply be identical
+  to the Content API's OGL v3.0 grant -- but that has not been
+  verified, and must not be assumed).
 
 - **ONS** -- **VERIFIED UNSUITABLE on timestamp semantics, confirmed
   twice independently.** A working feed exists only at
@@ -289,10 +413,14 @@ with different semantics even at a source FX-52A already adopted.
   ones in this ADR that explicitly address rate limits (prohibiting
   circumvention of unpublished request limits). **Verdict:
   ADOPT_PROSPECTIVE for the press-releases feed only, contingent on
-  mandatory timestamp remediation (discard the stated offset; re-anchor
-  to first-seen, or to a verified Toronto-local reinterpretation).
-  REJECT the speeches feed as published** (would need an explicit
-  `dc:date > now` quarantine filter before any adoption).
+  mandatory timestamp handling (corrected by FX-55H): FTA availability
+  is always first-seen/retrieval time, never the feed's own `dc:date`
+  in any form -- a verified Toronto-local reinterpretation of `dc:date`
+  is not an alternative anchor, it is SOURCE publication provenance to
+  be persisted alongside the raw, as-received (malformed) `dc:date`
+  string, never in place of it. REJECT the speeches feed as
+  published** (would need an explicit `dc:date > now` quarantine filter
+  before any adoption).
 
 - **Statistics Canada (The Daily)** -- VERIFIED: 34 documented,
   keyless Atom feeds (33 by subject plus "all subjects"), each
@@ -335,11 +463,13 @@ sources):** only GOV.UK's Content API exposes correction and
 retraction semantics at all. For every other official source
 investigated, update/correction behaviour is UNKNOWN, and BoC's and
 ONS's own stated timestamps are independently confirmed *wrong*, not
-merely coarse. **First-seen/retrieval time must therefore be the
-default FTA availability anchor for every official source except
-GOV.UK**, where `first_published_at` is directly, primarily verifiable
-and may be used as the anchor instead. Provider-stated publication
-times should always be persisted as a separate, clearly-labelled,
+merely coarse. **First-seen/retrieval time is the FTA availability
+anchor for every official source without exception, GOV.UK included**
+(corrected by FX-55H -- see "FTA availability invariant" above; the
+original text exempted GOV.UK on the strength of `first_published_at`
+being directly verifiable, which conflated source-side verifiability
+with FTA's own observation time). Provider-stated publication times
+should always be persisted as a separate, clearly-labelled,
 non-authoritative field.
 
 ## Source class B: general financial news providers (Reuters, Dow Jones/Factiva, Bloomberg, AP, FT)
@@ -521,10 +651,20 @@ sales conversation was initiated.
   confirming DOC 2.0 cannot be treated as an availability-guaranteed
   ingestion dependency, independent of our own request rate. Provider
   tone/theme scores are recorded as available metadata only, never
-  adopted as ground truth. **Verdict: ADOPT_PROSPECTIVE and
-  ADOPT_HISTORICAL via the bulk GKG raw-file/BigQuery channel only; the
-  DOC 2.0 API itself is DEFER.** GDELT complements rather than replaces
-  a headline/text source, since it structurally cannot supply one.
+  adopted as ground truth. **Verdict: ADOPT_AUXILIARY_METADATA
+  (corrected by FX-55H, bulk GKG raw-file/BigQuery channel only; the
+  DOC 2.0 API itself remains DEFER).** This single canonical
+  disposition replaces the original pass's "ADOPT_PROSPECTIVE and
+  ADOPT_HISTORICAL," which -- although rights-wise accurate -- implied
+  GDELT belongs alongside the text-bearing official sources in Source
+  class A. It does not: GDELT structurally cannot supply a headline or
+  article body under any rights posture, so it is **explicitly excluded
+  from FX-56's initial text-bearing source set** and is not counted
+  toward this ADR's own "official sources only" prospective-set claim.
+  It remains available as an optional, rights-clear auxiliary metadata
+  complement (tone/theme/entity signals keyed to a source URL) that a
+  future story may choose to pair with a text-bearing source, never as
+  a substitute for one.
 
 - **NewsAPI.org** -- VERIFIED **REJECT**: the only tier evaluable
   without payment explicitly prohibits our exact use -- its Developer
@@ -619,15 +759,19 @@ sales conversation was initiated.
   incidental to equity-ticker tagging, not queryable. **Verdict:
   DEFER**, a distant fourth candidate in this source class.
 
-**Class-level synthesis.** GDELT is the only source in this entire
-ADR -- across all four source classes -- with unambiguous, unrestricted,
-fee-free usage rights, but it structurally cannot supply headline or
-article text, only metadata and derived features; it must be paired
-with a text-bearing source, never treated as a standalone news feed.
-Every commercial aggregator examined exposes **publication time only**
-(no ingestion/first-seen timestamp), which independently confirms this
-ADR's own governing PIT rule: FTA's defensible availability anchor is
-retrieval/first-seen time, not any provider-stated `published_at`.
+**Class-level synthesis.** GDELT (ADOPT_AUXILIARY_METADATA) is the
+only source in this entire ADR -- across all four source classes --
+with unambiguous, unrestricted, fee-free usage rights, but it
+structurally cannot supply headline or article text, only metadata and
+derived features; it is excluded from FX-56's initial text-bearing
+source set and, if ever paired with a text-bearing source in a future
+story, must never be treated as a standalone news feed in its own
+right. Every commercial aggregator examined exposes **publication time
+only** (no ingestion/first-seen timestamp), which independently
+confirms this ADR's own governing invariant (see "FTA availability
+invariant" above): FTA's defensible availability anchor is always
+FTA's own retrieval/first-seen time, never any provider-stated
+`published_at`.
 Three candidates (NewsAPI, Finnhub, FMP) are REJECTed on contractual
 grounds alone, each for a distinct, individually sufficient reason
 (scope-of-use prohibition, mandatory data deletion on subscription end,
@@ -821,20 +965,44 @@ Verdicts use this ADR's own taxonomy: **ADOPT_PROSPECTIVE**,
 unresolved legal/operational question -- a written clarification or a
 production retest would plausibly resolve it), **REJECT** (disqualified
 by primary evidence). A source can carry different prospective and
-historical verdicts.
+historical verdicts. Two additional labels, introduced by FX-55H's own
+correction pass, refine this taxonomy rather than replacing it:
+
+- **DEFER_HISTORICAL**: identical in meaning to DEFER, scoped
+  specifically to the historical axis, used when a source's
+  prospective verdict is independently settled (ADOPT_PROSPECTIVE or
+  REJECT) but its historical-only rights or semantics carry their own,
+  separately unresolved question. Applied here to the ECB bulk
+  speeches CSV (author-attribution carve-out ambiguity) in place of
+  this document's original, premature ADOPT_HISTORICAL classification.
+- **ADOPT_AUXILIARY_METADATA**: a source whose rights are fully clear
+  (no unresolved property) but whose content is structurally
+  metadata/derived-feature-only, with no headline or article text
+  under any rights posture. Adopted for that limited purpose only, and
+  never counted toward an "official sources only" or "text-bearing
+  news source" claim. Applied here to GDELT's bulk GKG channel in
+  place of this document's original ADOPT_PROSPECTIVE/ADOPT_HISTORICAL
+  classification, which incorrectly implied parity with a headline/
+  text-bearing source.
+
+**FTA availability, for every ADOPT_PROSPECTIVE source in this matrix
+without exception, is FTA's own `first_seen_at`** -- see "FTA
+availability invariant" above. No verdict below should be read as
+granting any source's own timestamp anchor status.
 
 | Source | Class | Content | Identity | Timestamps | Rights | Verdict |
 |---|---|---|---|---|---|---|
 | Fed Board (press/speeches/testimony RSS) | A | News, minutes, SEP, speeches | VERIFIED | PARTIALLY_VERIFIED (hour-granular) | VERIFIED (public domain) | **ADOPT_PROSPECTIVE** |
 | US Treasury | A | -- | -- | -- | -- | **REJECT** (no feed exists) |
 | BLS | A | News releases | UNKNOWN (access blocked) | UNKNOWN | UNKNOWN | **DEFER** (retest from prod IP) |
-| BEA (`rss.xml`) | A | Data-release news | VERIFIED | PARTIALLY_VERIFIED (named-zone hazard) | UNKNOWN | ADOPT_PROSPECTIVE (secondary) |
+| BEA (`rss.xml`) | A | Data-release news | VERIFIED | PARTIALLY_VERIFIED (named-zone hazard) | UNKNOWN | **DEFER** (corrected by FX-55H; reuse rights unresolved) |
 | ECB (`/rss/press.html`) | A | Press/speeches/interviews | VERIFIED | PARTIALLY_VERIFIED | VERIFIED (Working/Occasional Papers carved out) | **ADOPT_PROSPECTIVE** |
-| ECB (`all_ECB_speeches.csv`) | A | Speeches, full text, historical | PARTIALLY_VERIFIED | UNSUITABLE (date-only) | VERIFIED w/ author-carve-out ambiguity | **ADOPT_HISTORICAL** |
+| ECB (`all_ECB_speeches.csv`) | A | Speeches, full text, historical | PARTIALLY_VERIFIED | UNSUITABLE (date-only) | PARTIALLY_VERIFIED (author-carve-out ambiguity) | **DEFER_HISTORICAL** (corrected by FX-55H) |
 | Eurostat (legacy feed) | A | -- | -- | -- | -- | **REJECT** (dead since 2021) |
 | Eurostat (portlet Atom) | A | Euro-indicator releases | PARTIALLY_VERIFIED | VERIFIED (best UTC structure) | VERIFIED (CC BY 4.0) | **DEFER** (undocumented endpoint) |
 | BoE (news/speeches/publications RSS) | A | News, minutes, speeches | VERIFIED (opaque GUID) | PARTIALLY_VERIFIED (mixed tz format) | PARTIALLY_VERIFIED (non-commercial) | **ADOPT_PROSPECTIVE** |
-| GOV.UK Content API (HM Treasury) | A | News, speeches, statements | VERIFIED (UUID) | **VERIFIED** (first_published/updated/change_history) | **VERIFIED** (OGL v3, any purpose) | **ADOPT_PROSPECTIVE + ADOPT_HISTORICAL** |
+| GOV.UK Content API (HM Treasury) | A | News, speeches, statements | VERIFIED (UUID) | **VERIFIED source metadata** (first_published/updated/change_history -- never an FTA-availability anchor) | **VERIFIED** (OGL v3, any purpose) | **ADOPT_PROSPECTIVE** |
+| GOV.UK Search API (historical enumeration) | A | HM Treasury document index | VERIFIED (reuses Content API identity) | N/A | UNKNOWN (own terms/limits unverified) | **DEFER** (corrected by FX-55H) |
 | ONS | A | Bulletin announcements | VERIFIED (URL guid) | **UNSUITABLE** (confirmed 8h wrong) | UNKNOWN | **REJECT** prospective / DEFER historical |
 | BoC press-releases feed | A | Press releases, rate decisions | VERIFIED | **UNSUITABLE as published** (mislabelled offset) | VERIFIED | ADOPT_PROSPECTIVE **with mandatory remediation** |
 | BoC speeches feed | A | Speeches + future-dated items | VERIFIED | UNSUITABLE | VERIFIED | **REJECT as published** (look-ahead vector) |
@@ -846,7 +1014,7 @@ historical verdicts.
 | Associated Press | B | Wire news | **VERIFIED** (best technical fit) | VERIFIED (dual timestamps) | UNSUITABLE historical (30-day text window); metered cost | DEFER prospective / **REJECT historical** |
 | Financial Times | B | Macro/markets commentary | PARTIALLY_VERIFIED | PARTIALLY_VERIFIED | PARTIALLY_VERIFIED (Datamining Licence; destroy-on-termination) | **DEFER** |
 | Nasdaq / MT Newswires | B | FX-categorised wire news | PARTIALLY_VERIFIED | PARTIALLY_VERIFIED (unlabelled tz hazard) | UNKNOWN | **DEFER** |
-| GDELT (bulk GKG) | C | Metadata/derived features only, no headline/text | **VERIFIED** (batch-embedded ID) | PARTIALLY_VERIFIED (self-contradictory field docs) | **VERIFIED** (unrestricted, fee-free) | **ADOPT_PROSPECTIVE + ADOPT_HISTORICAL** |
+| GDELT (bulk GKG) | C | Metadata/derived features only, no headline/text | **VERIFIED** (batch-embedded ID) | PARTIALLY_VERIFIED (self-contradictory field docs) | **VERIFIED** (unrestricted, fee-free) | **ADOPT_AUXILIARY_METADATA** (corrected by FX-55H; excluded from FX-56's text-bearing set) |
 | GDELT DOC 2.0 API | C | Same, real-time query | VERIFIED but rate-limited | -- | VERIFIED | **DEFER** (IP-throttled, unusable for systematic ingestion) |
 | NewsAPI.org | C | Headlines + 200-char stub | PARTIALLY_VERIFIED (URL only) | PARTIALLY_VERIFIED (published only; 24h delay on free) | **UNSUITABLE on usable tier** | **REJECT** |
 | Alpha Vantage `NEWS_SENTIMENT` | C | Headline + summary, macro-topic-tagged | PARTIALLY_VERIFIED (URL only) | PARTIALLY_VERIFIED (published only) | PARTIALLY_VERIFIED (operator-dependent; storage UNKNOWN) | **DEFER** |
@@ -868,21 +1036,36 @@ historical verdicts.
 This ADR's own research independently reconfirms and extends FX-51
 through FX-54's own PIT discipline into the news domain:
 
-- **No source anywhere in this ADR -- across all four classes --
-  exposes a directly verifiable ingestion/first-seen timestamp.**
-  Every provider exposes, at best, a publication or last-updated
-  timestamp. The single partial exception is GOV.UK's Content API,
-  whose `first_published_at` is itself primary-verifiable and
-  sufficiently authoritative to serve as an availability anchor in its
-  own right; even there, FTA's own retrieval time remains the
-  fallback of record.
-- **Therefore: first-seen/retrieval time is the default FTA
-  availability anchor for every source in this ADR except GOV.UK.**
-  Provider-stated publication times must always be persisted as a
-  separate, clearly labelled, non-authoritative field -- never promoted
-  to the availability anchor, mirroring the FX-51-54 treatment of
-  provider `published_at` fields and the FX-52AH treatment of BoC's own
+- **No source anywhere in this ADR -- across all four classes -- exposes
+  FTA's own ingestion/first-seen timestamp; only FTA's own retrieval
+  process can produce that value.** Every provider, GOV.UK included,
+  exposes at best its own publication or last-updated timestamp -- a
+  SOURCE-side fact, not an FTA-side one. FX-55's own initial pass
+  treated GOV.UK's `first_published_at` as a partial exception to this
+  rule ("primary-verifiable... sufficiently authoritative to serve as
+  an availability anchor"); **that was wrong and is corrected by
+  FX-55H** -- see "FTA availability invariant" above. GOV.UK's own
+  metadata is uniquely rich and uniquely well-verified as SOURCE
+  provenance, which is exactly why it must be persisted in full, but
+  verifiability of a source's own claim is not the same property as
+  that claim being FTA's own observation time.
+- **Therefore: first-seen/retrieval time is the FTA availability
+  anchor for every source in this ADR, without exception.** Provider-
+  stated publication times must always be persisted as a separate,
+  clearly labelled, non-authoritative field -- never promoted to the
+  availability anchor, mirroring the FX-51-54 treatment of provider
+  `published_at` fields and the FX-52AH treatment of BoC's own
   `dc:date`.
+- **The same invariant governs historical backfill, and is easy to
+  violate silently**: a source's own publication timestamp establishes
+  documented publication timing only, never that FTA itself possessed
+  the item at that historical moment. A backfilled row must record its
+  actual backfill/ingestion time as its own FTA-availability field, or
+  be explicitly flagged as backfill-derived -- never silently stamped
+  with the source's historical publish time as if equivalent to
+  real-time prospective knowledge. This applies to GOV.UK's Search API
+  and ECB's bulk speeches CSV exactly as it applies to every other
+  historical candidate in this ADR.
 - **Two independently confirmed timestamp defects materially change
   what "PIT-safe" means for specific sources, and must not be
   papered over in FX-56:** ONS's `pubDate`/`release_date` is
@@ -891,20 +1074,29 @@ through FX-54's own PIT discipline into the news domain:
   independent primary endpoints; and the Bank of Canada's `dc:date`
   presents America/Toronto local time under a literal, incorrect
   `+00:00` label, confirmed against three independent event anchors
-  and the feed's own prose. Both require either remediation (a verified
-  local-time reinterpretation) or exclusion from any timestamp-bearing
-  role, never direct use.
+  and the feed's own prose. Neither defective value may ever serve as
+  FTA's own availability anchor, remediated or not (see "FTA
+  availability invariant" above): each must either be excluded from
+  any timestamp-bearing role, or, where a remediation is independently
+  verified (e.g. a confirmed Toronto-local reinterpretation of BoC's
+  `dc:date`), persisted as SOURCE publication provenance alongside --
+  never in place of -- the raw as-received value and FTA's own
+  `first_seen_at`.
 - **One look-ahead-bias vector was found and must be excluded, not
   merely down-weighted:** the Bank of Canada's speeches RSS feed
   contains genuinely future-dated entries (a speech scheduled days
   ahead already present in the feed). Any adoption of this feed
   requires an explicit `dc:date > now` quarantine filter.
-- **GDELT's bulk GKG channel is the one source offering a structurally
+- **GDELT's bulk GKG channel (ADOPT_AUXILIARY_METADATA, excluded from
+  FX-56's text-bearing scope) is the one source offering a structurally
   different, stronger PIT primitive**: its record identity embeds the
   15-minute processing-batch timestamp in which GDELT itself created
   the record, meaning a batch file is intrinsically time-bounded by
   construction. This does not extend to the DOC 2.0 API, whose
-  `seendate` field is undocumented and must not be assumed equivalent.
+  `seendate` field is undocumented and must not be assumed equivalent,
+  and it does not change GDELT's own exclusion from the text-bearing
+  set: it is noted here only in case a future story pairs it, as
+  auxiliary metadata, with a text-bearing source.
 
 ## Historical coverage assessment
 
@@ -912,15 +1104,23 @@ Prospective and historical access separate cleanly across this
 research, exactly as this story anticipated, and the two are **not**
 uniformly correlated:
 
-- **Genuinely strong historical assets exist independent of any
-  commercial licence**: the ECB's bulk speeches CSV (full text back to
-  ECB inception, monthly-updated, date-only granularity -- historical
-  only, unusable prospectively) and GOV.UK's Search API (9,819 HM
-  Treasury documents, date-sortable, though its own terms/rate limits
-  were not separately verified from the Content API's).
-  GDELT's bulk GKG archive is also historically deep and immediately
-  usable under its unrestricted licence, subject to its metadata-only
-  content limitation.
+- **Two candidates that looked like genuinely strong historical assets
+  are corrected here, not adopted outright (FX-55H).** The ECB's bulk
+  speeches CSV (full text back to ECB inception, monthly-updated,
+  date-only granularity) is real and technically excellent, but its
+  author-attribution carve-out ambiguity is an unresolved critical
+  rights property -- **DEFER_HISTORICAL**, not ADOPT_HISTORICAL, per
+  this ADR's own admission rule. GOV.UK's Search API (9,819 HM Treasury
+  documents, date-sortable) is a genuine documented enumeration
+  mechanism, but its own terms and rate limits were never separately
+  verified from the Content API's -- **DEFER**, not ADOPT_HISTORICAL,
+  for the same reason. GOV.UK's Content API itself remains adopted for
+  prospective retrieval of any already-known item; a real historical
+  backfill for GOV.UK depends on resolving the Search API's own terms
+  first. GDELT's bulk GKG archive is historically deep and immediately
+  usable under its unrestricted licence (ADOPT_AUXILIARY_METADATA), but
+  supplies metadata/derived features only, never a headline or article
+  body, and is excluded from FX-56's initial text-bearing scope.
 - **Several strong prospective sources have weak or absent historical
   depth**: Fed feeds hold 15-20 items with only an HTML yearly archive
   beyond that; ECB's press/speech/interview feed holds 15 items; BoE
@@ -959,23 +1159,25 @@ uniformly correlated:
 **NEWS SOURCE FEASIBILITY VERDICT: PARTIAL_GO.**
 
 A useful, bounded, rights-clear prospective news-evidence source set
-is viable today using **official/primary sources only (source class
-A)** -- directly mirroring FX-52A's own precedent in FX-EPIC-07, where
-an official-source-only adoption was the correct and sufficient
-outcome after commercial economic-calendar providers failed to clear
-the gate. No general financial news provider (class B), commercial
-news API/aggregator (class C, except GDELT's metadata-only bulk
-channel), or dedicated FX-commentary publisher (class D) currently
-clears this project's own rights/PIT/identity bar without either a
-priced commercial contract this story is expressly forbidden from
-entering, or a written vendor clarification this story is expressly
-forbidden from sending. Coverage is therefore intentionally partial,
-skewed toward official communications and away from third-party
-commentary or wire-service breadth -- this is treated as an acceptable
-and expected outcome, not a shortfall to be closed by force.
+is viable today using **official/primary, text-bearing sources only
+(source class A)** -- directly mirroring FX-52A's own precedent in
+FX-EPIC-07, where an official-source-only adoption was the correct and
+sufficient outcome after commercial economic-calendar providers failed
+to clear the gate. No general financial news provider (class B),
+commercial news API/aggregator (class C), or dedicated FX-commentary
+publisher (class D) currently clears this project's own rights/PIT/
+identity bar without either a priced commercial contract this story is
+expressly forbidden from entering, or a written vendor clarification
+this story is expressly forbidden from sending. Coverage is therefore
+intentionally partial, skewed toward official communications and away
+from third-party commentary or wire-service breadth -- this is treated
+as an acceptable and expected outcome, not a shortfall to be closed by
+force. **FTA availability, for every source below, is always FTA's own
+`first_seen_at`** -- see "FTA availability invariant" above; no source
+in this ADR is exempt.
 
-**Adopted for prospective ingestion (source class A only), subject to
-each source's own stated caveat:**
+**Adopted for prospective ingestion (source class A, text-bearing set
+only), subject to each source's own stated caveat:**
 
 1. Federal Reserve Board / FOMC -- `press_monetary.xml` (statements,
    minutes, SEP), `speeches.xml`, `testimony.xml`, per-governor feeds.
@@ -986,26 +1188,57 @@ each source's own stated caveat:**
    `/rss/publications`, for FTA's current non-commercial research use
    only.
 4. GOV.UK Content API (HM Treasury) -- the strongest single source
-   found in this entire ADR; usable as both prospective and historical.
+   found in this entire ADR for prospective retrieval. Its
+   `first_published_at`/`public_updated_at`/`updated_at`/
+   `change_history`/`withdrawn_notice` are adopted as source
+   provenance to persist in full; **none of them is FTA's availability
+   anchor, which remains `first_seen_at` for every item, exactly as for
+   every other source on this list** (corrected by FX-55H). Historical
+   backfill via the Search API is NOT included in this adoption -- see
+   below.
 5. Statistics Canada -- the relevant subject-specific Daily Atom feeds
    (Prices, Labour, Economic accounts, International trade at minimum).
 6. Bank of Canada -- `press-releases/feed/` **only**, and **only** with
-   the following two mandatory adapter-level remediations applied
-   before any timestamp is trusted: (a) discard the feed's own stated
-   `+00:00` offset and re-anchor to first-seen time, or to a
-   separately-verified America/Toronto reinterpretation; (b) this feed
-   only -- the BoC speeches feed is explicitly NOT adopted as published.
-7. BEA `rss.xml` -- secondary/lower-confidence, pending resolution of
-   its unverified reuse-rights question.
-8. GDELT bulk GKG channel (raw files / BigQuery, not the DOC 2.0 API)
-   -- metadata/derived-feature evidence only, explicitly not a
-   headline/text source, to be paired with (not substituted for) the
-   sources above.
+   the following mandatory adapter-level handling (corrected by
+   FX-55H): FTA availability is `first_seen_at`, full stop, never any
+   form of `dc:date`; if a Toronto-local reinterpretation of `dc:date`
+   is independently verified, it is persisted as SOURCE publication
+   provenance alongside -- never in place of -- the raw, as-received
+   (malformed) `dc:date` string. The BoC speeches feed is explicitly
+   NOT adopted as published (see below).
 
-**Adopted for historical ingestion:** the ECB bulk speeches CSV
-(full-text, date-only granularity) and the GOV.UK Search API (pending
-a separate verification of its own terms/rate limits, since they were
-not confirmed identical to the Content API's).
+BEA's `rss.xml` and GDELT's bulk GKG channel are **not** part of this
+adopted text-bearing list (both corrected by FX-55H, below).
+
+**Not adopted, but rights-clear for a limited, non-text-bearing
+purpose (FX-55H correction):**
+
+- **GDELT bulk GKG channel** (raw files / BigQuery, not the DOC 2.0
+  API) -- **ADOPT_AUXILIARY_METADATA**: unrestricted, fee-free rights,
+  but structurally metadata/derived-feature evidence only, with no
+  headline or article text under any rights posture. Available as an
+  optional complement to a text-bearing source in a future story;
+  **explicitly excluded from FX-56's initial text-bearing source set**
+  and not counted toward the "official sources only" claim above.
+
+**No source in this ADR is adopted for historical ingestion as of this
+correction.** The two closest candidates are corrected from this
+document's original ADOPT_HISTORICAL classification to DEFER/
+DEFER_HISTORICAL, each for an unresolved critical property, not a
+technical gap:
+
+- **ECB bulk speeches CSV** (full-text, date-only granularity) --
+  **DEFER_HISTORICAL**: whether named/author-attributed speeches fall
+  inside the ECB's own Working/Occasional-Paper written-authorisation
+  carve-out remains genuinely ambiguous and unresolved from primary
+  documentation.
+- **GOV.UK Search API** (9,819 HM Treasury documents, date-sortable)
+  -- **DEFER**: a real, documented enumeration mechanism, but its own
+  terms and rate limits were never separately verified from the
+  Content API's.
+- GDELT's bulk GKG archive is historically deep and rights-clear
+  (ADOPT_AUXILIARY_METADATA) but, as above, is metadata-only and not a
+  headline/text historical source.
 
 **Explicitly NOT adopted, with each one's own reopening condition:**
 
@@ -1027,6 +1260,13 @@ not confirmed identical to the Content API's).
   use. Reopens only if an ONS endpoint is found exposing the genuine
   ~07:00 BST release instant rather than a date-midnight value, or if
   FX-56 explicitly accepts date-only granularity for this source.
+- **BEA `rss.xml`** (corrected by FX-55H, moved here from the adopted
+  list) -- DEFER. Reuse/storage rights are UNKNOWN from any primary BEA
+  source. Reopens once a primary BEA statement establishes those
+  rights.
+- **ECB bulk speeches CSV, GOV.UK Search API** (corrected by FX-55H,
+  moved here from an implied "adopted historical" status) -- DEFER/
+  DEFER_HISTORICAL, per their own stated conditions immediately above.
 - **BoC speeches feed, Eurostat's portlet Atom, Dept of Finance Canada,
   Reuters/LSEG, Dow Jones/Factiva, Bloomberg, AP, Financial Times,
   Nasdaq/MT Newswires, Alpha Vantage, Marketaux, Polygon.io/Massive,
@@ -1048,22 +1288,48 @@ not confirmed identical to the Content API's).
 assume, as a starting design surface:
 
 - **Adopted source kinds**: government/central-bank press releases,
-  minutes, speeches, and statements (RSS/Atom/JSON, all keyless), plus
-  one metadata-only structured-data channel (GDELT bulk GKG). No
-  headline/text-bearing commercial provider is assumed available.
-- **Availability/PIT semantics**: first-seen/retrieval time is the
-  default and required availability anchor for every adopted source
-  except GOV.UK's Content API, where `first_published_at` may be used
-  directly. Every provider-stated publication timestamp must be
-  persisted as a separate, explicitly-labelled, non-authoritative
-  field -- never promoted to the availability anchor. FX-56 must design
-  for per-source timestamp remediation (BoC's mislabelled offset, BEA's
-  named-zone ambiguity, ONS's date-midnight artifact if ONS is ever
-  included) rather than assuming a single uniform parser suffices.
-  FX-56 must also design an explicit future-dated-item quarantine
-  capability, since at least one adopted-source-family member (BoC
-  speeches) demonstrated this failure mode even though it is not itself
-  adopted.
+  minutes, speeches, and statements (RSS/Atom/JSON, all keyless) --
+  Fed, ECB press/speech/interview feed, Bank of England, GOV.UK
+  Content API, Statistics Canada, Bank of Canada press-releases feed.
+  This is the entire text-bearing set; **BEA is not included**
+  (corrected by FX-55H -- DEFER, unresolved reuse rights). GDELT's bulk
+  GKG channel is a separate, optional, metadata-only auxiliary
+  (ADOPT_AUXILIARY_METADATA) that FX-56 may pair with a text-bearing
+  source but must **not** treat as part of, or a substitute for, this
+  text-bearing set; if FX-56 chooses to incorporate it, the design must
+  say so explicitly rather than silently folding it into "official
+  sources." No headline/text-bearing commercial provider is assumed
+  available.
+- **Availability/PIT semantics (hardened by FX-55H -- see "FTA
+  availability invariant" above): FTA availability is `first_seen_at`
+  for every adopted source without exception, GOV.UK included.** The
+  original version of this ADR exempted GOV.UK's Content API on the
+  strength of its `first_published_at` field; that exemption was wrong
+  and is withdrawn. FX-56 must model at least five separate concepts
+  per item -- authoritative FTA `first_seen_at`; source published
+  timestamp; source updated timestamp where available; source
+  revision/correction metadata where available; and raw provider
+  timestamp/provenance, preserved even after any remediation -- and
+  must never let a source timestamp stand in for FTA's own observation
+  time, for any source, including the best-instrumented one. Every
+  provider-stated publication timestamp must be persisted as a
+  separate, explicitly-labelled, non-authoritative field. FX-56 must
+  design for per-source timestamp remediation (BoC's mislabelled
+  offset, BEA's named-zone ambiguity if BEA is ever reopened, ONS's
+  date-midnight artifact if ONS is ever included) rather than assuming
+  a single uniform parser suffices, and must preserve each source's own
+  raw, as-received timestamp string even where a remediated value is
+  also stored. FX-56 must also design an explicit future-dated-item
+  quarantine capability, since at least one adopted-source-family
+  member (BoC speeches) demonstrated this failure mode even though it
+  is not itself adopted. **The same invariant governs any future
+  historical backfill**: a source's own publication timestamp
+  establishes documented publication timing only, never that FTA
+  itself possessed the item at that historical moment -- a backfilled
+  row's own availability field must honestly reflect the actual
+  backfill/ingestion time, or be explicitly flagged as backfill-derived,
+  never silently presented as equivalent to real-time prospective
+  knowledge.
 - **Identity semantics**: stable identity quality varies by source and
   must be modelled per-source, not assumed uniform -- GOV.UK's UUID and
   BoE's opaque GUID are decoupled from URL/slug; the Fed's, ECB's, and
@@ -1091,12 +1357,23 @@ assume, as a starting design surface:
   a genuine historical backfill for these would require HTML retrieval
   against undocumented-but-predictable URL patterns, which this ADR
   explicitly leaves as an open decision for whoever scopes that work,
-  not a default yes.
+  not a default yes. **No source is currently ADOPT_HISTORICAL at all**
+  (corrected by FX-55H): the ECB bulk speeches CSV is DEFER_HISTORICAL
+  (author-attribution ambiguity) and GOV.UK's Search API is DEFER (own
+  terms unverified) -- FX-56 has no adopted historical-backfill
+  mechanism yet, prospective-only ingestion is the entire initial
+  scope, and any historical work must reopen one of those two DEFER
+  items first, then apply the same first-seen-vs-published-time
+  separation to backfilled rows as to prospective ones.
 - **Explicitly out of scope for FX-56 per this ADR and per FX-55's own
   authorization**: any commercial provider (class B), any DEFER-class
-  news API/aggregator or FX-commentary source (classes C/D), topic/
-  relevance classification, deduplication, sentiment adoption, or any
-  Decision/Risk Engine or dashboard consumption of this evidence.
+  news API/aggregator or FX-commentary source (classes C/D), BEA
+  (corrected out of the adopted set by FX-55H -- DEFER, unresolved
+  reuse rights), GDELT's bulk GKG channel (ADOPT_AUXILIARY_METADATA --
+  rights-clear but metadata-only; an optional future complement, not
+  part of this initial text-bearing scope), topic/relevance
+  classification, deduplication, sentiment adoption, or any Decision/
+  Risk Engine or dashboard consumption of this evidence.
 
 **If FX-56 needs broader source coverage than the above** (e.g.
 general financial-news breadth, or dedicated FX/macro commentary), it
@@ -1113,8 +1390,23 @@ source-specific question sets produced by each research pass are
 preserved in this ADR's own source-class sections above and are not
 repeated in full here; this section lists only the single highest-
 priority question per DEFER candidate, as a starting point for
-whoever is authorized to send them.)
+whoever is authorized to send them. Three official-source questions
+were added by FX-55H, for the three sources this correction pass moved
+out of the adopted set.)
 
+- **BEA**: does BEA assert any reuse/storage/automated-access
+  position for `apps.bea.gov/rss/rss.xml` content -- e.g. a
+  public-domain statement analogous to the Federal Reserve's -- beyond
+  the citation-only guidance currently published?
+- **ECB (bulk speeches CSV)**: does the Working/Occasional-Paper
+  written-authorisation carve-out in the ECB's disclaimer extend to
+  named, author-attributed speeches distributed via the bulk speeches
+  CSV, or is that carve-out limited to formally published Working and
+  Occasional Papers specifically?
+- **GOV.UK (Search API)**: does the Search API's own use fall under
+  the same Open Government Licence v3.0 / "any purpose, no agreement"
+  terms published for the Content API, and does it carry any
+  documented rate limit distinct from the Content API's 10 req/s?
 - **Dow Jones/Factiva**: for an internal, non-redistributive FX/macro
   research and paper-trading platform, which Snapshots/Streams tier
   and "text mining for machine consumption" rights class applies, and
@@ -1149,7 +1441,16 @@ whoever is authorized to send them.)
 ## Consequences
 
 - **No production code, schema, migration, or dependency changes were
-  made in FX-55.** This story is documentation-only, as required.
+  made in FX-55, nor in FX-55H's own correction pass.** Both are
+  documentation-only, as required.
+- **FX-55H's own corrections are additive/corrective to this document
+  in place, not a new adopted-source event.** No source's rights
+  changed between FX-55 and FX-55H; what changed is this ADR's own
+  prior misstatement of three admission verdicts (BEA, ECB's bulk
+  speeches CSV, GOV.UK's Search API) and a PIT-anchor exception that
+  should never have been granted (GOV.UK, BoC). The overall PARTIAL_GO
+  verdict and the core Fed/ECB-press/BoE/GOV.UK-Content-API/StatCan/
+  BoC-press-releases adopted set are unchanged.
 - **No Decision/Risk Engine, dashboard, or Market Context change was
   made or is implied.** FX-61 (the eventual news visualization story)
   remains untouched and unscheduled.

@@ -9733,14 +9733,18 @@ no longer available").
 **Baseline re-established, not assumed from a prior story's own
 report**, per this story's own explicit instruction not to blindly
 repeat a stale "7 weekend OANDA failures" claim: `docker compose up
--d`, `alembic upgrade head`, `pytest --no-cov -q` -> **1601 passed, 1
-failed, 4 deselected** -- the one failure is
+-d`, `alembic upgrade head`, `pytest --no-cov -q` -> **initial run:
+1601 passed, 1 failed, 4 deselected** -- the one failure is
 `test_get_account_balance_against_live_practice_api`, a live-OANDA
 `BrokerUnavailableError` on a 307-redirect/non-JSON response, a
 **different failure signature** than the previously-reported weekend
 candle-empty set, confirming the story's own warning that repeating a
-stale baseline claim would have been wrong here. `ruff check .` all
-passed; `ruff format --check .` -- 382 files already formatted; `mypy
+stale baseline claim would have been wrong here. **A same-session
+retry (FX-55H), recorded alongside rather than in place of the first
+result**: 1602 passed, 0 failed, 4 deselected -- the live-OANDA
+failure did not reproduce, consistent with a transient live-network
+condition, not a codebase regression; both runs are kept on record.
+`ruff check .` all passed; `ruff format --check .` -- 382 files already formatted; `mypy
 .` -- no issues across 369 source files.
 
 **No production code, schema, migration, or dependency change of any
@@ -9760,3 +9764,141 @@ contact was initiated. **FX-56 (Point-in-Time News Evidence Model) may
 begin**, strictly scoped to ADR 0005's own stated adopted-source set
 and assumptions -- see that ADR's own "FX-56 readiness" section for the
 complete list of what FX-56 may and may not yet assume.
+
+## 2026-09-29 — FX-55H: news source PIT & admission semantics hardening
+
+A documentation-only correction pass on FX-55/ADR 0005, performed
+immediately before starting FX-56 -- structurally the same role
+FX-52AH played correcting FX-52A before FX-53 was attempted, and
+governed by the same rule FX-55 itself established: an unresolved
+critical rights/access property blocks ADOPT status regardless of
+otherwise-clean technical fit, and must never be inferred favorably.
+Two independent categories of correction, both confirmed necessary
+by re-reading ADR 0005 against its own stated discipline rather than
+assumed from the correction request alone.
+
+**PIT-anchor corrections (the more consequential of the two).** FX-55's
+own initial pass wrote GOV.UK's `first_published_at` as an exception to
+the availability-anchor rule -- "directly, primarily verifiable and may
+be used as the anchor instead" -- and wrote a corrected Toronto-local
+reinterpretation of BoC's `dc:date` as an alternative anchor to
+first-seen time ("re-anchor to first-seen, **or** to a verified
+Toronto-local reinterpretation"). Both conflated a source's own
+verifiability with FTA's own observation time, and both are corrected.
+**A new "FTA availability invariant" section in ADR 0005 now states,
+as the ADR's own governing rule superseding every conflicting sentence
+elsewhere in that document: FTA availability is always FTA's own
+`first_seen_at`/retrieval timestamp, for every prospectively collected
+news item from every source, with no exception.** This holds even for
+GOV.UK's `first_published_at` -- the single most authoritative
+SOURCE-side publication timestamp found in the whole ADR -- precisely
+because being well-documented is a different property from being
+FTA's own knowledge. GOV.UK's own `first_published_at`/
+`public_updated_at`/`updated_at`/`change_history`/`withdrawn_notice`
+are unchanged as VERIFIED source provenance and remain required
+fields to persist in full; they are simply never promoted to
+availability-anchor status. The BoC corollary: FTA availability for
+the press-releases feed remains first-seen/retrieval time, full stop;
+a verified Toronto-local reinterpretation of `dc:date`, if produced,
+is source publication provenance to store alongside -- never instead
+of -- the raw, as-received, malformed `dc:date` string, which must
+remain queryable after any remediation.
+
+FX-56 must now model at least five separate, never-conflated concepts
+per news item: (1) authoritative FTA `first_seen_at`; (2) source
+published timestamp (non-authoritative); (3) source updated timestamp
+where available (non-authoritative); (4) source revision/correction
+metadata where available; (5) raw provider timestamp/provenance,
+preserved even after remediation. The same invariant governs historical
+backfill, stated separately because it is easy to violate silently: a
+source's own publication timestamp establishes documented publication
+timing only, never that FTA itself possessed the item at that
+historical moment -- a backfilled row's own FTA-availability field must
+honestly reflect the actual backfill/ingestion time, or be explicitly
+flagged as backfill-derived, never silently stamped with the source's
+historical publish time as if equivalent to real-time prospective
+knowledge. This applies to GOV.UK's Search API and ECB's bulk speeches
+CSV exactly as to every other historical candidate.
+
+**Source-admission corrections.** Re-applying FX-55's own admission
+rule (an unresolved critical rights/access property blocks ADOPT
+status) surfaced three verdicts that had been granted prematurely:
+
+- **BEA** (`apps.bea.gov/rss/rss.xml`): ADOPT_PROSPECTIVE (secondary)
+  -> **DEFER**. Reuse/storage rights are UNKNOWN from any primary BEA
+  source -- the original verdict collapsed "a working feed exists" into
+  "licensed for our use," which is exactly the inference this ADR's own
+  discipline forbids. Moved from the adopted-prospective list to the
+  DEFER list; a vendor clarification question was added to the
+  appendix (prepared, not sent).
+- **ECB's bulk speeches CSV**: ADOPT_HISTORICAL (high value) -> a new
+  **DEFER_HISTORICAL** label. Whether the ECB's own Working/Occasional-
+  Paper written-authorisation carve-out reaches named, author-
+  attributed speeches remains genuinely ambiguous from primary
+  documentation; the original verdict treated that ambiguity as a
+  footnote rather than a blocker.
+- **GOV.UK's own Search API**: implicit ADOPT_HISTORICAL (bundled into
+  the Content API's own verdict) -> **DEFER**, split out as its own
+  bullet. The Search API functions and returns 9,819 HM-Treasury
+  documents, but its own terms and rate limits were never separately
+  verified from the Content API's OGL v3.0 grant -- functioning is not
+  the same property as being rights-verified. GOV.UK's Content API
+  itself remains ADOPT_PROSPECTIVE, unaffected.
+- **GDELT** (bulk GKG channel): "ADOPT_PROSPECTIVE and ADOPT_HISTORICAL"
+  -> a new single canonical disposition, **ADOPT_AUXILIARY_METADATA**.
+  GDELT's rights are genuinely unrestricted and fee-free -- that
+  classification was correct -- but the original verdict's label
+  implied parity with a text-bearing official source, which it
+  structurally cannot be (no headline or article-body field exists
+  anywhere in its schema). GDELT is now explicitly excluded from
+  FX-56's initial text-bearing source set and is not counted toward
+  this ADR's own "official sources only" claim; it remains available
+  as an optional auxiliary metadata complement for a future story.
+
+Two new taxonomy labels (DEFER_HISTORICAL, ADOPT_AUXILIARY_METADATA)
+were added to ADR 0005's own "Consolidated source matrix" section
+intro, refining rather than replacing its original ADOPT_PROSPECTIVE/
+ADOPT_HISTORICAL/DEFER/REJECT taxonomy. Every table row, prose bullet,
+and cross-reference to these five corrected items across ADR 0005's
+Context, Source class A, Source class C, Consolidated matrix, Point-in-
+time assessment, Historical coverage assessment, Decision, and FX-56
+readiness sections was updated in place for internal consistency --
+this correction pass was verified against the whole document, not
+patched in one place and left contradictory elsewhere.
+
+**Verification documentation corrected, not overwritten.** FX-55's own
+initial baseline result (1601 passed, 1 failed, 4 deselected) is kept
+on record; a same-session retry performed for this hardening pass
+(1602 passed, 0 failed, 4 deselected -- the live-OANDA failure did not
+reproduce, consistent with a transient live-network condition, not a
+codebase regression) is recorded alongside it, not in place of it.
+`ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean.
+
+**Unchanged by this correction, confirmed by re-reading rather than
+assumed**: the overall NEWS SOURCE FEASIBILITY VERDICT remains
+PARTIAL_GO; the core adopted prospective set (Federal Reserve, ECB's
+combined press/speech/interview feed, Bank of England, GOV.UK Content
+API, Statistics Canada, Bank of Canada press-releases feed with
+mandatory timestamp handling) is unchanged; every class B (general
+financial news provider) and class D (FX-commentary publisher) verdict
+is unchanged, as this correction pass did not find a rights
+inconsistency in either class; FX-49 remains DEFER; FX-52 remains
+DEFER; FX-53 remains BLOCKED.
+
+**No production code, schema, migration, or dependency change of any
+kind was made.** The only artifacts touched are
+`docs/adr/0005-news-intelligence-source-feasibility.md` (corrected in
+place) plus this entry and the corresponding `docs/ARCHITECTURE.md`/
+`docs/CURRENT_STATE.md`/`docs/NEXT_STEPS.md` updates. No vendor was
+contacted; three additional vendor clarification questions (BEA, ECB,
+GOV.UK Search API) were prepared and added to ADR 0005's own appendix,
+explicitly NOT sent, per this story's own explicit prohibition.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-56 implementation was
+started, no news ingestion/deduplication/classification/sentiment/
+dashboard/Decision-Risk-Engine work was started, and no vendor outreach
+was initiated. **FX-56 (Point-in-Time News Evidence Model) may still
+begin**, strictly scoped to ADR 0005's own now-corrected adopted-source
+set and assumptions.
