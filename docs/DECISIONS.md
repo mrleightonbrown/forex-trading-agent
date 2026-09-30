@@ -9585,3 +9585,178 @@ FX-52 remains DEFER, FX-53 remains BLOCKED, no Decision/Risk-Engine
 integration was added, no BUY/SELL/trade-recommendation/blackout logic
 was implemented anywhere, and FX-EPIC-08 (News Intelligence) was not
 started.
+
+## 2026-09-29 — FX-55: News Intelligence source feasibility, rights & scope
+
+FX-EPIC-08's own first story, and explicitly authorized despite
+CLAUDE.md's own blanket "do not implement... news intelligence...
+unless explicitly assigned" line. Explicitly documentation/research-
+only: determine what source material FTA may responsibly build future
+news-evidence ingestion on. Explicitly NOT this story: currency/topic
+relevance, deduplication, PIT-safe news snapshot construction,
+visualization, or Decision Engine consumption -- all deferred to named
+future stories (FX-56 through FX-61).
+
+**Inspected existing precedent first**, per this story's own
+instruction not to code against an imagined architecture: read ADR
+0003 (economic-calendar source feasibility, DEFER) and ADR 0004
+(official calendar timing sources, GO/partial) in full as the
+structural template; confirmed the existing HTTP-client convention
+(`infrastructure.policy_rate_providers.fred_client` -- plain
+`httpx.AsyncClient`, a custom provider-unavailable exception, no
+retry/backoff framework exists anywhere in this codebase yet); ran
+`ls docs/adr/` to confirm 0001-0004 exist, making this story's own ADR
+number **0005**.
+
+**Four parallel background research passes**, mirroring this project's
+own established pattern for multi-source primary-source feasibility
+work (FX-49, FX-52): (A) primary/official government and central-bank
+NEWS feeds -- explicitly re-verified independently of FX-52A's own
+SCHEDULE/RELEASE timing work rather than assumed still current, since
+calendar timing (FX-EPIC-07) and textual news evidence (FX-EPIC-08)
+remain separate evidence categories even at the same institution; (B)
+general financial news providers (Reuters/LSEG, Dow Jones/Factiva,
+Bloomberg, AP, FT); (C) news APIs/aggregators (GDELT, NewsAPI, Alpha
+Vantage, Finnhub, Financial Modeling Prep, Marketaux, and Polygon.io/
+Massive discovered during research); (D) dedicated FX/macro commentary
+publishers (FXStreet, ForexLive/InvestingLive, Action Forex,
+MarketPulse, DailyFX, Kathy Lien/BK Asset Management, Forex Factory,
+and ING THINK discovered during research). Every material source
+property -- automated-access/internal-use permission, headline/full-
+text/metadata storage, retention, historical-archive access, derived-
+processing (NLP/embeddings) rights, stable item identity, publication/
+update/correction semantics, cost, authentication, rate limits --
+classified VERIFIED/PARTIALLY_VERIFIED/UNKNOWN/UNSUITABLE strictly from
+each vendor's own primary documentation (API docs, terms, pricing
+pages), never inferred favorably from a plausible field name or a
+third-party blog; every candidate source then given an independent
+ADOPT_PROSPECTIVE/ADOPT_HISTORICAL/DEFER/REJECT verdict, explicitly
+never collapsing "an API exists and returns JSON" into "licensed for
+our use." No account, trial, or subscription was created; no payment
+information was entered; no vendor was contacted; no HTML scraping was
+performed past any bot-protection/WAF/robots.txt boundary. Where a
+publisher's own `robots.txt` named this project's agent class
+(`ClaudeBot`, `anthropic-ai`, `Claude-Web`) with `Disallow: /`
+(discovered for ForexLive's successor domain, `investinglive.com`,
+during the domain's own 301 migration), that boundary was honored
+without argument and no further path on that domain was probed --
+including leaving "does a feed even exist" as genuinely UNKNOWN rather
+than answering it improperly.
+
+**Deliverable**: `docs/adr/0005-news-intelligence-source-feasibility.md`,
+mirroring ADR 0003/0004's own structure (per-source-class evidence,
+a consolidated matrix, a PIT assessment, a historical-coverage
+assessment, a Decision section with explicit per-source reopening
+conditions, a Consequences section).
+
+**NEWS SOURCE FEASIBILITY VERDICT: PARTIAL_GO.** A bounded,
+rights-clear prospective news source set is adoptable using
+**official/primary sources only** -- the Federal Reserve (FOMC
+statements/minutes/SEP/speeches/testimony), the ECB's own combined
+press/speech/interview feed (Working/Occasional Papers excluded per
+ECB's own carve-out), the Bank of England (news incl. minutes,
+speeches, publications, for FTA's current non-commercial research use),
+the GOV.UK Content API for HM Treasury (the single strongest source
+found across all four classes: a UUID fully decoupled from its URL,
+genuinely separate `first_published_at`/`public_updated_at`/
+`updated_at` fields, an explicit `change_history` correction log,
+`withdrawn_notice` retraction representation, a documented 10 req/s
+keyless limit, and OGL v3.0 terms stating explicitly "Anyone can use
+this API for any purpose... no need for onboarding or signing any
+agreements"), Statistics Canada's subject-specific Daily Atom feeds
+(the most permissive licence found in this entire ADR -- a worldwide,
+royalty-free, sub-licensable right to use/reproduce/distribute/sell),
+and the Bank of Canada's press-releases feed **only**, adopted
+contingent on mandatory timestamp remediation. This directly mirrors
+FX-52A's own official-source-only adoption in FX-EPIC-07 after FX-52's
+commercial DEFER, and is treated as an acceptable, expected outcome,
+not a shortfall.
+
+**No general financial news provider, commercial news API/aggregator,
+or dedicated FX-commentary publisher currently clears the bar.**
+Reuters/LSEG, Dow Jones/Factiva, Bloomberg, AP, and FT are each
+DEFER/REJECT: every one is sales-gated with no public price, and two
+(LSEG's free developer tier, FT's Datamining Licence) carry terms that
+affirmatively prohibit or revoke the exact storage FTA would need. Of
+the news APIs/aggregators, only GDELT's bulk metadata channel clears
+rights unconditionally (unrestricted, fee-free, explicit redistribution
+rights) but structurally carries no headline or article text at all;
+NewsAPI, Finnhub, and Financial Modeling Prep are REJECT on
+independently-sufficient contractual grounds (a scope-of-use
+prohibition naming "including internally"; mandatory data deletion on
+any subscription end; a copy/download prohibition plus a
+termination-triggered deletion-and-audit clause, respectively); Alpha
+Vantage and Marketaux are DEFER, each one written clarification away
+from potentially adoptable. Of the FX-commentary publishers, none
+clears the bar as a class: FXStreet and MarketPulse carry explicit
+anti-automation/reproduction prohibitions, ForexLive's successor
+domain names this project's own agent class in its `robots.txt`, and
+ING THINK -- the strongest candidate, discovered during this research --
+has two of its own primary documents (Terms of Use vs. Disclaimer)
+directly contradicting each other on automated-reuse rights, which
+this story's own discipline requires reading as unresolved rather than
+favorable.
+
+**Point-in-time consequence, extending FX-51-54's own discipline into
+this new evidence category**: no source investigated across any of the
+four classes exposes a directly verifiable ingestion/first-seen
+timestamp except GOV.UK's Content API. First-seen/retrieval time is
+therefore the required default FTA availability anchor everywhere
+else; every provider-stated publication timestamp must be persisted as
+a separate, non-authoritative field, never promoted to the
+availability anchor. Two independently confirmed timestamp defects
+were found and must never be trusted directly if their sources are
+ever ingested: ONS's own feed and search-API timestamps are
+demonstrably ~8 hours off the true release instant (a date-midnight
+artifact, confirmed via two independent primary endpoints), and the
+Bank of Canada's `dc:date` mislabels America/Toronto local time as
+`+00:00` (confirmed against three independent event anchors plus the
+feed's own prose) -- the latter independently reconfirming FX-52AH's
+own prior decision not to promote BoC RSS `dc:date` to an exact
+`released_time`; that decision required no change and is reaffirmed,
+not reopened, by this ADR. A genuine look-ahead-bias vector was also
+found and excluded: the Bank of Canada's separate speeches feed
+carries future-dated entries and is explicitly NOT adopted as
+published.
+
+**Two operational alerts surfaced outside this story's own scope,
+recorded for independent follow-up rather than acted on here**: (1)
+BLS returned HTTP 403 on every path, including its own `robots.txt`,
+from this research environment -- FX-52A's already-adopted `bls.ics`
+calendar feed should be independently re-verified from the real
+production egress IP, since this story cannot determine whether the
+block is session-specific or a production regression; (2) a
+previously-relied-upon convenience ("append `/data` to any ONS page
+for JSON") is now confirmed decommissioned (HTTP 404, "legacy endpoint...
+no longer available").
+
+**Baseline re-established, not assumed from a prior story's own
+report**, per this story's own explicit instruction not to blindly
+repeat a stale "7 weekend OANDA failures" claim: `docker compose up
+-d`, `alembic upgrade head`, `pytest --no-cov -q` -> **1601 passed, 1
+failed, 4 deselected** -- the one failure is
+`test_get_account_balance_against_live_practice_api`, a live-OANDA
+`BrokerUnavailableError` on a 307-redirect/non-JSON response, a
+**different failure signature** than the previously-reported weekend
+candle-empty set, confirming the story's own warning that repeating a
+stale baseline claim would have been wrong here. `ruff check .` all
+passed; `ruff format --check .` -- 382 files already formatted; `mypy
+.` -- no issues across 369 source files.
+
+**No production code, schema, migration, or dependency change of any
+kind was made** -- verified unchanged by this story; the only artifact
+produced is `docs/adr/0005-news-intelligence-source-feasibility.md`
+plus this entry and the corresponding `docs/ARCHITECTURE.md`/
+`docs/CURRENT_STATE.md`/`docs/NEXT_STEPS.md` updates. No vendor
+clarification email was sent -- each DEFER candidate's own
+source-specific questions are prepared and recorded in ADR 0005 itself
+for a future authorized outreach.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no news ingestion/
+deduplication/classification/sentiment/dashboard/Decision-Risk-Engine
+work was started, no data was purchased, and no trial or vendor
+contact was initiated. **FX-56 (Point-in-Time News Evidence Model) may
+begin**, strictly scoped to ADR 0005's own stated adopted-source set
+and assumptions -- see that ADR's own "FX-56 readiness" section for the
+complete list of what FX-56 may and may not yet assume.

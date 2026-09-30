@@ -1334,6 +1334,79 @@ registry, deliberately not a domain concept.
 **No new migration, no schema change** -- every view is computed on
 request. Full details in `docs/DECISIONS.md`'s own FX-54V entry.
 
+## News Intelligence source feasibility (FX-55, FX-EPIC-08's first story)
+
+**FX-EPIC-08 ("News Intelligence") is now started, and FX-55 is
+documentation-only** -- no domain type, no persistence, no adapter, no
+route, no dependency. Its entire deliverable is
+`docs/adr/0005-news-intelligence-source-feasibility.md`, an ADR
+mirroring ADR 0003/0004's own evidentiary structure but applied to a
+materially different evidence class: textual news/commentary, not
+scheduled release timing. Calendar timing (FX-EPIC-07) and news
+evidence (FX-EPIC-08) remain separate evidence categories even where
+the same institution is the source for both -- "the Bank of Canada's
+decision is scheduled for 09:45" (FX-52A's own territory) is not the
+same fact as "the Bank of Canada publishes its policy statement text"
+(FX-55/future FX-56's own territory), and FX-55 does not touch,
+extend, or duplicate `EconomicEventRepository` or any FX-51-54 type.
+
+Four parallel research passes (official/primary sources; general
+financial news providers; news APIs/aggregators; dedicated FX/macro
+commentary publishers) each classified every material source property
+-- automated-access rights, internal-use permission, headline/full-text/
+metadata storage, retention, derived-processing (NLP/embeddings)
+rights, stable item identity, publication/update/correction semantics,
+cost, and rate limits -- as VERIFIED/PARTIALLY_VERIFIED/UNKNOWN/
+UNSUITABLE strictly from each vendor's own primary documentation, then
+gave each source an independent ADOPT_PROSPECTIVE/ADOPT_HISTORICAL/
+DEFER/REJECT verdict. No purchase, paid trial, credential signup, or
+sales contact was made; no HTML scraping was performed past any
+bot-protection/WAF/robots.txt boundary, and where a publisher's own
+`robots.txt` named this project's agent class with `Disallow: /`
+(discovered for ForexLive's successor domain, InvestingLive), that
+boundary was honored without further probing.
+
+**Overall verdict: PARTIAL_GO.** A bounded, rights-clear prospective
+news source set is adoptable using **official/primary sources only**
+-- the Federal Reserve, the ECB's combined press/speech/interview feed,
+the Bank of England, the GOV.UK Content API (HM Treasury), Statistics
+Canada's Daily feeds, and the Bank of Canada's press-releases feed
+(with mandatory timestamp remediation) -- directly mirroring FX-52A's
+own official-source-only precedent in FX-EPIC-07 after FX-52's
+commercial DEFER. No general financial news provider (Reuters/LSEG,
+Dow Jones/Factiva, Bloomberg, AP, FT), commercial news API/aggregator
+(NewsAPI, Finnhub, FMP, Alpha Vantage, Marketaux, Polygon/Massive),
+or dedicated FX-commentary publisher (FXStreet, Action Forex, ING
+THINK, others) currently clears the rights/PIT/identity bar --
+every one is either commercially gated with no public price/terms, or
+blocked by an explicit rights conflict a written vendor clarification
+could resolve (prepared in the ADR, deliberately not sent). GDELT's
+bulk metadata channel is the sole exception with unrestricted,
+fee-free rights, but it structurally carries no headline or article
+text, so it complements rather than replaces a text-bearing source.
+
+**Point-in-time consequence for any future ingestion story**: no
+source investigated -- across all four classes -- exposes a directly
+verifiable ingestion/first-seen timestamp except GOV.UK's Content API
+(`first_published_at`). First-seen/retrieval time is therefore the
+required default FTA availability anchor everywhere else, exactly
+extending FX-51-54's own PIT discipline into this new evidence
+category; every provider-stated publication timestamp must be
+persisted as a separate, non-authoritative field. Two independently
+confirmed timestamp defects were found and must be handled by adapter
+code, never trusted directly, if their sources are ever ingested: ONS
+publishes a date-midnight artifact roughly eight hours off its true
+release instant, and the Bank of Canada's `dc:date` mislabels
+America/Toronto local time as `+00:00` -- the latter independently
+reconfirming FX-52AH's own prior decision not to promote BoC RSS
+`dc:date` to an exact `released_time`.
+
+FX-56 (Point-in-Time News Evidence Model) may begin, scoped exactly to
+ADR 0005's own stated adopted-source set and assumptions -- see that
+ADR's "FX-56 readiness" section for the complete list of what may and
+may not yet be assumed. Full details in `docs/DECISIONS.md`'s own
+FX-55 entry.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

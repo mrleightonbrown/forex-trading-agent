@@ -1809,6 +1809,93 @@ Engine integration was added; no BUY/SELL/blackout/trade-recommendation
 logic was implemented anywhere; FX-EPIC-08 (News Intelligence) was not
 started.
 
+## FX-55: News Intelligence source feasibility, rights & scope (complete)
+
+FX-EPIC-08's own first story, explicitly authorized and explicitly
+documentation-only: determine what source material FTA may
+responsibly build future news-evidence ingestion on. Four parallel
+research passes investigated (A) primary/official government and
+central-bank NEWS feeds -- re-verified independently of FX-52A's own
+SCHEDULE/RELEASE timing work, since the two remain separate evidence
+categories even at the same institution; (B) general financial news
+providers (Reuters/LSEG, Dow Jones/Factiva, Bloomberg, AP, FT); (C)
+news APIs/aggregators (GDELT, NewsAPI, Alpha Vantage, Finnhub, FMP,
+Marketaux, Polygon/Massive); (D) dedicated FX/macro commentary
+publishers (FXStreet, ForexLive/InvestingLive, Action Forex,
+MarketPulse, DailyFX, ING THINK, others). Every material property
+(automated-access rights, internal-use permission, storage/retention,
+derived-processing rights, stable identity, publication/update/
+correction semantics, cost, rate limits) classified VERIFIED/
+PARTIALLY_VERIFIED/UNKNOWN/UNSUITABLE strictly from each vendor's own
+primary documentation, per this project's own FX-49/FX-52 evidentiary
+discipline; every source given an independent ADOPT_PROSPECTIVE/
+ADOPT_HISTORICAL/DEFER/REJECT verdict, never collapsed into "an API
+exists = licensed."
+
+Deliverable: `docs/adr/0005-news-intelligence-source-feasibility.md`.
+**Verdict: PARTIAL_GO.** A bounded, rights-clear prospective source
+set is adoptable using official sources only -- the Federal Reserve,
+the ECB's combined press/speech/interview feed, the Bank of England,
+the GOV.UK Content API (HM Treasury -- the single strongest source
+found: a UUID decoupled from its URL, genuinely separate first-
+published/updated timestamps, an explicit correction log, retraction
+representation, and OGL v3.0 "any purpose, no agreement needed"
+terms), Statistics Canada's Daily feeds, and the Bank of Canada's
+press-releases feed (adopted only with mandatory timestamp
+remediation -- its `dc:date` mislabels America/Toronto local time as
+`+00:00`, independently reconfirming FX-52AH's own prior decision not
+to trust it as an exact `released_time`; its separate speeches feed
+was found to carry future-dated entries and is explicitly NOT
+adopted). This mirrors FX-52A's own official-source-only precedent in
+FX-EPIC-07 after FX-52's commercial DEFER. No general financial news
+provider, commercial news API/aggregator, or dedicated FX-commentary
+publisher currently clears the rights/PIT/identity bar -- each is
+either commercially gated with no public price or storage terms, or
+blocked by a resolvable rights conflict (source-specific clarification
+questions were prepared per DEFER candidate and explicitly NOT sent,
+per this story's own hard prohibition on contacting vendors, starting
+trials, or entering payment information). GDELT's bulk metadata
+channel is the one source with unrestricted, fee-free rights, but
+structurally carries no headline or article text, so it complements
+rather than replaces a text source.
+
+No source investigated across any of the four classes exposes a
+directly verifiable ingestion/first-seen timestamp except GOV.UK's own
+Content API -- first-seen/retrieval time is therefore the required
+default FTA availability anchor everywhere else, extending FX-51-54's
+own PIT discipline into this new evidence category. Independently
+reconfirmed two operational findings that sit outside this story's own
+scope but matter to the epic: BLS now returns HTTP 403 on every path,
+including its own `robots.txt`, from this research environment
+(FX-52A's already-adopted `bls.ics` calendar feed should be re-checked
+from the real production egress IP); and ONS's own timestamps were
+independently confirmed roughly eight hours off the true release
+instant via two separate primary endpoints.
+
+Baseline re-established per this story's own instruction, not assumed
+from a prior story: `pytest --no-cov -q` -> 1601 passed, 1 failed
+(`test_get_account_balance_against_live_practice_api`, a live-OANDA
+307-redirect/non-JSON-response failure -- a different signature than
+the previously-reported weekend candle-empty set, confirming a stale
+baseline claim would have been wrong here), 4 deselected. `ruff
+check`/`ruff format --check`/`mypy .` all clean. No production code,
+schema, migration, or dependency changed -- verified unchanged by this
+story. No purchase, paid trial, credential signup, or scraping past
+any bot-protection/robots.txt/terms boundary was performed anywhere;
+where a publisher's own `robots.txt` named this project's agent class
+with `Disallow: /` (discovered for ForexLive's successor domain,
+InvestingLive), that boundary was honored without further probing.
+Full details in `docs/DECISIONS.md`'s FX-55 entry and in ADR 0005
+itself.
+
+**Per this story's own explicit stop instruction**: FX-49 remains
+DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED; no news ingestion,
+deduplication, classification, sentiment, dashboard, or Decision/
+Risk-Engine work was started; **FX-56 (Point-in-Time News Evidence
+Model) may begin**, scoped exactly to ADR 0005's own stated
+adopted-source set and assumptions -- see that ADR's own "FX-56
+readiness" section.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53 (gated, still not started),
 FX-50 (gated on FX-49's own reopening conditions, not started), the
@@ -1822,14 +1909,16 @@ any other FX-52A coverage extension, or any carry-strategy/
 tradability work (explicitly out of scope for FX-46/FX-46H/FX-47/
 FX-47H/FX-48/FX-49's own research, per FX-46's own section 14).
 
-Do not start news intelligence, AI decision-making, rate-differential/
-carry TRADING strategies, execution logic, live trading, commercial
-economic-calendar provider integration, consensus/surprise ingestion,
-or event-risk trading rules — out of scope until explicitly assigned
-per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
+Do not start news ingestion, deduplication, classification, or
+sentiment logic (FX-56 onward, still gated -- see below), general
+AI decision-making, rate-differential/carry TRADING strategies,
+execution logic, live trading, commercial economic-calendar or
+commercial news-provider integration, consensus/surprise ingestion, or
+event-risk trading rules — out of scope until explicitly assigned per
+CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/FX-43/FX-43H/
 FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/FX-46/FX-46H/
 FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/FX-52A/FX-52AH/
-FX-52AH.1/FX-54/FX-54V above are the explicitly-scoped exceptions (domain model, storage-integrity
+FX-52AH.1/FX-54/FX-54V/FX-55 above are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -1851,16 +1940,23 @@ pass correcting that ingestion's own occurrence-identity and
 source-safety semantics, a final integrity patch closing a
 timezone bug plus three remaining schema/persistence gaps, and a
 deterministic, provider-neutral, TIMING-ONLY event-risk evidence
-snapshot consuming that timing evidence per FX pair, and a read-only
+snapshot consuming that timing evidence per FX pair, a read-only
 visualization of that evidence plus already-committed fundamental
-research, introducing no new charting/UI framework -- still no
+research, introducing no new charting/UI framework, and a
+documentation-only news-source feasibility/rights investigation
+reaching PARTIAL_GO on an official-source-only set -- still no
 strategy, no decision logic, no "carry"/"expected rate" framing, no
-tradability claim, no commercial calendar provider, no consensus, no
-surprise, no event-risk scoring) and do not open the door to the rest
-of this phase. The same goes for the downstream epics not in this list
-at all (Decision Engine, Risk Engine, Paper Trading Execution,
-Performance Analytics, Shadow Trading) — none are part of the current
-phase.
+tradability claim, no commercial calendar/news provider, no consensus,
+no surprise, no event-risk scoring, no news ingestion or persistence
+of any kind) and do not open the door to the rest of this phase.
+**FX-56 (Point-in-Time News Evidence Model) is the one explicit
+exception**: ADR 0005 (FX-55) authorizes it to begin, but strictly
+scoped to that ADR's own adopted source set and stated assumptions --
+it is not a general license to build news ingestion beyond what ADR
+0005 names. The same "do not open the door" rule applies to the
+downstream epics not in this list at all (Decision Engine, Risk
+Engine, Paper Trading Execution, Performance Analytics, Shadow
+Trading) — none are part of the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

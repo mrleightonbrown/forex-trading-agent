@@ -1546,6 +1546,59 @@ _Last updated: 2026-09-27 (FX-54V)_
   Decision/Risk-Engine integration; no BUY/SELL/blackout/trade-
   recommendation logic anywhere; FX-EPIC-08 (News Intelligence) not
   started.**
+- **FX-55: News Intelligence source feasibility, rights & scope
+  (complete, documentation-only -- FX-EPIC-08's own first story)**.
+  ADR 0005 (`docs/adr/0005-news-intelligence-source-feasibility.md`)
+  investigates, via four parallel research passes, whether FTA may
+  responsibly build future news-evidence ingestion on any available
+  source: (A) primary/official government and central-bank NEWS
+  feeds (re-verified independently of FX-52A's own SCHEDULE/RELEASE
+  timing work -- a different fact category even at the same
+  institution); (B) general financial news providers (Reuters/LSEG,
+  Dow Jones/Factiva, Bloomberg, AP, FT); (C) news APIs/aggregators
+  (GDELT, NewsAPI, Alpha Vantage, Finnhub, FMP, Marketaux, Polygon/
+  Massive); (D) dedicated FX/macro commentary publishers (FXStreet,
+  ForexLive/InvestingLive, Action Forex, MarketPulse, DailyFX, ING
+  THINK, others). Every material property is classified VERIFIED/
+  PARTIALLY_VERIFIED/UNKNOWN/UNSUITABLE from primary vendor
+  documentation only, never inferred favorably; every source gets an
+  independent ADOPT_PROSPECTIVE/ADOPT_HISTORICAL/DEFER/REJECT verdict.
+  **Verdict: PARTIAL_GO** -- a bounded, rights-clear prospective
+  source set is adoptable using official sources only (Fed, ECB press
+  feed, Bank of England, GOV.UK/HM Treasury Content API, Statistics
+  Canada, and the Bank of Canada press-releases feed with mandatory
+  timestamp remediation), directly mirroring FX-52A's own
+  official-source-only precedent after FX-52's commercial DEFER; no
+  general financial provider, commercial news API, or FX-commentary
+  publisher currently clears the rights/PIT/identity bar without
+  either a priced commercial contract or a vendor clarification this
+  story was explicitly forbidden from pursuing. GOV.UK's Content API
+  is the single strongest source found (a stable UUID, genuinely
+  separate first-published/updated timestamps, an explicit correction
+  log, retraction representation, OGL v3.0 "any purpose" terms).
+  Independently reconfirmed two live defects worth tracking outside
+  this story: BLS now returns HTTP 403 on every path including its own
+  `robots.txt` from this research environment (FX-52A's existing
+  `bls.ics` ingestion needs a from-production check); and the Bank of
+  Canada's `dc:date` mislabels America/Toronto local time as `+00:00`
+  and its speeches feed carries future-dated entries, both
+  independently reconfirming FX-52AH's own prior decision not to trust
+  BoC RSS `dc:date` as an exact `released_time`. No source anywhere
+  investigated exposes a directly verifiable ingestion timestamp except
+  GOV.UK -- first-seen/retrieval time remains the default FTA
+  availability anchor everywhere else, consistent with FX-51-54's own
+  PIT discipline. No purchase, paid trial, credential signup, or
+  scraping past any bot-protection/robots.txt/terms boundary was
+  performed anywhere in this research; where a publisher's own
+  `robots.txt` named this project's agent class with `Disallow: /`
+  (InvestingLive), that boundary was honored without argument. No
+  production code, schema, migration, or dependency change of any
+  kind. Full details in `docs/DECISIONS.md`'s FX-55 entry. **Stop
+  after FX-55 -- FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED;
+  FX-56 (Point-in-Time News Evidence Model) may begin, scoped to
+  exactly the adopted source set and assumptions ADR 0005 states; no
+  news ingestion, deduplication, classification, sentiment, dashboard,
+  or Decision/Risk-Engine work was started.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -1968,6 +2021,16 @@ _Last updated: 2026-09-27 (FX-54V)_
   strategy, fundamental score, or fundamentals-driven decision logic —
   this story's own explicit instruction was to never call this data
   "carry," and it never is anywhere in this codebase.
+- Any news/commentary ingestion, storage, deduplication, topic/
+  relevance classification, sentiment, or source-reputation logic of
+  any kind. FX-55 (above) is a documentation-only feasibility/rights
+  investigation -- it added no news table, no adapter, no ingestion
+  job, and touched no production code. ADR 0005 reached PARTIAL_GO and
+  names an adoptable official-source-only set (Fed, ECB, Bank of
+  England, GOV.UK/HM Treasury, Statistics Canada, Bank of Canada
+  press releases), but none of it is ingested yet; FX-56 (Point-in-Time
+  News Evidence Model) is the next, not-yet-started story, scoped
+  exactly to ADR 0005's own stated assumptions.
 
 ## Next
 
