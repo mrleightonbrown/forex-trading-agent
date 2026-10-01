@@ -1640,6 +1640,67 @@ _Last updated: 2026-09-27 (FX-54V)_
   scoped to ADR 0005's own now-corrected adopted-source set and
   assumptions; no FX-56 implementation, news ingestion, or vendor
   outreach was started.**
+- **FX-56: Point-in-Time News Evidence Model (complete)**. FX-EPIC-08's
+  second story: the provider-neutral, immutable, point-in-time storage
+  model a future source adapter (FX-57) will target. New domain types
+  `NewsItem` (internal identity, immutable `first_seen_at`/`first_
+  observation_mode`), `NewsItemVintage` (one append-only fact per
+  FTA-observed revision), `NewsSourceIdentity`
+  (`source_key`/`external_item_id` -- never a URL, never a timestamp),
+  `NewsSourceTimestampProvenance`/`NewsSourceRevisionFact` (raw
+  provider timestamps/correction history, preserved independently of
+  FTA's own `availability`), `NewsObservationMode`
+  (`PROSPECTIVE`/`BACKFILL`), `NewsEvidenceDisposition`
+  (`EVIDENCE_ELIGIBLE`/`QUARANTINED`), `NewsSourceStatus`
+  (`ACTIVE`/`WITHDRAWN`), and a six-entry `domain.news_source_registry`
+  confirming exactly ADR 0005/FX-55H's own adopted text-bearing set
+  (Fed, ECB, BoE, GOV.UK/HM Treasury, StatCan, BoC). New application
+  port `NewsRepository` and use case `RecordNewsObservation`
+  (idempotent change-detection: a repeated identical poll returns
+  `UNCHANGED`, never a duplicate vintage). New migration `504030474987`
+  (`news_items`/`news_source_mappings`/`news_item_vintages`).
+  **`SqlAlchemyNewsRepository.register_source_item` corrects a known
+  weakness in FX-52A/FX-52AH's own two-step mint-then-map design**
+  (which commits a candidate occurrence BEFORE its mapping's own
+  outcome is known, letting a losing concurrent registration leave a
+  permanent orphan row): the candidate item and its mapping are
+  inserted in ONE uncommitted transaction and committed together only
+  if the mapping wins its own `ON CONFLICT DO NOTHING`; a losing
+  attempt rolls the whole transaction back, discarding its own
+  candidate item with it, before resolving to the winner's identity --
+  verified against live Postgres with two genuinely concurrent
+  sessions (`asyncio.gather`), not merely argued from the SQL shape.
+  **FTA availability (`NewsItemVintage.availability`) is enforced in
+  storage as FTA's own observation time alone, with no exception** --
+  `source_published_at`/`source_updated_at`/`source_timestamp_
+  provenance`/`source_revision_metadata` stay structurally separate on
+  every vintage (FX-55H's own invariant, now enforced in code, not
+  only stated in an ADR). `NewsSourceStatus`/`NewsEvidenceDisposition`
+  are deliberately independent axes (an `ACTIVE` article can be
+  quarantined; a `WITHDRAWN` one can be evidence-eligible).
+  `latest_evidence_eligible_vintage_as_of` excludes `QUARANTINED` and,
+  by default, `BACKFILL` vintages, so a future historical import can
+  never masquerade as prospective evidence without an explicit opt-in
+  -- though no backfill adapter exists, since FX-55/FX-55H adopted no
+  historical source. This project's first use of `JSONB`
+  (`authors`/`source_timestamp_provenance`/`source_revision_metadata`),
+  validated on every read via a dedicated `MalformedNewsVintageRowError`
+  rather than trusted silently. Migration downgrade guard ships from
+  the start (not added after the fact, unlike FX-51H.1/FX-52AH.1's own
+  corrections), verified live: an inserted test row forces exact
+  refusal naming every non-empty table; a genuinely empty set of
+  tables downgrades and re-upgrades cleanly. ~100 new tests (domain,
+  a real two-session concurrency integration test, migration
+  downgrade-guard unit test, PIT/quarantine/withdrawal/backfill worked
+  examples from the story itself). 1702 tests pass overall (up from
+  1602); 4 deselected (unchanged). No source adapter, no network I/O,
+  no cross-source deduplication, no relevance/topic/sentiment
+  classification, no news snapshot, no dashboard change, no Decision/
+  Risk-Engine integration -- all explicitly out of scope, deferred to
+  FX-57 onward. Full details in `docs/DECISIONS.md`'s FX-56 entry.
+  **Stop after FX-56 -- FX-49/FX-52 remain DEFER; FX-53 remains
+  BLOCKED; do not start FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09;
+  no live news-provider call was made anywhere in this story.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
@@ -2062,16 +2123,19 @@ _Last updated: 2026-09-27 (FX-54V)_
   strategy, fundamental score, or fundamentals-driven decision logic —
   this story's own explicit instruction was to never call this data
   "carry," and it never is anywhere in this codebase.
-- Any news/commentary ingestion, storage, deduplication, topic/
-  relevance classification, sentiment, or source-reputation logic of
-  any kind. FX-55 (above) is a documentation-only feasibility/rights
-  investigation -- it added no news table, no adapter, no ingestion
-  job, and touched no production code. ADR 0005 reached PARTIAL_GO and
-  names an adoptable official-source-only set (Fed, ECB, Bank of
-  England, GOV.UK/HM Treasury, Statistics Canada, Bank of Canada
-  press releases), but none of it is ingested yet; FX-56 (Point-in-Time
-  News Evidence Model) is the next, not-yet-started story, scoped
-  exactly to ADR 0005's own stated assumptions.
+- Any actual news/commentary INGESTION, any source adapter, any
+  cross-source deduplication, topic/relevance classification,
+  sentiment, or source-reputation logic of any kind. FX-55/FX-55H
+  (above) is documentation-only (ADR 0005, PARTIAL_GO, an
+  official-source-only adopted set); FX-56 (above) built the
+  provider-neutral point-in-time STORAGE MODEL (`NewsItem`/
+  `NewsItemVintage`/`NewsRepository`/`RecordNewsObservation`) that a
+  future adapter will target, but FX-56 itself performs zero network
+  I/O and ships no adapter -- there is still no Fed/ECB/BoE/GOV.UK/
+  StatCan/BoC HTTP client anywhere in this codebase, and the three new
+  tables (`news_items`/`news_source_mappings`/`news_item_vintages`)
+  hold no real data. FX-57 (News Source Ingestion & Raw Provenance) is
+  the next, not-yet-started story.
 
 ## Next
 

@@ -1284,6 +1284,12 @@ technical gap:
 
 ## FX-56 readiness
 
+**Status update: FX-56 is complete (2026-10-01)**, built exactly to
+this section's own stated assumptions -- see `docs/DECISIONS.md`'s own
+FX-56 entry for the implementation. This section's content below is
+left as originally written (the design brief FX-56 was built against),
+not rewritten in hindsight.
+
 **FX-56 (Point-in-Time News Evidence Model) may begin.** It may safely
 assume, as a starting design surface:
 

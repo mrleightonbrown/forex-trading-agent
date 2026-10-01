@@ -9902,3 +9902,240 @@ dashboard/Decision-Risk-Engine work was started, and no vendor outreach
 was initiated. **FX-56 (Point-in-Time News Evidence Model) may still
 begin**, strictly scoped to ADR 0005's own now-corrected adopted-source
 set and assumptions.
+
+## 2026-10-01 — FX-56: Point-in-Time News Evidence Model
+
+FX-EPIC-08's second story, explicitly authorized. Builds the
+provider-neutral, immutable, point-in-time STORAGE model a future
+source adapter (FX-57) will target -- performs zero network I/O and
+ships no adapter of any kind.
+
+**Inspected first, per this story's own instruction**: ADR 0005 AND
+FX-55H (never the pre-hardening wording -- FX-55H supersedes the
+original PIT exceptions), the FX-51/FX-51H/FX-51H.1 economic-event PIT
+model (`EconomicEventOccurrence`/`EconomicEventScheduleVintage`/
+`AvailabilityConfidence`), FX-52A/FX-52AH/FX-52AH.1's own occurrence-
+identity history (`EconomicEventSourceMappingRepository`,
+`mint_occurrence_key`, and specifically the migration-added FK that
+relies on "commit-per-call discipline"), `domain._guards`/`domain.
+timestamps.UtcTimestamp`, and this project's own SQLAlchemy/Alembic/
+UUID/mixin/repository conventions (`UUIDPrimaryKeyMixin`/
+`TimestampMixin`, `INSERT ... ON CONFLICT DO NOTHING ... RETURNING id`
+as the universal idempotent-write shape, enum-as-`String`-column with
+a mirroring `CheckConstraint`, business-key `UniqueConstraint`
+alongside a UUID surrogate PK never used as a relationship target).
+
+**The atomic-registration correction is this story's own central
+design decision.** FX-52A/FX-52AH's own two-step design -- mint an
+occurrence, `add_occurrence` (which commits immediately on success),
+THEN `record_mapping` -- has a real, previously undetected race:
+`EconomicEventSourceMappingRow`'s own docstring explicitly states its
+FK is satisfiable only because "both ingestion use cases already call
+`add_occurrence` and let it commit BEFORE calling `record_mapping`."
+Two workers racing to register the SAME never-before-seen `(source,
+external_event_id, indicator_key)` triple can each mint a DIFFERENT
+occurrence_key, each successfully commit their OWN occurrence (no
+conflict -- different keys), and then both attempt `record_mapping`
+for the identical triple: one succeeds, the other's insert conflicts,
+and `_resolve_occurrence_key` in `IngestOfficialCalendarSchedule`
+re-reads the existing mapping, finds it points at the WINNER's
+occurrence_key (different from its own candidate), and raises
+`EconomicEventSourceMappingConflictError` -- leaving the loser's own
+already-committed occurrence a PERMANENT ORPHAN with no mapping ever
+pointing to it, forever, with no cleanup path anywhere in this
+codebase. `SqlAlchemyNewsRepository.register_source_item` does not
+repeat this: it inserts a candidate `NewsItemRow` and attempts its
+`NewsSourceMappingRow` insert (`ON CONFLICT DO NOTHING` on
+`(source_key, external_item_id)`) in ONE transaction, FLUSHED but
+never committed until the mapping's own outcome is known. On success,
+both rows commit together. On conflict, the ENTIRE transaction rolls
+back -- discarding the candidate item insert along with the failed
+mapping attempt -- before resolving to the winner's already-registered
+`news_item_key` via a fresh read. This is correct under Postgres's own
+`READ COMMITTED` isolation with no additional synchronization: a
+second session's conflicting insert blocks on the first session's row
+lock on the unique index until that transaction resolves (commit or
+rollback), then itself resolves correctly either way once unblocked.
+**Verified against real, live Postgres with two genuinely concurrent
+sessions** (two independent `AsyncSession`s/connections, driven via
+`asyncio.gather`, not simulated) -- run five consecutive times with no
+flakiness, asserting exactly one `news_items` row and one
+`news_source_mappings` row survive, and both racing callers observe
+the identical winning `news_item_key`. `news_source_mappings` also
+enforces a cardinality `EconomicEventSourceMappingRow` deliberately
+does not: `UNIQUE(news_item_key)`, so one internal item can never
+accumulate more than one external source identity -- FX-56 models one
+SOURCE ITEM, never a real-world story spanning sources; two different
+`NewsSourceIdentity` values always resolve to two SEPARATE `NewsItem`s
+even when they look like the same real-world story, verified directly
+(`test_different_source_keys_never_collapse_identity`,
+`test_different_external_id_same_headline_creates_different_items`) --
+cross-source clustering remains FX-58's own, later, explicit job.
+
+**Domain** (`src/forex_agent/domain/`): `news_item.py` (`NewsItem` --
+`news_item_key`, immutable `first_seen_at`/`first_observation_mode`),
+`news_item_vintage.py` (`NewsItemVintage` -- the append-only,
+FTA-observed fact; `availability: UtcTimestamp` is REQUIRED, never
+`None`/`UNKNOWN`, unlike `EconomicEventScheduleVintage.availability`,
+because a `NewsItemVintage` is only ever constructed from an actual
+FTA observation or an explicit backfill import, both of which always
+have a concrete known FTA instant; quarantine-reason mutual exclusivity
+enforced in `__post_init__`, mirroring `require_availability_
+consistency`'s own discipline but inlined rather than added to the
+shared `_guards.py`, since exactly one type needs it),
+`news_source_identity.py` (`NewsSourceIdentity` -- `source_key`/
+`external_item_id`; never a URL, never a timestamp),
+`news_source_timestamp_provenance.py` (`NewsSourceTimestampProvenance`
+-- raw provider timestamp string, preserved independently of an
+optional verified `normalized_at` reinterpretation; the raw value is
+NEVER overwritten by a remediation), `news_source_revision_fact.py`
+(`NewsSourceRevisionFact`/`NewsSourceRevisionKind` -- provider-neutral
+structured correction/withdrawal history, e.g. one GOV.UK `change_
+history` entry; preserved as SOURCE-side history only, never
+fabricating an FTA-observed revision that did not occur),
+`news_observation_mode.py` (`PROSPECTIVE`/`BACKFILL` -- only
+`PROSPECTIVE` is ever constructed by any code in this story),
+`news_evidence_disposition.py` (`EVIDENCE_ELIGIBLE`/`QUARANTINED`),
+`news_source_status.py` (`ACTIVE`/`WITHDRAWN`, requiring positive
+provider evidence for `WITHDRAWN` -- never inferred from a bounded
+feed's own item simply disappearing, mirroring the economic-calendar
+"disappearance != cancellation" rule exactly), `news_item_identity.py`
+(`mint_news_item_key`, mirrors `mint_occurrence_key` exactly),
+`news_source_definition.py`/`news_source_registry.py`
+(`NewsSourceDefinition` + a six-entry registry -- FED/ECB/BOE/
+GOVUK_HMT/STATCAN/BOC -- confirming exactly ADR 0005/FX-55H's own
+adopted text-bearing set; BEA/GDELT/every commercial provider has NO
+entry, mirroring `economic_indicator_registry`'s own "EUR has no
+entry" admission discipline; carries zero reputation/credibility/
+trust fields by construction, and is never looked up by
+`NewsRepository` itself -- ADR 0005 remains the sole rights authority).
+
+**Application** (`src/forex_agent/application/`):
+`ports/news_repository.py` (`NewsRepository` Protocol;
+`NewsItemRegistrationResult`/`NewsItemRegistrationOutcome`;
+`NewsVintageWriteOutcome`/`NewsVintageConflictError` -- a deliberately
+SEPARATE, identically-shaped enum from `economic_event_repository`'s
+own `VintageWriteOutcome`, matching that port's own stated anti-
+coupling reasoning rather than sharing an import), `ports/news_
+source.py` (`NormalizedNewsObservation` -- mirrors `RawSchedule
+Observation`'s own role; deliberately ships NO `NewsSource` Protocol
+yet, since FX-57 owns the actual adapter shape), `use_cases/record_
+news_observation.py` (`RecordNewsObservation` -- mirrors `Ingest
+OfficialCalendarSchedule`'s own change-detection shape via a private
+`_same_modeled_facts` helper comparing every field except `news_item_
+key`/`revision_sequence`/`availability`; `CREATED`/`REVISION_ADDED`/
+`UNCHANGED` outcomes).
+
+**Infrastructure** (`src/forex_agent/infrastructure/db/`):
+`models/news_item.py`/`models/news_source_mapping.py`/`models/news_
+item_vintage.py` (UUID PK + business-key `UniqueConstraint`s + `Foreign
+KeyConstraint`s, mirroring `EconomicEventOccurrenceRow`'s own shape;
+a `CheckConstraint` mirroring the domain's own quarantine-reason
+mutual exclusivity), `news_repository.py`
+(`SqlAlchemyNewsRepository` -- see the atomic-registration correction
+above for `register_source_item`; every other write keeps the same
+`INSERT ... ON CONFLICT DO NOTHING ... RETURNING id` discipline as
+`SqlAlchemyEconomicEventRepository`, with no method anywhere issuing
+an `UPDATE` against a vintage/item/mapping row). **This project's
+first use of `JSONB`** (`authors`/`source_timestamp_provenance`/
+`source_revision_metadata` on `news_item_vintages` -- no prior JSONB
+convention existed anywhere in this codebase to reuse); every read
+reconstructs validating domain objects via dedicated serialization
+helpers (`_authors_from_json`/`_provenance_from_json`/`_revision_
+metadata_from_json`), raising a new `MalformedNewsVintageRowError`
+loudly on a malformed stored shape -- verified directly by manually
+corrupting an `authors` column via raw SQL and confirming the next
+`list_vintages` call raises rather than silently coercing.
+
+**Migration `504030474987`** (`news_items` -> `news_source_mappings`
+-> `news_item_vintages`, in FK-dependency order) **ships its downgrade
+guard from the start** -- deliberately learning from FX-51H.1's and
+FX-52AH.1's own after-the-fact corrections (both of which shipped
+unguarded and were hardened only once real data existed) rather than
+repeating that exact mistake a third time. `_raise_if_downgrade_would_
+lose_data` checks all three tables' row counts before any destructive
+DDL and raises `RuntimeError` naming every non-empty one. Verified
+three independent ways: a mocked-`op` unit test proving the guard's
+own logic runs before any `drop_table`/`drop_index` call (mirrors
+`test_migration_source_mapping_downgrade_guard.py`'s own pattern
+exactly); a live round-trip against the real dev database with all
+three tables genuinely empty (`alembic downgrade -1` then `alembic
+upgrade head`, both clean); and a live refusal check (one row manually
+inserted into `news_items`, `alembic downgrade -1` refused with the
+exact documented message naming `news_items=1 row(s)`, the row then
+removed and `alembic current` reconfirmed at `504030474987`, the head).
+
+**PIT worked examples from the story itself, each pinned by its own
+integration test against live Postgres** (not merely unit-tested with
+a fake): the correction example (Section 48) -- `source_updated_at`
+earlier than FTA's own observation never backdates the new revision's
+own visibility; the withdrawal example (Section 47) -- a withdrawal
+becomes visible only at FTA's own observation instant, never the
+source's own claimed withdrawal time; the quarantine example (Section
+46) -- `latest_vintage_as_of` returns a quarantined revision while
+`latest_evidence_eligible_vintage_as_of` returns `None` for the
+identical `as_of`; the backfill guardrail (Section 50/74) -- a
+`BACKFILL` vintage is invisible to a historical `as_of` query before
+its own backfill time and excluded from evidence-eligible queries
+unless `include_backfill=True` is passed explicitly, even though no
+backfill adapter exists anywhere in this codebase; and the "first poll
+after several source-side corrections" example (Section 49) -- a
+GOV.UK-style `change_history` with three prior corrections, first
+retrieved by FTA after all three already happened, produces exactly
+ONE FTA-observed revision (`revision_sequence == 0`), with all three
+source-side correction facts preserved as provenance on that SAME
+revision, never fabricating three separate FTA-observed ones.
+
+**Tests**: ~100 new tests -- domain (every new type's own validation,
+including the quarantine mutual-exclusivity guard and the six-source
+registry's own admission confirmation), a migration downgrade-guard
+unit test (4 cases, mocked `op`), and two integration suites against
+live Postgres: `test_news_repository.py` (22 tests -- round-trip,
+FK enforcement via a deliberately orphaned vintage, conflict
+detection, every PIT worked example above, the malformed-JSONB
+failure case, and the real two-session concurrency test) and
+`test_record_news_observation.py` (5 tests -- CREATED/REVISION_ADDED/
+UNCHANGED outcomes end-to-end through the real repository, mirroring
+`IngestOfficialCalendarSchedule`'s own precedent of an integration-
+only test rather than an in-memory fake, since no fake exists for that
+use case either). 1702 tests pass overall (up from 1602 passed, 4
+deselected before this story -- no regressions, same 4 deselected).
+`ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean. An early test-fixture bug was caught and fixed
+during this story's own verification, not reported by the user: the
+first draft of `test_news_repository.py` defined `TEST_ITEM_PREFIX`
+as a string distinct from `TEST_SOURCE_KEY`, but `mint_news_item_key`
+always prefixes a minted key with the registering identity's own
+`source_key` -- so the cleanup fixture's own `startswith` filter never
+matched any real test row, silently leaking rows into the dev
+database across every run. Caught by directly inspecting the dev
+database's row counts after a full run (45/0/39 rows left over),
+fixed by setting `TEST_ITEM_PREFIX = TEST_SOURCE_KEY`, and the
+already-leaked rows were purged manually before the final verification
+pass.
+
+**No ADR added** -- this story's own layering (a storage model
+implementing an already-accepted ADR's own stated assumptions) is not
+itself a new durable architectural trade-off; ADR 0005's own verdict
+and adopted-source list are unmodified, per this story's own explicit
+instruction. `pyproject.toml` remains at its own existing `0.1.0`.
+
+**No production code performs any network I/O to any news source.**
+No source adapter, RSS/Atom/JSON parser, HTTP retry/rate-limiting
+logic, or polling scheduler was built anywhere (FX-57's own explicit
+job). No cross-source deduplication, fuzzy/content matching, or
+clustering of any kind (FX-58's own job). No currency/pair/topic/
+relevance classification, no sentiment, no source-reputation/
+credibility/trust score anywhere (FX-59/FX-EPIC-09's own future
+territory). No `GetNewsEvidenceSnapshot` or equivalent (FX-60's own
+job). No `/market-context` or dashboard change of any kind (FX-61's
+own job). No Decision/Risk Engine integration, no BUY/SELL/trade-
+recommendation/blackout logic anywhere.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-57 source ingestion,
+FX-58 deduplication, FX-59 classification, FX-60 snapshot, FX-61
+visualization, or FX-EPIC-09 source-reputation work was started, no
+Decision/Risk Engine work was started, and no live news provider was
+called anywhere in this story. Return FX-56 for architectural review
+before FX-57 begins.

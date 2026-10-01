@@ -1435,6 +1435,109 @@ source revision/correction metadata; raw provider provenance) that
 FX-55H introduced to keep those facts from ever being conflated. Full
 details in `docs/DECISIONS.md`'s own FX-55 and FX-55H entries.
 
+## Point-in-time news evidence model (FX-56)
+
+FX-56 builds the provider-neutral, immutable, point-in-time storage
+model FX-57's own future source adapters will target -- it ingests
+nothing itself (no HTTP client, no RSS/Atom/JSON parser, no scheduler)
+and performs zero network I/O. It answers "what source item did FTA
+observe, and when did FTA first observe each exact revision of it,"
+never "is this article relevant/about inflation/bullish" -- those
+remain FX-59's and later stories' own territory.
+
+**Two-level identity, mirroring FX-51's own occurrence/vintage
+split.** `domain.news_item.NewsItem` (`news_item_key`, immutable
+`first_seen_at`, immutable `first_observation_mode`) is FTA's own
+internal identity for one source item; `domain.news_item_vintage.
+NewsItemVintage` is one immutable, append-only fact about that item's
+content/state as of a specific FTA-observed instant. `domain.
+news_source_identity.NewsSourceIdentity` (`source_key`,
+`external_item_id`) is the EXTERNAL identity a future adapter supplies
+-- never a URL, never a timestamp -- and `application.ports.
+news_repository.NewsRepository.register_source_item` resolves it onto
+a `news_item_key` via a persisted mapping, exactly as FX-52AH's own
+`EconomicEventSourceMappingRepository` resolves calendar-source
+identities onto `occurrence_key`s.
+
+**`register_source_item` corrects a known weakness in that FX-52A/
+FX-52AH precedent rather than repeating it.** FX-52A's original
+design minted and committed an occurrence row, THEN attempted to
+record its mapping -- so two workers racing to register the same
+never-before-seen external identity could each durably commit their
+own candidate occurrence, with the loser's own mapping insert then
+conflicting against the winner's and raising an error, leaving the
+loser's occurrence a permanent orphan (see `application.ports.
+economic_event_source_mapping_repository`'s own module docstring).
+`SqlAlchemyNewsRepository.register_source_item` closes this by
+construction: the candidate `NewsItemRow` and its `NewsSourceMapping
+Row` are inserted (flushed, not committed) in ONE transaction, and
+committed together ONLY if the mapping insert's own `ON CONFLICT DO
+NOTHING` actually wins the race; a losing attempt rolls the WHOLE
+transaction back -- discarding its own candidate item insert along
+with it -- before resolving to the winner's already-registered
+identity. No caller can ever observe, or need to clean up, an orphan
+item. Verified against live Postgres with two genuinely concurrent
+sessions (`asyncio.gather`), not merely argued from the SQL shape.
+
+**FTA availability is `NewsItemVintage.availability` alone, always
+FTA's own observation time, never a source-supplied timestamp --
+FX-55H's own invariant, now enforced in storage, not merely stated in
+an ADR.** A content change, withdrawal, or quarantine-status change
+is a NEW vintage with a higher `revision_sequence`; nothing in this
+codebase UPDATEs a stored vintage row. Five source-provenance concepts
+stay structurally separate on every vintage and are never conflated
+with `availability`: `source_published_at`, `source_updated_at`,
+`source_timestamp_provenance` (raw provider timestamp strings,
+preserved even after a verified remediation -- e.g. BoC's own
+mislabelled `dc:date`, per ADR 0005), and `source_revision_metadata`
+(structured source-side correction/withdrawal facts, e.g. GOV.UK's own
+`change_history` entries) -- a source's own correction history is
+preserved as PROVENANCE but never fabricates an FTA vintage FTA did
+not itself observe.
+
+**Two independent, orthogonal states per vintage**, deliberately never
+conflated: `domain.news_source_status.NewsSourceStatus`
+(`ACTIVE`/`WITHDRAWN` -- the source's own claimed lifecycle, requiring
+POSITIVE evidence for `WITHDRAWN`, never inferred from an item
+disappearing from a bounded feed) and `domain.news_evidence_
+disposition.NewsEvidenceDisposition` (`EVIDENCE_ELIGIBLE`/
+`QUARANTINED` -- whether THIS revision may be returned by an
+evidence-eligible PIT query). An `ACTIVE` article can be quarantined;
+a `WITHDRAWN` article can be evidence-eligible, since the withdrawal
+itself is valid factual evidence. `NewsRepository.latest_vintage_
+as_of` ignores both; `latest_evidence_eligible_vintage_as_of`
+additionally requires `EVIDENCE_ELIGIBLE` and, by default, excludes
+any `domain.news_observation_mode.NewsObservationMode.BACKFILL`
+vintage -- so a future historical import (no adapter exists yet; FX-55/
+FX-55H adopted no historical source) can never masquerade as
+prospectively-observed evidence unless a caller explicitly opts in via
+`include_backfill=True`.
+
+**Persistence is this project's first use of `JSONB`** (`news_item_
+vintages.authors`/`source_timestamp_provenance`/`source_revision_
+metadata`) -- no prior convention existed to reuse. `SqlAlchemyNews
+Repository`'s own serialization helpers reconstruct validating domain
+objects on every read, raising `MalformedNewsVintageRowError` loudly
+on a malformed stored shape rather than trusting it silently.
+
+**Migration `504030474987` ships its downgrade guard from the start**
+(learning directly from FX-51H.1/FX-52AH.1's own after-the-fact
+corrections rather than repeating that mistake): `downgrade()` refuses,
+naming every non-empty table and its row count, if any of `news_
+items`/`news_source_mappings`/`news_item_vintages` holds a row --
+verified against the real dev database (an inserted test row forces
+the exact refusal; a genuinely empty set of tables downgrades and
+re-upgrades cleanly).
+
+**Explicitly NOT built in FX-56** (all deferred to the named future
+story in FX-EPIC-08's own roadmap): any source adapter/HTTP client/
+parser (FX-57); cross-source deduplication/clustering (FX-58); FX
+relevance/topic/currency classification or sentiment of any kind
+(FX-59); a pair-specific news evidence snapshot (FX-60); any Market
+Context dashboard change (FX-61); any source-reputation/credibility
+scoring (FX-EPIC-09); any Decision/Risk Engine integration, trade
+signal, or BUY/SELL logic anywhere.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
