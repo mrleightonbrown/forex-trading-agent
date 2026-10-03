@@ -85,13 +85,23 @@ def repo(session: AsyncSession) -> SqlAlchemyNewsRepository:
 
 
 # --- Registration / identity ------------------------------------------------
+#
+# FX-56H.1: every call below goes through `_register_source_item_for_
+# test_setup`, a PRIVATE, test-only helper -- NOT a public operation
+# on the `NewsRepository` port. These tests exercise bare identity
+# resolution (item+mapping, no vintage) as a repository-level unit in
+# its own right (in particular the identity-race handling shared with
+# the real public creating operation); they deliberately do NOT
+# represent a state any production code path can produce, since
+# `RecordNewsObservation` only ever creates an item together with its
+# own revision 0, via `register_source_item_with_first_vintage`.
 
 
-async def test_register_source_item_creates_new_item_and_mapping(
+async def test_bare_identity_registration_creates_new_item_and_mapping(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
     observed_at = _ts(2026, 9, 29, 9, 2)
-    result = await repo.register_source_item(
+    result = await repo._register_source_item_for_test_setup(
         _identity("fed-001"), observed_at, NewsObservationMode.PROSPECTIVE
     )
     assert result.outcome is NewsItemRegistrationOutcome.CREATED
@@ -104,16 +114,16 @@ async def test_register_source_item_creates_new_item_and_mapping(
     assert item.first_observation_mode is NewsObservationMode.PROSPECTIVE
 
 
-async def test_register_source_item_is_idempotent_for_repeat_call(
+async def test_bare_identity_registration_is_idempotent_for_repeat_call(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
     first_observed = _ts(2026, 9, 29, 9, 2)
-    first = await repo.register_source_item(
+    first = await repo._register_source_item_for_test_setup(
         _identity("fed-002"), first_observed, NewsObservationMode.PROSPECTIVE
     )
 
     later_poll = _ts(2026, 9, 29, 9, 5)
-    second = await repo.register_source_item(
+    second = await repo._register_source_item_for_test_setup(
         _identity("fed-002"), later_poll, NewsObservationMode.PROSPECTIVE
     )
 
@@ -130,12 +140,12 @@ async def test_different_source_keys_never_collapse_identity(
     # FX-56 Section 36: same external ID under two different sources
     # must resolve to two different items.
     observed_at = _ts(2026, 9, 29, 9, 2)
-    a = await repo.register_source_item(
+    a = await repo._register_source_item_for_test_setup(
         NewsSourceIdentity(source_key=TEST_SOURCE_KEY, external_item_id="shared-id"),
         observed_at,
         NewsObservationMode.PROSPECTIVE,
     )
-    b = await repo.register_source_item(
+    b = await repo._register_source_item_for_test_setup(
         NewsSourceIdentity(source_key=f"{TEST_SOURCE_KEY}_other", external_item_id="shared-id"),
         observed_at,
         NewsObservationMode.PROSPECTIVE,
@@ -153,7 +163,7 @@ async def test_get_item_by_source_identity_resolves_after_registration(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
     observed_at = _ts(2026, 9, 29, 9, 2)
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-003"), observed_at, NewsObservationMode.PROSPECTIVE
     )
     item = await repo.get_item_by_source_identity(_identity("fed-003"))
@@ -174,7 +184,16 @@ async def test_concurrent_first_registration_resolves_to_one_item() -> None:
     connections against live Postgres -- Postgres's own row lock on
     the mapping table's unique index serializes the two transactions
     correctly regardless of exact timing, so this is deterministic in
-    OUTCOME even though which session "wins" is not."""
+    OUTCOME even though which session "wins" is not.
+
+    Deliberately exercises the PRIVATE `_register_source_item_for_
+    test_setup` helper, in isolation from vintage concerns, to pin the
+    identity-race handling (`_insert_item_and_mapping`) that the real
+    public creating operation, `register_source_item_with_first_
+    vintage`, shares with it (FX-56H.1) -- see `test_record_news_
+    observation.py::test_concurrent_complete_first_observations_
+    leave_exactly_one_of_each` for the equivalent proof through the
+    actual production path."""
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
     race_source_key = f"{TEST_SOURCE_KEY}_race1"
     identity = NewsSourceIdentity(source_key=race_source_key, external_item_id="race-item")
@@ -183,7 +202,7 @@ async def test_concurrent_first_registration_resolves_to_one_item() -> None:
     async def _register() -> str:
         async with session_factory() as own_session:
             repo = SqlAlchemyNewsRepository(own_session)
-            result = await repo.register_source_item(
+            result = await repo._register_source_item_for_test_setup(
                 identity, observed_at, NewsObservationMode.PROSPECTIVE
             )
             return result.news_item_key
@@ -244,7 +263,7 @@ async def test_concurrent_first_registration_resolves_to_one_item() -> None:
 async def test_add_vintage_round_trip_with_full_fields(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-004"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     provenance = NewsSourceTimestampProvenance(
@@ -290,7 +309,7 @@ async def test_add_vintage_round_trip_with_full_fields(
 async def test_add_vintage_is_idempotent_for_exact_duplicate(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-005"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     vintage = NewsItemVintage(
@@ -312,7 +331,7 @@ async def test_add_vintage_is_idempotent_for_exact_duplicate(
 async def test_add_vintage_conflict_raises_on_different_payload_same_identity(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-006"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     first = NewsItemVintage(
@@ -357,7 +376,7 @@ async def test_vintage_requires_an_existing_item_fk(repo: SqlAlchemyNewsReposito
 
 async def test_correction_pit_example(repo: SqlAlchemyNewsRepository) -> None:
     # FX-56 Section 48's own worked example.
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-007"), _ts(2026, 9, 29, 9, 0), NewsObservationMode.PROSPECTIVE
     )
     news_item_key = registration.news_item_key
@@ -399,7 +418,7 @@ async def test_correction_pit_example(repo: SqlAlchemyNewsRepository) -> None:
 async def test_latest_vintage_as_of_returns_none_before_first_seen(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-008"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     vintage = NewsItemVintage(
@@ -419,7 +438,7 @@ async def test_latest_vintage_as_of_returns_none_before_first_seen(
 
 async def test_withdrawal_pit_example(repo: SqlAlchemyNewsRepository) -> None:
     # FX-56 Section 47's own worked example.
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("boc-001"), _ts(2026, 9, 29, 10, 0), NewsObservationMode.PROSPECTIVE
     )
     news_item_key = registration.news_item_key
@@ -466,7 +485,7 @@ async def test_evidence_eligible_query_excludes_quarantined(
     repo: SqlAlchemyNewsRepository,
 ) -> None:
     # FX-56 Section 46's own worked example.
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("boc-002"), _ts(2026, 9, 29, 10, 0), NewsObservationMode.PROSPECTIVE
     )
     news_item_key = registration.news_item_key
@@ -510,7 +529,7 @@ async def test_evidence_eligible_query_excludes_backfill_by_default(
 ) -> None:
     # FX-56 Section 28/50/74's own guardrail -- no backfill adapter
     # exists yet, but the structural capability must already work.
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("boc-003"), _ts(2027, 1, 10, 0, 0), NewsObservationMode.BACKFILL
     )
     news_item_key = registration.news_item_key
@@ -546,7 +565,7 @@ async def test_first_poll_after_corrections_creates_only_one_revision(
 ) -> None:
     # FX-56 Section 49's own worked example: a source's own correction
     # history must never fabricate FTA vintages FTA did not observe.
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("govuk-001"), _ts(2026, 9, 29, 9, 15), NewsObservationMode.PROSPECTIVE
     )
     news_item_key = registration.news_item_key
@@ -582,7 +601,7 @@ async def test_malformed_authors_json_fails_loudly_on_read(
 ) -> None:
     from forex_agent.infrastructure.db.news_repository import MalformedNewsVintageRowError
 
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("fed-malformed"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     vintage = NewsItemVintage(
@@ -617,7 +636,7 @@ async def test_malformed_authors_json_fails_loudly_on_read(
 async def test_db_rejects_negative_revision_sequence_via_raw_sql(
     repo: SqlAlchemyNewsRepository, session: AsyncSession
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("constraint-revseq"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     with pytest.raises(IntegrityError):
@@ -636,7 +655,7 @@ async def test_db_rejects_negative_revision_sequence_via_raw_sql(
 async def test_db_rejects_invalid_observation_mode_via_raw_sql(
     repo: SqlAlchemyNewsRepository, session: AsyncSession
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("constraint-obsmode"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
     )
     with pytest.raises(IntegrityError):
@@ -655,7 +674,7 @@ async def test_db_rejects_invalid_observation_mode_via_raw_sql(
 async def test_db_rejects_invalid_source_status_via_raw_sql(
     repo: SqlAlchemyNewsRepository, session: AsyncSession
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("constraint-sourcestatus"),
         _ts(2026, 9, 29, 9, 2),
         NewsObservationMode.PROSPECTIVE,
@@ -676,7 +695,7 @@ async def test_db_rejects_invalid_source_status_via_raw_sql(
 async def test_db_rejects_invalid_evidence_disposition_via_raw_sql(
     repo: SqlAlchemyNewsRepository, session: AsyncSession
 ) -> None:
-    registration = await repo.register_source_item(
+    registration = await repo._register_source_item_for_test_setup(
         _identity("constraint-disposition"),
         _ts(2026, 9, 29, 9, 2),
         NewsObservationMode.PROSPECTIVE,

@@ -1,6 +1,6 @@
 """FX-56: record one normalized news observation into the point-in-
 time news evidence model, idempotently. First-observation atomicity
-and PIT ordering hardened by FX-56H.
+hardened by FX-56H; PIT-ordering precedence corrected by FX-56H.1.
 
 Mirrors `application.use_cases.ingest_official_calendar_schedule.
 IngestOfficialCalendarSchedule`'s own change-detection shape: this use
@@ -15,18 +15,28 @@ docstring) rather than two separately-committed steps -- this use
 case never leaves a durably-registered item with no revision 0, and
 never mints or persists an item itself.
 
-**FX-56H's own PIT-ordering guard**: once an item already has a
-latest vintage, a CHANGED observation claiming an `observed_at`
-EARLIER than that latest vintage's own `availability` is refused
-outright (`NewsObservationOutOfOrderError`) rather than silently
-appended as a backdated revision -- PIT history must never be
-rewritten. An IDENTICAL observation is always accepted as `UNCHANGED`
-regardless of its own `observed_at` ordering, since no new vintage is
-actually written in that case; only a genuinely NEW fact is subject
-to the ordering check. Equal `availability` timestamps between
-consecutive revisions are explicitly permitted (tie-broken by
-`revision_sequence`), matching `NewsItemVintage`'s own PIT-query
-ordering (`availability DESC, revision_sequence DESC`).
+**FX-56H.1's own corrected PIT-ordering precedence.** Ordering is now
+checked BEFORE modeled-fact equality, not after: an incoming
+observation whose `observed_at` is earlier than the latest known
+vintage's own `availability` is refused (`NewsObservationOutOfOrder
+Error`) EVEN IF its modeled facts happen to be identical to that
+latest vintage. FX-56H's own original ordering checked equality
+first, which silently returned `UNCHANGED` for an identical-but-
+earlier observation -- but an earlier `observed_at` asserts that FTA
+possessed those exact facts earlier than the stored PIT history
+currently says, and silently returning `UNCHANGED` would knowingly
+preserve an availability history known to be wrong. The corrected
+processing order is: (1) obtain the latest vintage; (2) if
+`observed_at < latest.availability`, raise `NewsObservationOutOf
+OrderError` -- unconditionally, regardless of content; (3) only once
+ordering is confirmed non-violating, compare modeled facts and return
+`UNCHANGED` if identical; (4) otherwise append a new revision. Equal
+`availability` timestamps between consecutive revisions remain
+explicitly permitted (the check is `<`, never `<=`), tie-broken by
+`revision_sequence`, matching `NewsItemVintage`'s own PIT-query
+ordering (`availability DESC, revision_sequence DESC`). This never
+backdates or rewrites an existing row -- a violating observation is
+rejected outright, never silently reconciled.
 
 This use case performs no network I/O and assumes no specific source
 adapter (FX-57's own job): it only ever receives an already-normalized
@@ -65,13 +75,25 @@ class RecordNewsObservationResult:
 
 
 class NewsObservationOutOfOrderError(Exception):
-    """Raised when a CHANGED observation claims an `observed_at`
-    earlier than the latest known vintage's own `availability` for
-    the same item (FX-56H Section 7) -- refusing to append a
-    backdated revision. This can never fire for an observation whose
-    modeled facts are IDENTICAL to the latest vintage (that case is
-    always `UNCHANGED`, regardless of timing), only for a genuinely
-    new fact that would otherwise be appended out of order."""
+    """Raised when an observation claims an `observed_at` earlier
+    than the latest known vintage's own `availability` for the same
+    item (FX-56H Section 7; precedence corrected by FX-56H.1) --
+    refusing to append a backdated revision, or to silently accept an
+    identical-but-earlier repeat as if it changed nothing about the
+    system's own known availability history.
+
+    **FX-56H.1 correction**: this error fires on the ORDERING
+    violation alone -- it is NOT conditional on the observation's
+    modeled facts differing from the latest vintage. An observation
+    describing the IDENTICAL fact as the latest vintage but claiming
+    an earlier `observed_at` still raises this: an earlier `observed_
+    at` is itself an assertion that FTA possessed those facts earlier
+    than the stored history says, and that assertion must be rejected
+    regardless of whether the facts themselves also changed. Only an
+    observation whose own `observed_at` is NOT earlier than the
+    latest vintage's `availability` (strictly `>=`) ever reaches the
+    modeled-facts comparison that can return `UNCHANGED`.
+    """
 
     def __init__(
         self,
@@ -122,17 +144,21 @@ class RecordNewsObservation:
         # existing item ALWAYS has at least a revision-0 vintage.
         assert latest is not None
 
+        # FX-56H.1: ordering is checked BEFORE modeled-fact equality,
+        # unconditionally -- an identical-but-earlier observation must
+        # still fail closed (see this module's own docstring and
+        # `NewsObservationOutOfOrderError`'s own docstring for why).
+        if observation.observed_at.value < latest.availability.value:
+            raise NewsObservationOutOfOrderError(
+                news_item_key, latest.availability, observation.observed_at
+            )
+
         candidate = _build_vintage(news_item_key, observation, revision_sequence=0)
         if _same_modeled_facts(latest, candidate):
             return RecordNewsObservationResult(
                 news_item_key=news_item_key,
                 revision_sequence=latest.revision_sequence,
                 outcome=RecordNewsObservationOutcome.UNCHANGED,
-            )
-
-        if observation.observed_at.value < latest.availability.value:
-            raise NewsObservationOutOfOrderError(
-                news_item_key, latest.availability, observation.observed_at
             )
 
         next_revision = latest.revision_sequence + 1

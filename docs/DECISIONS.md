@@ -10236,19 +10236,22 @@ closed, exactly as before.
 **Database constraint hardening -- migration `b2bbebf8ee3b`** (revises
 `504030474987`; a NEW follow-up migration, not an edit to the
 already-deployed/pushed one, per this story's own explicit
-instruction and this project's own established convention). Four
-`CHECK` constraints, each mirroring a domain `__post_init__` check
+instruction and this project's own established convention). FIVE
+`CHECK` constraints (corrected count -- FX-56H.1; an earlier draft of
+this entry undercounted these as "four," conflating two of the five
+into one list item), each mirroring a domain `__post_init__` check
 already enforced in Python, added so the invariant holds even for a
 row written by a future path that bypasses the domain constructor:
-`news_items.first_observation_mode` and `news_item_vintages.
-observation_mode` against `NewsObservationMode`'s two members;
-`news_item_vintages.source_status` against `NewsSourceStatus`'s two
-members; `news_item_vintages.evidence_disposition` against `News
-EvidenceDisposition`'s two members; `news_item_vintages.revision_
-sequence >= 0`. Purely additive; `downgrade()` is deliberately
-UNGUARDED (unlike `504030474987`'s own guarded table-drop) since
-relaxing a `CHECK` constraint can never itself discard data -- every
-row this codebase has ever written already satisfies all four.
+(1) `news_items.first_observation_mode` against `NewsObservationMode`'s
+two members; (2) `news_item_vintages.observation_mode` against the
+SAME enum, on the separate table; (3) `news_item_vintages.source_
+status` against `NewsSourceStatus`'s two members; (4) `news_item_
+vintages.evidence_disposition` against `NewsEvidenceDisposition`'s
+two members; (5) `news_item_vintages.revision_sequence >= 0`. Purely
+additive; `downgrade()` is deliberately UNGUARDED (unlike
+`504030474987`'s own guarded table-drop) since relaxing a `CHECK`
+constraint can never itself discard data -- every row this codebase
+has ever written already satisfies all five.
 Explicitly does NOT attempt a cross-table `CHECK` for "revision 0's
 own `availability` equals `NewsItem.first_seen_at`" -- Postgres cannot
 reference another table in a `CHECK` constraint, and this story's own
@@ -10322,9 +10325,14 @@ runs of the full file with no flakiness, and a direct database
 inspection confirmed all three tables return to zero rows for this
 story's own test identities after each run.
 
-**Verification**: `pytest --no-cov -q` -> **1716 passed, 4 deselected**
-(up from 1702 before this story). The same 7 live-OANDA-candle
-integration-test failures observed in this run
+**Verification -- this entry's own original wording was corrected by
+FX-56H.1 (see that story's own entry below), which caught it stating
+"1716 passed, 4 deselected" as if that were the whole result of a run
+that, by this entry's own separate admission, also had 7 failures;
+the actual command's actual single combined result is recorded here
+instead**: `pytest --no-cov -q` -> **7 failed, 1716 passed, 4
+deselected**, in one summary line (up from 1702 passed/4 deselected,
+0 unrelated failures, before this story). The 7 failures
 (`test_close_channel_breakout_live`, `test_control_strategies_live`,
 `test_ema_crossover_live`, `test_ema_crossover_trend_regime_gated_
 live`, `test_mean_reversion_live`, `test_time_series_momentum_live`,
@@ -10332,8 +10340,11 @@ live`, `test_mean_reversion_live`, `test_time_series_momentum_live`,
 unrelated weekend-market-closed condition -- confirmed directly, not
 assumed: each failure's own assertion shows zero live candles
 returned, and today (2026-10-03) is a Saturday; this story neither
-introduced nor needs to fix this. `ruff check`/`ruff format --check`/
-`mypy .`/`pre-commit run --all-files` all clean.
+introduced nor needs to fix this. A deterministic subset run that
+explicitly excludes those 7 files (`pytest --no-cov -q
+--ignore=<those 7 files>`) reports a clean `1716 passed, 4
+deselected`. `ruff check`/`ruff format --check`/`mypy .`/`pre-commit
+run --all-files` all clean.
 
 **Unchanged by this correction, confirmed by re-reading rather than
 assumed**: the six-source admitted registry (`domain.news_source_
@@ -10363,3 +10374,193 @@ FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-57/FX-58/FX-59/
 FX-60/FX-61/FX-EPIC-09 work was started, no Decision/Risk Engine work
 was started, and no live news provider was called anywhere in this
 story. Return FX-56H for review before FX-57 begins.
+
+## 2026-10-03 — FX-56H.1: final PIT ordering & item-creation contract patch
+
+A narrowly-scoped correction on top of FX-56H, performed before FX-57
+is authorized to begin.
+
+**Corrected PIT-ordering precedence (this patch's own central fix).**
+`RecordNewsObservation` checked `_same_modeled_facts` BEFORE checking
+`observed_at < latest.availability` -- wrong for PIT semantics. An
+observation describing the IDENTICAL fact as the latest vintage but
+claiming an EARLIER `observed_at` was silently returned as
+`UNCHANGED`, which is incorrect: an earlier `observed_at` is itself
+an assertion that FTA possessed those exact facts earlier than the
+system's own stored PIT history currently says, and that assertion
+must be rejected regardless of whether the facts themselves also
+changed -- silently returning `UNCHANGED` would knowingly preserve an
+availability history already known to be wrong. The corrected
+processing order: (1) obtain the latest vintage; (2) if `observation.
+observed_at.value < latest.availability.value`, raise `NewsObservation
+OutOfOrderError` -- unconditionally, before any content comparison;
+(3) only once ordering is confirmed non-violating does the modeled-
+facts comparison run, returning `UNCHANGED` for an identical result;
+(4) otherwise append a new revision. Equal `availability` timestamps
+between consecutive revisions remain explicitly permitted (the check
+is strictly `<`, never `<=`), tie-broken by `revision_sequence`,
+unchanged from FX-56H. No existing row is ever backdated or
+rewritten -- a violating observation is rejected outright, never
+silently reconciled. `NewsObservationOutOfOrderError`'s own docstring
+corrected to match: it no longer claims it "can never fire for an
+observation whose modeled facts are IDENTICAL to the latest vintage"
+-- that claim was FX-56H's own design, now superseded.
+
+**Pinned the concurrent first-seen case this correction exists to
+protect against.** Added `test_earlier_observation_fails_closed_
+after_later_observation_wins_first_registration`: worker-T2 (`observed_
+at = 10:00`) and worker-T1 (`observed_at = 9:00`, `T1 < T2`) race to
+register the SAME never-before-seen identity; when T2 wins and T1's
+own observation subsequently resolves against the already-created
+item, it must raise `NewsObservationOutOfOrderError`, not silently
+return `UNCHANGED`. True concurrency cannot force a specific winner
+deterministically (unlike `test_concurrent_complete_first_
+observations_leave_exactly_one_of_each`, which lets either side win
+and asserts only the OUTCOME SET), so this test reproduces the exact
+state a "T2 wins" race leaves behind by registering T2 first, then
+submitting T1 afterward -- deterministic in SETUP, while still
+proving exactly the property under test: what happens to the LOSING
+observation once it resolves against the winner. Confirmed directly
+via `repo.get_item`/`repo.list_vintages`: the stored `first_seen_at`
+and revision-0 `availability` remain exactly `T2` after the rejected
+T1 attempt -- no retroactive correction is attempted.
+
+**Removed the partial-item creation contract from `NewsRepository`'s
+own public port.** FX-56 originally exposed a bare, content-less
+`register_source_item` (item+mapping only, no vintage) as a public
+Protocol method -- intended as FX-56's own correction to FX-52A/
+FX-52AH's identity-race weakness, but its continued PUBLIC existence
+after FX-56H's own hardening pass directly contradicted `RecordNews
+Observation`'s post-FX-56H invariant that an existing item always has
+a revision-0 vintage: any production caller holding a `NewsRepository`
+-typed reference could, in principle, call this method and produce
+exactly the "item with no revision 0" state FX-56H exists to prevent.
+The fix removes `register_source_item` from the `NewsRepository`
+Protocol entirely -- the port's own PUBLIC contract now has exactly
+ONE item-creating operation, `register_source_item_with_first_
+vintage`. `get_item_by_source_identity` remains the read-only
+resolution path for an already-registered identity.
+`SqlAlchemyNewsRepository` keeps a renamed PRIVATE, test-only
+equivalent, `_register_source_item_for_test_setup` (sharing `_insert_
+item_and_mapping` with the real public operation, so the identity-
+race handling cannot drift between them), used only by repository-
+level tests that need bare identity resolution in isolation -- never
+called by `RecordNewsObservation` or any other production code path.
+All 21 call sites in `test_news_repository.py` updated from `.
+register_source_item(` to `._register_source_item_for_test_setup(`;
+the two most directly misleading test names renamed (`test_register_
+source_item_creates_new_item_and_mapping` -> `test_bare_identity_
+registration_creates_new_item_and_mapping`, and similarly for the
+idempotency test) with a new section-level comment explaining why
+every test in that section now exercises a private, test-only helper
+rather than a public operation. No revision 0 is ever synthesized
+later from an earlier `first_seen_at` -- removing the public bare-
+creation path eliminates that possibility structurally, rather than
+merely guarding against it after the fact.
+
+**Strengthened the injected-failure test to really detect orphan
+items.** The existing `_counts_for_identity` helper derives its own
+`item_count` via a JOIN through `news_source_mappings` (`SELECT
+COUNT(*) FROM news_items ni JOIN news_source_mappings m ON ...`),
+which by construction can only ever find an item that already HAS a
+mapping -- it structurally cannot detect a hypothetical orphan `News
+Item` with no mapping at all. `test_injected_first_vintage_
+persistence_failure_leaves_zero_durable_rows` now uses a dedicated
+`source_key` prefix (not the file's shared `TEST_SOURCE_KEY`) and a
+new helper, `_raw_item_count_by_prefix`, that counts `news_items`
+rows directly by `news_item_key LIKE '{prefix}:%'`, independent of
+the mapping table entirely -- proving, after the injected failure,
+all three of: raw item count = 0, mapping count = 0, vintage count =
+0. The dedicated prefix is explicitly cleaned up in a `finally` block
+via the existing `_cleanup_identity` helper, since it falls outside
+the file's own shared fixture cleanup.
+
+**Documentation corrections (this story's own Section 7).** Two
+inaccuracies in FX-56H's own prior entries, corrected here rather
+than left standing: (1) FX-56H's migration `b2bbebf8ee3b` adds FIVE
+new `CHECK` constraints, not "four" as previously stated in this
+file, `docs/ARCHITECTURE.md`, `docs/CURRENT_STATE.md`, and `docs/
+NEXT_STEPS.md` -- the undercount conflated `news_items.first_
+observation_mode` and `news_item_vintages.observation_mode` into one
+list item when they are two separate constraints on two separate
+tables; no migration change was required, this was a wording-only
+correction. (2) FX-56H's own verification entry stated "1716 passed,
+4 deselected" as though that were a complete run result, while
+separately also stating "the same 7 failures" -- internally
+inconsistent, since the actual single `pytest --no-cov -q` command
+produces both numbers in ONE combined summary line, never two
+separate ones. Rerun now and recorded precisely, not assumed or
+carried forward: the full command -> **7 failed, 1726 passed, 4
+deselected**; a deterministic subset excluding the 7 weekend-
+sensitive live-OANDA test files (`--ignore` on each of the seven
+`tests/integration/test_*_live.py` files named in that story's own
+entry) -> a clean **1726 passed, 4 deselected**.
+
+**Tests**: 10 new/strengthened net. A new, DB-free unit suite,
+`tests/unit/application/test_record_news_observation.py`, against an
+in-memory `FakeNewsRepository` that implements EXACTLY the
+`NewsRepository` Protocol's own methods with no bare `register_
+source_item` -- the fake's own shape is itself a structural proof
+that `RecordNewsObservation` depends on no such method, since calling
+one that does not exist on the fake would raise a plain `Attribute
+Error` immediately, not a silent pass. Covers: first observation
+created; identical-later is `UNCHANGED`; identical-equal-timestamp is
+`UNCHANGED`; changed-later adds a revision; identical-but-earlier
+fails closed; changed-but-earlier fails closed; plus one structural
+`hasattr` assertion. Three new live-Postgres integration tests added
+to `tests/integration/test_record_news_observation.py`: identical-
+but-earlier fails closed; identical-equal-timestamp is `UNCHANGED`;
+and the later-wins-race-then-earlier-fails-closed scenario described
+above. The injected-failure test strengthened as described above. 21
+call sites and 2 test names updated in `tests/integration/test_news_
+repository.py` as described above, with no behavioral change to the
+tests themselves beyond the rename (same assertions, same `repo`
+fixture, now calling the renamed private helper).
+
+**Verification**: on the deterministic subset (excluding the 7
+pre-existing, unrelated weekend-sensitive live-OANDA test files),
+`pytest --no-cov -q` -> **1726 passed, 4 deselected** (up from 1716
+before this story, on the same deterministic basis -- 10 net new/
+strengthened tests, no regressions). The full command, including
+those 7 files -> **7 failed, 1726 passed, 4 deselected**, confirmed
+as one command's one combined result. Concurrency-sensitive tests
+(`test_news_repository.py` and `test_record_news_observation.py`
+together) re-run 8 consecutive times with no flakiness observed, and
+the dev database confirmed via direct inspection to return to zero
+rows for this story's own test identities after every run. Migration
+`b2bbebf8ee3b` itself untouched by this patch (no schema change in
+this story at all) -- not re-verified beyond confirming the existing
+suite, including its own downgrade-guard unit test, still passes
+unchanged. `ruff check`/`ruff format --check`/`mypy .`/`pre-commit
+run --all-files` all clean.
+
+**Unchanged by this patch, confirmed by re-reading rather than
+assumed**: the atomic item+mapping+revision-0 transaction itself
+(`register_source_item_with_first_vintage`'s own internals are
+untouched -- only `RecordNewsObservation`'s own CALLING-side ordering
+logic changed, and the port's own public method SET, not the
+transaction's own mechanics); the revision-0 invariant; the six-
+source admitted registry (`domain.news_source_registry`); the source
+provenance model (`NewsSourceRevisionFact`/`NewsSourceTimestamp
+Provenance`, unchanged); quarantine semantics (`NewsEvidence
+Disposition`, unchanged); `BACKFILL` semantics (`NewsObservationMode`,
+unchanged); the `JSONB` shapes (no column or stored shape changed);
+the cross-source dedup boundary (still none; still FX-58's own future
+job); the relevance/topic classification boundary (still none; still
+FX-59's own future job); the Market Context dashboard (untouched);
+every ADR 0005 source verdict (untouched); Decision/Risk Engine
+integration (still none anywhere). FX-49 remains DEFER; FX-52 remains
+DEFER; FX-53 remains BLOCKED.
+
+**No new ADR, and no migration** -- this patch corrects an
+application-layer ordering bug and narrows a port's own public method
+set; neither is a new durable architectural trade-off, and the
+story's own instructions explicitly said no migration change was
+required for the documentation correction. ADR 0005's own verdict and
+adopted-source list remain untouched.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-57/FX-58/FX-59/
+FX-60/FX-61/FX-EPIC-09 work was started, no Decision/Risk Engine work
+was started, and no live news provider was called anywhere in this
+story. Return FX-56H.1 for review before FX-57 begins.

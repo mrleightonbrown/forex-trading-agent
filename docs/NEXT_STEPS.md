@@ -2260,16 +2260,24 @@ proper FK-dependency order, verified clean across 10 consecutive runs
 with no flakiness and confirmed via direct inspection that the dev
 database returns to zero rows after each run.
 
-Baseline re-established: `pytest --no-cov -q` -> **1716 passed, 4
-deselected** (up from 1702 passed before this story -- ~20 new tests
-less 6 reclassified/consolidated along the way, no regressions). The
-same 7 live-OANDA-candle integration test failures present in this
-run are the project's own pre-existing, unrelated weekend-market-
-closed condition (confirmed by direct inspection of each failure's
-own assertion: zero live candles returned, a known Saturday/Sunday
-market-closed condition, not something this story introduced,
-touches, or needs to fix). `ruff check`/`ruff format --check`/
-`mypy .`/`pre-commit run --all-files` all clean.
+Baseline re-established, with the actual command and actual combined
+output recorded rather than split across two misleadingly separate
+claims (an inconsistency FX-56H.1 corrects, see that story's own
+entry below): `pytest --no-cov -q` -> **7 failed, 1716 passed, 4
+deselected**, in that one single combined summary line. The 7
+failures are `test_close_channel_breakout_live`/`test_control_
+strategies_live`/`test_ema_crossover_live`/`test_ema_crossover_trend_
+regime_gated_live`/`test_mean_reversion_live`/`test_time_series_
+momentum_live`/`test_volatility_expansion_live` -- the project's own
+pre-existing, unrelated weekend-market-closed condition (confirmed by
+direct inspection of each failure's own assertion: zero live candles
+returned; today was a Saturday), not something this story introduced,
+touches, or needs to fix. A deterministic subset run excluding those
+7 files (`pytest --no-cov -q --ignore=<those 7 files>`) reports a
+clean **1716 passed, 4 deselected** (up from 1702 passed before this
+story -- ~20 new tests less 6 reclassified/consolidated along the
+way, no regressions). `ruff check`/`ruff format --check`/`mypy .`/
+`pre-commit run --all-files` all clean.
 
 **Unchanged by this correction**: the six-source admitted registry;
 every ADR 0005 source verdict; the FTA-availability-equals-FTA-
@@ -2291,6 +2299,146 @@ ingestion, FX-58 deduplication, FX-59 classification, FX-60 snapshot,
 FX-61 visualization, or FX-EPIC-09 source-reputation work was started;
 no Decision/Risk Engine work was started; no live news provider was
 called anywhere in this story.
+
+## FX-56H.1: final PIT ordering & item-creation contract patch (complete)
+
+A narrowly-scoped correction on top of FX-56H, performed before FX-57
+is authorized to begin.
+
+**Corrected PIT-ordering precedence.** `RecordNewsObservation`
+checked modeled-fact equality BEFORE checking observation ordering --
+wrong for PIT semantics: an incoming observation whose `observed_at`
+is earlier than the latest known vintage's own `availability` must
+fail closed EVEN IF its modeled facts are identical to that latest
+vintage, because an earlier `observed_at` is itself an assertion that
+FTA possessed those facts earlier than the stored PIT history
+currently says; silently returning `UNCHANGED` would knowingly
+preserve an availability history already known to be wrong. The
+corrected processing order is: (1) obtain the latest vintage; (2) if
+`observed_at < latest.availability`, raise `NewsObservationOutOf
+OrderError` unconditionally; (3) only once ordering is confirmed
+non-violating, compare modeled facts and return `UNCHANGED` if
+identical; (4) otherwise append a new revision. Equal `availability`
+timestamps remain explicitly permitted (the check is `<`, never
+`<=`), tie-broken by `revision_sequence`. Neither existing row is ever
+backdated or rewritten -- a violating observation is rejected outright.
+
+**Pinned the concurrent first-seen case.** Added a regression test
+representing: worker A at `observed_at = T1`, worker B at `observed_at
+= T2`, `T1 < T2`, where the T2 worker wins the identity race. When the
+T1 observation subsequently resolves against the already-created
+item, it must fail closed as out-of-order, not silently return
+`UNCHANGED`. True concurrency cannot force a specific winner
+deterministically, so this test reproduces the exact state a "T2
+wins" race leaves behind (registering T2 first, then submitting T1
+afterward) and proves what happens to the losing observation --
+exactly the property actually under test. The stored `first_seen_at`/
+revision-0 `availability` remain immutable; no retroactive correction
+is attempted, confirmed directly.
+
+**Removed the partial-item creation contract from the public port.**
+`NewsRepository` previously permitted a bare, content-less
+`register_source_item` to create `NewsItem`+`NewsSourceMapping`
+without revision 0 -- contradicting `RecordNewsObservation`'s own
+post-FX-56H invariant that an existing item always has a revision-0
+vintage. For production/application semantics, a NEW `NewsItem` can
+now only be created as part of the atomic first-observation
+transaction (item + mapping + revision 0), via `register_source_
+item_with_first_vintage` -- this story's `NewsRepository`'s own SOLE
+public creating operation. `get_item_by_source_identity` remains the
+read-only resolution path. `SqlAlchemyNewsRepository` keeps a renamed
+PRIVATE, test-only equivalent, `_register_source_item_for_test_setup`
+(sharing the same identity-race handling, `_insert_item_and_mapping`,
+so it cannot drift from the real public operation), for repository-
+level tests that need bare identity resolution in isolation -- never
+called by `RecordNewsObservation` or any other production code path.
+No revision 0 is ever synthesized later from an earlier `first_seen_
+at` -- the contract eliminates that possibility structurally rather
+than guarding against it after the fact.
+
+**Strengthened the zero-row failure test to really detect orphan
+items.** The existing `_counts_for_identity` helper derives its own
+`item_count` via a JOIN through `news_source_mappings`, which by
+construction can only ever find an item that already HAS a mapping --
+it cannot detect a hypothetical orphan `NewsItem` with no mapping at
+all. The injected-failure/atomicity test now uses a dedicated
+`source_key` prefix and a new, separate helper (`_raw_item_count_by_
+prefix`) that counts `news_items` rows directly, independent of the
+mapping table, proving after a failed first observation: raw item
+count = 0, mapping count = 0, vintage count = 0.
+
+**Kept unchanged, per this story's own explicit instruction**: the
+atomic item+mapping+revision-0 transaction itself; the revision-0
+invariant; the six-source admitted registry; the source provenance
+model; quarantine semantics; `BACKFILL` semantics; the `JSONB`
+shapes; the cross-source dedup boundary; the relevance/topic
+classification boundary; the dashboard; every ADR 0005 verdict;
+Decision/Risk integration. FX-49 remains DEFER; FX-52 remains DEFER;
+FX-53 remains BLOCKED.
+
+**Documentation correction.** Two prior inaccuracies, corrected here
+rather than left standing: (1) FX-56H's own migration `b2bbebf8ee3b`
+adds FIVE new `CHECK` constraints, not "four" as earlier entries
+stated -- `news_items.first_observation_mode` plus four on `news_
+item_vintages` (`revision_sequence >= 0`, `observation_mode`,
+`source_status`, `evidence_disposition`); no migration change was
+needed for this wording-only correction. (2) FX-56H's own
+verification reporting stated "1716 passed, 4 deselected" as if that
+were a run's complete result, while separately also mentioning "the
+same 7 failures" -- self-contradictory, since the actual single
+command produces both in ONE combined summary line. Rerun and
+recorded here precisely: `pytest --no-cov -q` -> **7 failed, 1716
+passed, 4 deselected**, confirmed as one command's one result, not
+assumed or carried forward from a prior story's own report. A
+deterministic subset run excluding the 7 weekend-sensitive live-OANDA
+test files (`pytest --no-cov -q --ignore=tests/integration/test_
+close_channel_breakout_live.py --ignore=tests/integration/test_
+control_strategies_live.py --ignore=tests/integration/test_ema_
+crossover_live.py --ignore=tests/integration/test_ema_crossover_
+trend_regime_gated_live.py --ignore=tests/integration/test_mean_
+reversion_live.py --ignore=tests/integration/test_time_series_
+momentum_live.py --ignore=tests/integration/test_volatility_
+expansion_live.py`) reports a clean `1716 passed, 4 deselected`.
+
+**Tests**: ~10 new/strengthened. A new, DB-free unit suite
+(`tests/unit/application/test_record_news_observation.py`) against
+an in-memory `FakeNewsRepository` -- deliberately implementing EXACTLY
+the `NewsRepository` Protocol's own methods, with no bare `register_
+source_item`, so the fake itself is a structural proof that no
+production code path depends on one -- pinning the corrected ordering
+precedence quickly and in isolation (identical-but-earlier fails
+closed; changed-but-earlier fails closed; identical-equal-timestamp
+is `UNCHANGED`; identical-later is `UNCHANGED`; changed-later adds a
+revision). Three new live-Postgres integration tests: identical-but-
+earlier fails closed; identical-equal-timestamp is `UNCHANGED`; and
+the later-wins-race-then-earlier-fails-closed scenario, which also
+confirms `first_seen_at`/revision-0 `availability` remain untouched
+after the rejected attempt. The injected-failure test strengthened as
+described above. All renamed `test_news_repository.py` call sites
+(`register_source_item` -> `_register_source_item_for_test_setup`)
+updated and re-verified; the two most directly misleading test names
+renamed (`test_register_source_item_creates_new_item_and_mapping` ->
+`test_bare_identity_registration_creates_new_item_and_mapping`, and
+similarly for the idempotency test) so a reader cannot mistake them
+for testing a still-public operation.
+
+Verification: `pytest --no-cov -q` on the deterministic subset ->
+**1726 passed, 4 deselected** (up from 1716 before this story on the
+same deterministic basis -- 10 new/strengthened tests net, no
+regressions); the full command including the 7 pre-existing weekend-
+sensitive live-OANDA tests -> **7 failed, 1726 passed, 4 deselected**.
+Concurrency-sensitive tests re-run repeatedly (8+ consecutive times)
+with no flakiness observed, and the dev database confirmed to return
+to zero rows for this story's own test identities after each run.
+`ruff check`/`ruff format --check`/`mypy .`/`pre-commit run
+--all-files` all clean. Full details in `docs/DECISIONS.md`'s
+FX-56H.1 entry.
+
+**Per this story's own explicit stop instruction**: FX-49 remains
+DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED; no FX-57/FX-58/
+FX-59/FX-60/FX-61/FX-EPIC-09 work was started; no Decision/Risk
+Engine work was started; no live news provider was called anywhere
+in this story.
 
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53 (gated, still not started),
@@ -2316,8 +2464,8 @@ surprise ingestion, or event-risk trading rules — out of scope until
 explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/
 FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/
 FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/
-FX-52A/FX-52AH/FX-52AH.1/FX-54/FX-54V/FX-55/FX-55H/FX-56/FX-56H above
-are the explicitly-scoped exceptions (domain model, storage-integrity
+FX-52A/FX-52AH/FX-52AH.1/FX-54/FX-54V/FX-55/FX-55H/FX-56/FX-56H/
+FX-56H.1 above are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -2348,26 +2496,29 @@ only correction pass on that investigation's own PIT-anchor wording and
 three source-admission statuses (BEA, ECB's bulk speeches CSV, GOV.UK's
 Search API) plus a single canonical disposition for GDELT, and a
 provider-neutral, immutable, point-in-time NEWS EVIDENCE STORAGE MODEL
-(no source adapter, no network I/O, no ingestion job), and a hardening
+(no source adapter, no network I/O, no ingestion job), a hardening
 pass on that storage model's own first-observation atomicity/PIT
 ordering (first-vintage-write transactional guarantee, an out-of-order
-guard, truthful idempotent outcomes, four additive DB `CHECK`
-constraints) -- still no strategy, no decision logic, no "carry"/
-"expected rate" framing, no tradability claim, no commercial calendar/
-news provider, no consensus, no surprise, no event-risk scoring, no
-cross-source deduplication, no relevance/topic/sentiment
-classification, no source-reputation score) and do not open the door
-to the rest of this phase. **FX-57 (News Source Ingestion & Raw
-Provenance) is the next gated story**: ADR 0005 (FX-55, hardened
-FX-55H) authorizes FX-EPIC-08 to continue, but each remaining story is
-its own gate, strictly scoped to what ADR 0005 and FX-56/FX-56H
-themselves name -- neither FX-56's nor FX-56H's own completion is a
-general license to build an adapter, deduplication, classification, a
-snapshot, or a dashboard beyond what FX-56's own "Explicitly NOT built
-in FX-56" list permits. The same "do not open the door" rule applies
-to the downstream epics not in this list at all (Decision Engine, Risk
-Engine, Paper Trading Execution, Performance Analytics, Shadow
-Trading) — none are part of the current phase.
+guard, truthful idempotent outcomes, five additive DB `CHECK`
+constraints), and a final narrowly-scoped patch correcting that
+hardening pass's own ordering precedence and narrowing the storage
+model's public item-creation contract to one atomic operation -- still
+no strategy, no decision logic, no "carry"/"expected rate" framing, no
+tradability claim, no commercial calendar/news provider, no consensus,
+no surprise, no event-risk scoring, no cross-source deduplication, no
+relevance/topic/sentiment classification, no source-reputation score)
+and do not open the door to the rest of this phase. **FX-57 (News
+Source Ingestion & Raw Provenance) is the next gated story**: ADR 0005
+(FX-55, hardened FX-55H) authorizes FX-EPIC-08 to continue, but each
+remaining story is its own gate, strictly scoped to what ADR 0005 and
+FX-56/FX-56H/FX-56H.1 themselves name -- none of FX-56's, FX-56H's,
+nor FX-56H.1's own completion is a general license to build an
+adapter, deduplication, classification, a snapshot, or a dashboard
+beyond what FX-56's own "Explicitly NOT built in FX-56" list permits.
+The same "do not open the door" rule applies to the downstream epics
+not in this list at all (Decision Engine, Risk Engine, Paper Trading
+Execution, Performance Analytics, Shadow Trading) — none are part of
+the current phase.
 
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest

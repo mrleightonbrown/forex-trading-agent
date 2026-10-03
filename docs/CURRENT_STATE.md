@@ -1725,19 +1725,24 @@ _Last updated: 2026-09-27 (FX-54V)_
   `NewsObservationOutOfOrderError`: a CHANGED observation claiming an
   `observed_at` earlier than the latest known vintage's own
   `availability` is refused outright rather than silently appended
-  backward in time -- an IDENTICAL observation is always `UNCHANGED`
-  regardless of its own timing (nothing is appended then, so there is
-  nothing to be out of order); equal timestamps between consecutive
-  revisions remain explicitly permitted, tie-broken by `revision_
-  sequence`. New migration `b2bbebf8ee3b` (additive, unguarded
-  downgrade) adds four `CHECK` constraints mirroring the remaining
-  domain enum/range invariants in storage (`revision_sequence >= 0`;
-  `observation_mode`/`first_observation_mode` against
-  `NewsObservationMode`; `source_status` against `NewsSourceStatus`;
-  `evidence_disposition` against `NewsEvidenceDisposition`) --
-  deliberately does NOT attempt the revision-0/first_seen_at
-  invariant as a cross-table `CHECK` (impossible in Postgres); that
-  one stays transactional, proven by integration test. One real
+  backward in time. **This story's own original precedence --
+  checking modeled-fact equality BEFORE ordering, so an IDENTICAL-
+  but-earlier observation was silently `UNCHANGED` -- was corrected by
+  FX-56H.1 (below): ordering is now checked first, unconditionally, so
+  an identical-but-earlier observation also fails closed.** Equal
+  timestamps between consecutive revisions remain explicitly
+  permitted, tie-broken by `revision_sequence`. New migration
+  `b2bbebf8ee3b` (additive, unguarded downgrade) adds FIVE `CHECK`
+  constraints (corrected count -- FX-56H.1; originally undercounted
+  as "four" here) mirroring the remaining domain enum/range
+  invariants in storage (`revision_sequence >= 0`; `observation_
+  mode`/`first_observation_mode` against `NewsObservationMode`, on
+  each of the two separate tables that carry it; `source_status`
+  against `NewsSourceStatus`; `evidence_disposition` against
+  `NewsEvidenceDisposition`) -- deliberately does NOT attempt the
+  revision-0/first_seen_at invariant as a cross-table `CHECK`
+  (impossible in Postgres); that one stays transactional, proven by
+  integration test. One real
   test-authoring bug was caught and fixed during this story's own
   "run concurrency tests repeatedly" verification step, not reported
   by the user: two new concurrency tests initially used two
@@ -1751,16 +1756,74 @@ _Last updated: 2026-09-27 (FX-54V)_
   registration-race test proving no orphan item survives under ANY
   key -- not just the winning one, atomicity/ordering/outcome
   integration tests, DB constraint rejection tests via raw SQL).
-  1716 tests pass overall (up from 1702); 4 deselected (unchanged);
-  the 7 live-OANDA-candle failures present in this run are the
-  project's own pre-existing, unrelated weekend-market-closed
-  condition, not something this story introduced or fixed. No source
+  **verification reporting corrected by FX-56H.1 (below): the actual
+  single command `pytest --no-cov -q` reports `7 failed, 1716 passed,
+  4 deselected` in ONE combined summary line -- not "1716 passed, 4
+  deselected" stated separately from "7 failures," which was this
+  entry's own original, internally-inconsistent wording.** A
+  deterministic subset run excluding the 7 weekend-sensitive live-
+  OANDA-candle test files (`pytest --no-cov -q --ignore=<those 7
+  files>`) reports a clean `1716 passed, 4 deselected`; those 7
+  failures are the project's own pre-existing, unrelated weekend-
+  market-closed condition (today was a Saturday), not something this
+  story introduced or fixed. No source
   adapter, no network I/O, no cross-source deduplication, no
   relevance/topic/sentiment classification, no news snapshot, no
   dashboard change, no Decision/Risk-Engine integration. Full details
   in `docs/DECISIONS.md`'s FX-56H entry. **Stop after FX-56H --
   FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; do not start
   FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09.**
+- **FX-56H.1: final PIT ordering & item-creation contract patch
+  (complete)**. A narrowly-scoped correction on top of FX-56H, before
+  FX-57 is authorized. **Corrected PIT-ordering precedence**:
+  `RecordNewsObservation` checked modeled-fact equality BEFORE
+  ordering, so an observation identical to the latest vintage but
+  claiming an EARLIER `observed_at` was silently `UNCHANGED` --
+  incorrect, since an earlier `observed_at` asserts FTA possessed
+  those exact facts earlier than the stored history says, and
+  silently returning `UNCHANGED` would knowingly preserve an
+  availability history known to be wrong. Processing order is now:
+  obtain the latest vintage, check ordering FIRST and unconditionally
+  (raise `NewsObservationOutOfOrderError` if earlier, regardless of
+  content), THEN compare modeled facts. Equal timestamps remain
+  permitted (the check is `<`, never `<=`). **Narrowed `NewsRepository`'s
+  own public contract to exactly ONE item-creating operation**: the
+  bare, content-less `register_source_item` FX-56 originally exposed
+  as a public Protocol method is removed from the port entirely --
+  its mere existence as a legitimate public operation contradicted
+  `RecordNewsObservation`'s own invariant that an existing item
+  always has a revision-0 vintage. `SqlAlchemyNewsRepository` keeps a
+  renamed PRIVATE, test-only equivalent (`_register_source_item_for_
+  test_setup`, sharing the same identity-race handling), used only by
+  repository-level tests needing bare identity resolution in
+  isolation -- never by production code. **Strengthened the injected-
+  failure test** to count raw `news_items` rows under a dedicated
+  prefix directly, independent of the `news_source_mappings` JOIN the
+  original zero-row helper relied on (which could never, by
+  construction, detect an orphan item with no mapping at all). **New
+  regression test** pins the exact scenario a real identity race can
+  produce: a later-timestamped observation wins first registration,
+  and an earlier-timestamped observation that subsequently resolves
+  against the already-created item must fail closed, with the stored
+  `first_seen_at`/revision-0 `availability` remaining untouched -- no
+  retroactive correction is attempted. **Corrected prior documentation**
+  that miscounted FX-56H's own new `CHECK` constraints as "four" (it
+  is five: `news_items.first_observation_mode` plus four on `news_
+  item_vintages`) and that reported a run's test results as "1716
+  passed, 4 deselected" separately from "7 failures," when the actual
+  single command produces one combined `7 failed, 1716 passed, 4
+  deselected` summary; a deterministic subset excluding the 7
+  weekend-sensitive live-OANDA files reports a clean `1716 passed, 4
+  deselected`. ~10 new/strengthened tests (a DB-free fake-repository
+  unit suite pinning the ordering-precedence fix directly, plus
+  integration tests for the race scenario and the strengthened
+  failure check). No change to the atomic item+mapping+revision-0
+  transaction itself, the six-source registry, provenance model,
+  quarantine/BACKFILL semantics, JSONB shapes, dedup/classification
+  boundaries, dashboard, ADR 0005, or Decision/Risk integration. Full
+  details in `docs/DECISIONS.md`'s FX-56H.1 entry. **Stop after
+  FX-56H.1 -- FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; do not
+  start FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

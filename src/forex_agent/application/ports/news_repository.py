@@ -1,4 +1,6 @@
-"""Port for storing and point-in-time-querying news evidence (FX-56).
+"""Port for storing and point-in-time-querying news evidence (FX-56;
+first-observation atomicity hardened by FX-56H; this port's own
+public creation contract narrowed by FX-56H.1).
 
 The defining invariant of every `*_as_of` method, mirroring `applica
 tion.ports.economic_event_repository.EconomicEventRepository`'s own:
@@ -9,43 +11,45 @@ this port has no method anywhere that filters/selects on `source_
 published_at`, `source_updated_at`, a canonical URL, or any provider
 correction timestamp (FX-56 Section 44).
 
-`register_source_item` is this port's own correction to a known
-weakness in FX-52A/FX-52AH's two-step "mint an occurrence, add it,
-THEN record its mapping" design: that design commits the newly-minted
-item BEFORE the mapping insert's own outcome is known, so two workers
-racing to register the SAME external identity for the first time can
-each durably commit their OWN candidate item, and the loser's mapping
-insert then conflicts against the winner's -- leaving the loser's item
-a permanent orphan with no mapping ever pointing to it (see
-`application.ports.economic_event_source_mapping_repository`'s own
-module docstring for the full history of that design). `register_
-source_item` closes this by construction: a concrete implementation
-must perform the candidate item's insert and its mapping's insert in
-ONE transaction, and must commit them TOGETHER only if the mapping
-insert actually wins the race -- a losing attempt rolls its own
-candidate item insert back entirely, then resolves to the winner's
-already-registered identity instead. No caller of this port can ever
-observe, or need to clean up, an orphan item.
+**FX-56H.1: this port's PUBLIC contract has exactly ONE item-creating
+operation -- `register_source_item_with_first_vintage`.** FX-56's own
+original design additionally exposed a bare `register_source_item`
+(item+mapping only, no content) as a public Protocol method, intended
+as a correction to FX-52A/FX-52AH's own two-step "mint an occurrence,
+add it, THEN record its mapping" weakness (see `application.ports.
+economic_event_source_mapping_repository`'s own module docstring for
+that history). FX-56H then discovered that `register_source_item`
+ALONE is not sufficient for safely recording a first observation,
+because committing item+mapping and separately writing revision 0 in
+a LATER transaction reopens a structurally identical atomicity gap one
+level up (a failure between those two steps leaves a durably-
+committed `NewsItem` with no revision 0 at all). FX-56H.1 completes
+that correction: a bare, content-less item-creating operation is no
+longer part of this port's own PUBLIC contract at all, because its
+mere EXISTENCE as a legitimate public operation contradicted `Record
+NewsObservation`'s own invariant that an existing item always has a
+revision-0 vintage -- any production caller holding a `NewsRepository`
+-typed reference can create an item ONLY together with its first
+vintage, by construction, never separately. A concrete implementation
+may still offer a lower-level, explicitly private/test-only helper for
+its own repository-level test setup (see `SqlAlchemyNewsRepository`'s
+own `_register_source_item_for_test_setup`) -- that helper is
+deliberately NOT part of this Protocol, is never called by `Record
+NewsObservation` or any other production code path, and exists only
+to let a repository-level test exercise identity resolution in
+isolation without legitimizing "an item exists with no revision 0" as
+a real, supported production state.
 
-**FX-56H**: `register_source_item` alone is NOT sufficient for safely
-recording a FIRST observation, because committing the item/mapping
-and then separately writing revision 0 in a second, later transaction
-reopens a structurally identical gap one level up -- a failure
-between those two steps (a crash, a validation error, an injected
-fault) leaves a durably-committed `NewsItem` with no revision 0 at
-all, and a NAIVE retry would then mint revision 0 at the RETRY's own
-`observed_at`, violating the invariant that revision 0's own
-`availability` must equal `NewsItem.first_seen_at`.
-`register_source_item_with_first_vintage` closes this the same way
-`register_source_item` itself closes the identity race: item,
-mapping, AND revision 0 are inserted (flushed, not committed) in ONE
-transaction, and committed together only once all three are known to
-succeed -- any failure at any point (including the mapping losing its
-own race, or revision 0 failing validation/persistence) rolls back
-the ENTIRE attempt, discarding even the candidate item. `Record
-NewsObservation` always calls this method for a never-before-seen
-identity; it never calls bare `register_source_item` followed by a
-separate `add_vintage` for a first observation.
+`register_source_item_with_first_vintage` closes the full first-
+observation gap by construction: a concrete implementation must
+perform the candidate item's insert, its mapping's insert, AND its
+first vintage's insert in ONE transaction, committing all three
+TOGETHER only if the mapping insert actually wins the identity race --
+a losing attempt, or ANY other failure before commit (including the
+first vintage's own insert failing), rolls the WHOLE attempt back,
+discarding even the candidate item. No caller of this port can ever
+observe, or need to clean up, an orphan item, nor an item with no
+revision 0.
 """
 
 from collections.abc import Callable
@@ -61,7 +65,12 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 
 class NewsItemRegistrationOutcome(Enum):
-    """What `register_source_item` actually did (FX-56)."""
+    """`CREATED`/`ALREADY_EXISTS` -- shared by `FirstObservationResult`
+    (this port's own public creating operation) and by a concrete
+    repository's private, test-only bare-identity helper, if it has
+    one (FX-56H.1 -- see the module docstring for why a bare,
+    content-less creating operation is no longer part of this port's
+    own PUBLIC contract)."""
 
     CREATED = "CREATED"
     ALREADY_EXISTS = "ALREADY_EXISTS"
@@ -69,7 +78,11 @@ class NewsItemRegistrationOutcome(Enum):
 
 @dataclass(frozen=True, slots=True)
 class NewsItemRegistrationResult:
-    """`register_source_item`'s own result.
+    """The result shape for a bare identity-only registration --
+    used by a concrete repository's own private, test-only helper
+    (FX-56H.1), never by this port's own public Protocol, which has
+    no bare, content-less creating operation (see the module
+    docstring).
 
     `first_seen_at`/`first_observation_mode` always describe the
     CANONICAL item's own real first observation -- when `outcome` is
@@ -88,17 +101,15 @@ class NewsItemRegistrationResult:
 
 @dataclass(frozen=True, slots=True)
 class FirstObservationResult:
-    """`register_source_item_with_first_vintage`'s own result (FX-56H).
+    """`register_source_item_with_first_vintage`'s own result (FX-56H)
+    -- this port's own sole public creating operation (FX-56H.1).
 
     `outcome` reuses `NewsItemRegistrationOutcome` (`CREATED`/
-    `ALREADY_EXISTS`) -- the same two possibilities as plain
-    `register_source_item`, since this method only ever differs from
-    it in WHAT gets committed together, not in the shape of its own
-    outcome. When `outcome` is `ALREADY_EXISTS`, the caller's own
-    `build_vintage` callback was never invoked for persistence (the
-    candidate item/vintage this attempt would have built are
-    discarded entirely) -- a caller must fetch the existing item's own
-    vintages itself (e.g. via `list_vintages`) to continue.
+    `ALREADY_EXISTS`). When `outcome` is `ALREADY_EXISTS`, the
+    caller's own `build_vintage` callback was never invoked for
+    persistence (the candidate item/vintage this attempt would have
+    built are discarded entirely) -- a caller must fetch the existing
+    item's own vintages itself (e.g. via `list_vintages`) to continue.
     """
 
     news_item_key: str
@@ -141,26 +152,6 @@ class NewsVintageConflictError(Exception):
 class NewsRepository(Protocol):
     """Port for storing and point-in-time-querying news evidence --
     see the module docstring."""
-
-    async def register_source_item(
-        self,
-        identity: NewsSourceIdentity,
-        observed_at: UtcTimestamp,
-        observation_mode: NewsObservationMode,
-    ) -> NewsItemRegistrationResult:
-        """Atomically resolve `identity` to its internal `NewsItem`
-        identity, creating a new one if -- and only if -- no mapping
-        for `identity` exists yet. See the module docstring for why
-        this is atomic and orphan-proof by construction, unlike
-        FX-52A/FX-52AH's own original two-step design.
-
-        Does NOT also persist a first vintage -- see
-        `register_source_item_with_first_vintage` for the method
-        `RecordNewsObservation` actually uses when a NEW item may need
-        to be created. This method remains useful on its own (e.g. a
-        pure identity lookup/registration with no content to record
-        yet), and is exercised directly by its own tests."""
-        ...
 
     async def register_source_item_with_first_vintage(
         self,
@@ -214,8 +205,8 @@ class NewsRepository(Protocol):
     async def get_item_by_source_identity(self, identity: NewsSourceIdentity) -> NewsItem | None:
         """The item `identity` currently resolves to, or `None` if no
         mapping for it has been registered yet. A read-only lookup;
-        never creates anything (see `register_source_item` for the
-        creating path)."""
+        never creates anything (see `register_source_item_with_first_
+        vintage` for this port's own sole creating path)."""
         ...
 
     async def add_vintage(self, vintage: NewsItemVintage) -> NewsVintageWriteOutcome:

@@ -1,29 +1,36 @@
 """SQLAlchemy implementation of `NewsRepository` (FX-56; first-
-observation atomicity hardened by FX-56H).
+observation atomicity hardened by FX-56H; public creation contract
+narrowed by FX-56H.1).
 
-`register_source_item`/`register_source_item_with_first_vintage` are
-this module's own most important methods -- see `application.ports.
-news_repository`'s module docstring for why each must be, and is,
-atomic. Both share `_insert_item_and_mapping`: the candidate
-`NewsItemRow` and its `NewsSourceMappingRow` are inserted (flushed, not
-committed) in ONE transaction; the caller commits them TOGETHER only
-if the mapping insert's own `ON CONFLICT DO NOTHING` actually wins. A
-losing attempt rolls the WHOLE transaction back -- discarding its own
-candidate item insert along with it -- before resolving to the
-winner's already-registered identity. This is safe under Postgres's
-own `READ COMMITTED` isolation without any extra synchronization: a
-second session's conflicting mapping insert blocks on the first
-session's row lock until that first transaction commits or rolls
-back, then resolves correctly either way once unblocked.
+`register_source_item_with_first_vintage` is this module's own most
+important method, and this port's own SOLE public item-creating
+operation (FX-56H.1) -- see `application.ports.news_repository`'s own
+module docstring for why. For a genuinely NEW item, the candidate
+`NewsItemRow`, its `NewsSourceMappingRow`, AND its revision-0
+`NewsItemVintageRow` are all inserted (flushed, not committed) in ONE
+transaction, via the shared private helper `_insert_item_and_mapping`
+plus `_insert_vintage_row`; the caller commits all three TOGETHER
+only if the mapping insert's own `ON CONFLICT DO NOTHING` actually
+wins. A losing attempt, or ANY other failure before commit (including
+the vintage insert itself failing), rolls the WHOLE transaction back
+-- discarding its own candidate item/vintage along with it -- before
+resolving to the winner's already-registered identity. This is safe
+under Postgres's own `READ COMMITTED` isolation without any extra
+synchronization: a second session's conflicting mapping insert blocks
+on the first session's row lock until that first transaction commits
+or rolls back, then resolves correctly either way once unblocked.
 
-`register_source_item_with_first_vintage` (FX-56H) extends this same
-discipline one step further: for a genuinely NEW item, its revision-0
-`NewsItemVintageRow` insert joins the SAME uncommitted transaction as
-the item/mapping inserts, so all three commit together or none do --
-closing a gap the original FX-56 design left open, where a first
-observation's identity registration and its first vintage write were
-two separate, separately-committed operations, and a failure between
-them could leave a durably-committed item with no revision 0 at all.
+`_register_source_item_for_test_setup` is a PRIVATE, test-only helper
+-- deliberately NOT part of the `NewsRepository` Protocol, and never
+called by `RecordNewsObservation` or any other production code path
+(FX-56H.1). It shares `_insert_item_and_mapping` with the public
+creating operation above, but commits item+mapping with no vintage at
+all -- a state `RecordNewsObservation` itself never produces, since
+every production item is created together with its own revision 0.
+It exists only so a repository-level test can exercise bare identity
+resolution (e.g. the identity-race handling itself) in isolation,
+without legitimizing "an item exists with no revision 0" as a
+supported production state.
 
 Every OTHER write in this module keeps the same idempotent `INSERT
 ... ON CONFLICT DO NOTHING ... RETURNING id` discipline already
@@ -81,12 +88,17 @@ class SqlAlchemyNewsRepository:
 
     # --- Item identity / registration --------------------------------------
 
-    async def register_source_item(
+    async def _register_source_item_for_test_setup(
         self,
         identity: NewsSourceIdentity,
         observed_at: UtcTimestamp,
         observation_mode: NewsObservationMode,
     ) -> NewsItemRegistrationResult:
+        """PRIVATE, test-only -- see this module's own docstring.
+        NEVER call this from `RecordNewsObservation` or any other
+        production code path; use `register_source_item_with_first_
+        vintage` instead, which is this port's own sole public
+        item-creating operation (FX-56H.1)."""
         existing_key = await self._mapping_news_item_key(identity)
         await self._session.commit()  # release the read-only transaction before mutating
         if existing_key is not None:
@@ -141,7 +153,8 @@ class SqlAlchemyNewsRepository:
             if not won:
                 # Lost the identity race -- roll back our own candidate
                 # item/vintage attempt entirely and resolve to the
-                # winner, exactly like plain `register_source_item`.
+                # winner, using the same identity-race handling
+                # `_register_source_item_for_test_setup` shares.
                 await self._session.rollback()
                 existing = await self._require_mapping_news_item_key(identity)
                 await self._session.commit()
@@ -171,9 +184,10 @@ class SqlAlchemyNewsRepository:
         (optionally after further writes in the SAME transaction, e.g.
         a first vintage) -- or `False` if it lost, in which case the
         caller must roll back before resolving to the existing winner.
-        Shared by `register_source_item` and `register_source_item_
-        with_first_vintage` (FX-56H) so the identity-race handling
-        cannot drift between the two."""
+        Shared by `register_source_item_with_first_vintage` and the
+        private, test-only `_register_source_item_for_test_setup`
+        (FX-56H/FX-56H.1) so the identity-race handling cannot drift
+        between the two."""
         await self._session.execute(
             pg_insert(NewsItemRow).values(
                 news_item_key=candidate_key,

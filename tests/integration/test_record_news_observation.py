@@ -132,6 +132,26 @@ async def _counts_for_identity(source_key: str, external_item_id: str) -> tuple[
         return item_count, mapping_count, vintage_count
 
 
+async def _raw_item_count_by_prefix(source_key: str) -> int:
+    """Every `news_items` row whose `news_item_key` starts with
+    `{source_key}:` -- i.e. every key `mint_news_item_key` could ever
+    have produced for this `source_key`, regardless of whether a
+    mapping row exists for it (FX-56H.1 Section 4). `_counts_for_
+    identity`'s own `item_count` starts its query FROM `news_source_
+    mappings` (a JOIN), which by construction can only ever find an
+    item that already HAS a mapping -- it cannot detect a hypothetical
+    orphan `NewsItem` with no mapping at all. This can."""
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+    async with session_factory() as check_session:
+        count: int = (
+            await check_session.execute(
+                text("SELECT COUNT(*) FROM news_items WHERE news_item_key LIKE :pattern"),
+                {"pattern": f"{source_key}:%"},
+            )
+        ).scalar_one()
+        return count
+
+
 async def test_first_observation_creates_item_and_revision_zero(
     use_case: RecordNewsObservation,
 ) -> None:
@@ -224,20 +244,44 @@ async def test_injected_first_vintage_persistence_failure_leaves_zero_durable_ro
     use_case: RecordNewsObservation,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # FX-56H Section 2/11.2: simulate an unexpected infrastructure
-    # failure happening AFTER the item/mapping insert succeeded within
-    # the same uncommitted transaction, but BEFORE the whole attempt
-    # commits -- the entire attempt must roll back, not just the part
-    # that failed.
+    # FX-56H Section 2/11.2, strengthened by FX-56H.1 Section 4:
+    # simulate an unexpected infrastructure failure happening AFTER
+    # the item/mapping insert succeeded within the same uncommitted
+    # transaction, but BEFORE the whole attempt commits -- the entire
+    # attempt must roll back, not just the part that failed. Uses a
+    # DEDICATED source_key (not the file's shared `TEST_SOURCE_KEY`,
+    # whose rows the `session` fixture cleans up automatically) so the
+    # raw `news_items` count below is taken independently of
+    # `_counts_for_identity`'s own JOIN through `news_source_
+    # mappings` -- that JOIN starts FROM the mapping table, so it
+    # structurally cannot detect a hypothetical orphan `NewsItem` that
+    # has no mapping at all; the raw count can, which is why this test
+    # cleans up its own dedicated prefix explicitly.
+    dedicated_source_key = f"{TEST_SOURCE_KEY}_injected_failure"
+    external_item_id = "item-injected-failure"
+
     async def _raise(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("simulated first-vintage persistence failure")
 
     monkeypatch.setattr(SqlAlchemyNewsRepository, "_insert_vintage_row", _raise)
 
-    with pytest.raises(RuntimeError, match="simulated first-vintage persistence failure"):
-        await use_case(_observation("item-injected-failure", _ts(2026, 9, 29, 9, 2), "Headline"))
+    try:
+        with pytest.raises(RuntimeError, match="simulated first-vintage persistence failure"):
+            await use_case(
+                _observation(
+                    external_item_id,
+                    _ts(2026, 9, 29, 9, 2),
+                    "Headline",
+                    source_key=dedicated_source_key,
+                )
+            )
 
-    assert await _counts_for_identity(TEST_SOURCE_KEY, "item-injected-failure") == (0, 0, 0)
+        assert await _counts_for_identity(dedicated_source_key, external_item_id) == (0, 0, 0)
+        # Direct, mapping-independent proof: no orphan `NewsItem` under
+        # ANY candidate key survived either.
+        assert await _raw_item_count_by_prefix(dedicated_source_key) == 0
+    finally:
+        await _cleanup_identity(dedicated_source_key, external_item_id)
 
 
 async def test_successful_first_observation_creates_item_mapping_and_revision0_atomically(
@@ -437,6 +481,74 @@ async def test_changed_out_of_order_observation_fails_closed(
 
     _, _, vintage_count = await _counts_for_identity(TEST_SOURCE_KEY, "item-out-of-order")
     assert vintage_count == 1  # the rejected attempt added nothing
+
+
+async def test_identical_but_earlier_observation_fails_closed(
+    use_case: RecordNewsObservation,
+) -> None:
+    # FX-56H.1 Section 1: the central correction. An earlier observed_
+    # at asserts FTA possessed these exact facts earlier than the
+    # stored history says, and that assertion must be rejected EVEN
+    # WHEN the facts themselves are identical to the latest vintage --
+    # silently returning UNCHANGED would knowingly preserve an
+    # availability history already known to be wrong.
+    later = _ts(2026, 9, 29, 10, 0)
+    earlier = _ts(2026, 9, 29, 9, 0)
+    await use_case(_observation("item-identical-earlier", later, "Same headline"))
+
+    with pytest.raises(NewsObservationOutOfOrderError):
+        await use_case(_observation("item-identical-earlier", earlier, "Same headline"))
+
+    _, _, vintage_count = await _counts_for_identity(TEST_SOURCE_KEY, "item-identical-earlier")
+    assert vintage_count == 1  # the rejected attempt added nothing; no retroactive correction
+
+
+async def test_identical_equal_timestamp_observation_is_unchanged(
+    use_case: RecordNewsObservation,
+) -> None:
+    # FX-56H.1 Section 1: equal timestamps remain explicitly
+    # permitted -- the ordering check is strictly "<", never "<=".
+    same_instant = _ts(2026, 9, 29, 9, 0)
+    first = await use_case(_observation("item-identical-equal", same_instant, "Same headline"))
+    second = await use_case(_observation("item-identical-equal", same_instant, "Same headline"))
+
+    assert second.outcome is RecordNewsObservationOutcome.UNCHANGED
+    assert second.revision_sequence == first.revision_sequence == 0
+
+
+async def test_earlier_observation_fails_closed_after_later_observation_wins_first_registration(
+    use_case: RecordNewsObservation, session: AsyncSession
+) -> None:
+    # FX-56H.1 Section 2: pins the outcome of a genuine identity race
+    # in which the LATER-timestamped worker happens to win. True
+    # concurrency cannot force a specific winner deterministically
+    # (see `test_concurrent_complete_first_observations_leave_exactly_
+    # one_of_each` for the genuinely concurrent proof, where either
+    # side may win); this test instead reproduces the EXACT state a
+    # "T2 wins" race leaves behind -- by registering T2 first -- and
+    # proves what must happen to the LOSING (T1) observation when it
+    # subsequently resolves against the already-created item: it must
+    # NOT silently return UNCHANGED, even though T1 < T2. The stored
+    # first_seen_at/revision-0 availability must remain untouched; no
+    # retroactive correction is attempted.
+    t1 = _ts(2026, 9, 29, 9, 0)
+    t2 = _ts(2026, 9, 29, 10, 0)
+    external_item_id = "item-race-later-wins"
+
+    winner = await use_case(_observation(external_item_id, t2, "Winning headline"))
+    assert winner.outcome is RecordNewsObservationOutcome.CREATED
+
+    with pytest.raises(NewsObservationOutOfOrderError):
+        await use_case(_observation(external_item_id, t1, "Losing headline"))
+
+    repo = SqlAlchemyNewsRepository(session)
+    item = await repo.get_item(winner.news_item_key)
+    vintages = await repo.list_vintages(winner.news_item_key)
+    assert item is not None
+    assert item.first_seen_at == t2  # immutable -- no retroactive correction
+    assert len(vintages) == 1
+    assert vintages[0].availability == t2
+    assert vintages[0].headline == "Winning headline"
 
 
 async def test_equal_availability_timestamps_remain_deterministic(

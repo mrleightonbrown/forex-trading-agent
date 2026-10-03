@@ -1435,7 +1435,7 @@ source revision/correction metadata; raw provider provenance) that
 FX-55H introduced to keep those facts from ever being conflated. Full
 details in `docs/DECISIONS.md`'s own FX-55 and FX-55H entries.
 
-## Point-in-time news evidence model (FX-56, hardened FX-56H)
+## Point-in-time news evidence model (FX-56, hardened FX-56H/FX-56H.1)
 
 FX-56 builds the provider-neutral, immutable, point-in-time storage
 model FX-57's own future source adapters will target -- it ingests
@@ -1454,49 +1454,60 @@ content/state as of a specific FTA-observed instant. `domain.
 news_source_identity.NewsSourceIdentity` (`source_key`,
 `external_item_id`) is the EXTERNAL identity a future adapter supplies
 -- never a URL, never a timestamp -- and `application.ports.
-news_repository.NewsRepository.register_source_item` resolves it onto
-a `news_item_key` via a persisted mapping, exactly as FX-52AH's own
-`EconomicEventSourceMappingRepository` resolves calendar-source
-identities onto `occurrence_key`s.
+news_repository.NewsRepository.register_source_item_with_first_
+vintage` resolves it onto a `news_item_key` via a persisted mapping,
+exactly as FX-52AH's own `EconomicEventSourceMappingRepository`
+resolves calendar-source identities onto `occurrence_key`s.
 
-**`register_source_item` corrects a known weakness in that FX-52A/
-FX-52AH precedent rather than repeating it.** FX-52A's original
-design minted and committed an occurrence row, THEN attempted to
-record its mapping -- so two workers racing to register the same
-never-before-seen external identity could each durably commit their
-own candidate occurrence, with the loser's own mapping insert then
-conflicting against the winner's and raising an error, leaving the
-loser's occurrence a permanent orphan (see `application.ports.
-economic_event_source_mapping_repository`'s own module docstring).
-`SqlAlchemyNewsRepository.register_source_item` closes this by
-construction: the candidate `NewsItemRow` and its `NewsSourceMapping
-Row` are inserted (flushed, not committed) in ONE transaction, and
-committed together ONLY if the mapping insert's own `ON CONFLICT DO
-NOTHING` actually wins the race; a losing attempt rolls the WHOLE
-transaction back -- discarding its own candidate item insert along
-with it -- before resolving to the winner's already-registered
-identity. No caller can ever observe, or need to clean up, an orphan
-item. Verified against live Postgres with two genuinely concurrent
-sessions (`asyncio.gather`), not merely argued from the SQL shape.
+**The port's identity-resolving operation closes a known weakness in
+that FX-52A/FX-52AH precedent rather than repeating it.** FX-52A's
+original design minted and committed an occurrence row, THEN
+attempted to record its mapping -- so two workers racing to register
+the same never-before-seen external identity could each durably
+commit their own candidate occurrence, with the loser's own mapping
+insert then conflicting against the winner's and raising an error,
+leaving the loser's occurrence a permanent orphan (see `application.
+ports.economic_event_source_mapping_repository`'s own module
+docstring). `SqlAlchemyNewsRepository` closes this by construction:
+the candidate `NewsItemRow` and its `NewsSourceMappingRow` are
+inserted (flushed, not committed) in ONE transaction, and committed
+together ONLY if the mapping insert's own `ON CONFLICT DO NOTHING`
+actually wins the race; a losing attempt rolls the WHOLE transaction
+back -- discarding its own candidate item insert along with it --
+before resolving to the winner's already-registered identity. No
+caller can ever observe, or need to clean up, an orphan item.
+Verified against live Postgres with two genuinely concurrent sessions
+(`asyncio.gather`), not merely argued from the SQL shape.
 
 **FX-56H extended this exact same atomicity one level further, to
 cover the first VINTAGE too, not only the item/mapping.** FX-56's own
-original design still committed item+mapping (via `register_source_
-item`) in one transaction, then separately committed revision 0 (via
-a later `add_vintage` call) -- so a failure between those two steps
-(a crash, a validation error, an injected fault) could leave a
-durably-committed `NewsItem` with no revision 0 at all, and a naive
-retry would then mint revision 0 at the RETRY's own `observed_at`,
-violating "revision 0's own `availability` must equal `NewsItem.
-first_seen_at`." `register_source_item_with_first_vintage` -- the
-method `RecordNewsObservation` actually calls for every observation,
-first or not -- closes this the same way: item, mapping, AND revision
-0 are inserted in the SAME uncommitted transaction, committed
-together only once all three are known to succeed; any failure at any
-point (the mapping losing its own race, or the vintage insert itself
-failing) rolls back the ENTIRE attempt. Plain `register_source_item`
-remains in the port, unchanged, for a caller that only needs identity
-resolution with no content to record yet.
+original design committed item+mapping (via a bare, content-less
+`register_source_item`) in one transaction, then separately committed
+revision 0 (via a later `add_vintage` call) -- so a failure between
+those two steps (a crash, a validation error, an injected fault)
+could leave a durably-committed `NewsItem` with no revision 0 at all,
+and a naive retry would then mint revision 0 at the RETRY's own
+`observed_at`, violating "revision 0's own `availability` must equal
+`NewsItem.first_seen_at`." `register_source_item_with_first_vintage`
+-- the method `RecordNewsObservation` actually calls for every
+observation, first or not -- closes this the same way: item, mapping,
+AND revision 0 are inserted in the SAME uncommitted transaction,
+committed together only once all three are known to succeed; any
+failure at any point (the mapping losing its own race, or the vintage
+insert itself failing) rolls back the ENTIRE attempt.
+
+**FX-56H.1 then removed the bare, content-less `register_source_item`
+from the port's own PUBLIC contract entirely.** Its mere existence as
+a legitimate public operation contradicted `RecordNewsObservation`'s
+own invariant that an existing item always has a revision-0 vintage
+-- a production caller holding a `NewsRepository`-typed reference can
+now create an item ONLY together with its first vintage, by
+construction, never separately. `SqlAlchemyNewsRepository` keeps a
+PRIVATE, test-only equivalent, `_register_source_item_for_test_
+setup` (sharing the same identity-race handling, `_insert_item_and_
+mapping`), used only by repository-level tests that need bare
+identity resolution in isolation -- never by `RecordNewsObservation`
+or any other production code path.
 
 **FTA availability is `NewsItemVintage.availability` alone, always
 FTA's own observation time, never a source-supplied timestamp --
@@ -1557,18 +1568,25 @@ Context dashboard change (FX-61); any source-reputation/credibility
 scoring (FX-EPIC-09); any Decision/Risk Engine integration, trade
 signal, or BUY/SELL logic anywhere.
 
-**FX-56H's own PIT-ordering guard protects history from out-of-order
-processing**: once an item already has a latest vintage, `RecordNews
-Observation` refuses (`NewsObservationOutOfOrderError`) to append a
-CHANGED observation whose own `observed_at` is earlier than that
-latest vintage's `availability` -- PIT history must never be
-rewritten. This check only ever applies to a genuinely NEW fact: an
-observation identical to the latest vintage is always `UNCHANGED`
-regardless of its own timing, since nothing is appended in that case
-at all. Equal `availability` values between consecutive revisions are
-explicitly permitted, tie-broken by `revision_sequence` -- matching
-`NewsItemVintage`'s own PIT-query ordering (`availability DESC,
-revision_sequence DESC`).
+**The PIT-ordering guard protects history from out-of-order
+processing, with its precedence corrected by FX-56H.1**: once an item
+already has a latest vintage, `RecordNewsObservation` refuses
+(`NewsObservationOutOfOrderError`) to accept any observation -- CHANGED
+OR IDENTICAL -- whose own `observed_at` is earlier than that latest
+vintage's `availability` -- PIT history must never be rewritten.
+FX-56H's own original version checked modeled-fact equality BEFORE
+ordering, which let an identical-but-earlier observation silently
+return `UNCHANGED`; FX-56H.1 corrected this, since an earlier
+`observed_at` asserts that FTA possessed those exact facts earlier
+than the stored history says, and that assertion must be rejected
+regardless of whether the facts themselves also changed. The
+corrected order checks ordering FIRST, unconditionally; only once an
+observation's own `observed_at` is confirmed not earlier does it
+proceed to the modeled-facts comparison that can return `UNCHANGED`.
+Equal `availability` values between consecutive revisions remain
+explicitly permitted (the check is `<`, never `<=`), tie-broken by
+`revision_sequence` -- matching `NewsItemVintage`'s own PIT-query
+ordering (`availability DESC, revision_sequence DESC`).
 
 **`RecordNewsObservation` now inspects `add_vintage`'s own write
 outcome rather than discarding it.** If a concurrent identical writer
@@ -1585,13 +1603,14 @@ Vintage`'s own checks -- defense in depth so a malformed observation
 is rejected before `RecordNewsObservation` is even called, let alone
 before any repository write is attempted.
 
-**Four new `CHECK` constraints (migration `b2bbebf8ee3b`, additive,
+**Five new `CHECK` constraints (migration `b2bbebf8ee3b`, additive,
 unguarded downgrade)** mirror the remaining domain `__post_init__`
-enum/range checks in storage: `news_items.first_observation_mode` and
-`news_item_vintages.observation_mode` against `NewsObservationMode`;
-`news_item_vintages.source_status` against `NewsSourceStatus`;
-`news_item_vintages.evidence_disposition` against `NewsEvidence
-Disposition`; and `news_item_vintages.revision_sequence >= 0`. The
+enum/range checks in storage: `news_items.first_observation_mode`
+against `NewsObservationMode`; `news_item_vintages.observation_mode`
+against the same enum, on the separate table; `news_item_vintages.
+source_status` against `NewsSourceStatus`; `news_item_vintages.
+evidence_disposition` against `NewsEvidenceDisposition`; and `news_
+item_vintages.revision_sequence >= 0`. The
 "revision 0's own `availability` equals `NewsItem.first_seen_at`"
 invariant is deliberately NOT attempted as a cross-table `CHECK`
 (Postgres cannot reference another table in one) -- it remains a
