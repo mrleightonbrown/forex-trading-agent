@@ -4,7 +4,7 @@ rss_parsing.parse_rss_items`, because that parser's own item-validity
 rule (guid AND title AND a successfully-parsed `pubDate`, else the
 WHOLE item is invalid) is wrong for news: a news item's `pubDate` is
 source PROVENANCE, never FTA availability (FX-57A Section 3/18), so a
-malformed/implausible `pubDate` must never invalidate an otherwise-
+malformed/implausible `pubDate` never invalidates an otherwise-
 good item. Reuses only the structural technique (ElementTree,
 namespace-local-name stripping, fail-closed root-element validation)
 from that module, not its functions.
@@ -12,6 +12,18 @@ from that module, not its functions.
 Shared across every RSS-based news adapter (Fed now; ECB/BoE are also
 confirmed RSS 2.0 per ADR 0005, so this is a genuinely reusable piece
 for FX-57B/C, not a speculative one) -- nothing here is Fed-specific.
+
+**FX-57AH Section 3: this parses RSS ONLY, never Atom.** An earlier
+version of this module also accepted an Atom `<feed>` root as
+"recognized" while only ever extracting RSS `<item>` elements -- an
+Atom document's own `<entry>` elements were silently ignored, so a
+real Atom feed was misread as a valid, empty RSS response (fail-open
+silent data loss). The root element must now be exactly `rss`, AND
+that root must contain a `<channel>` child (the RSS 2.0 structural
+container) -- an RSS root with no `<channel>` at all is malformed, not
+a valid empty feed. Statistics Canada's Atom Daily feeds (FX-57E) will
+get their own, separate Atom parser when that story is authorized;
+this module is never extended to understand Atom.
 
 **The sentinel-pubDate finding (live evidence, FX-57A Section 55)**:
 the Federal Reserve's own `testimony.xml` feed contains items whose
@@ -32,17 +44,18 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
 
-_RECOGNIZED_ROOT_LOCAL_NAMES = frozenset({"rss", "feed"})
+_RSS_ROOT_LOCAL_NAME = "rss"
 _SENTINEL_YEAR_FLOOR = 1900
 
 
 class MalformedNewsFeedError(ValueError):
     """Raised when `text` is not a recognizable RSS document at all --
-    bad XML, or a parseable document whose root is not a recognized
-    RSS root (e.g. an HTML WAF/error page returned with HTTP 200).
-    Distinct from a genuinely empty, well-formed feed (valid root,
-    zero `<item>`s), which is a valid, non-error result (FX-57A
-    Section 25/26)."""
+    bad XML, a parseable document whose root is not `rss` (e.g. an
+    Atom `<feed>`, or an HTML WAF/error page returned with HTTP 200),
+    or an `<rss>` root with no `<channel>` child at all. Distinct from
+    a genuinely empty, well-formed feed (`<rss><channel/></rss>`, zero
+    `<item>`s), which is a valid, non-error result (FX-57A Section
+    25/26)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,14 +88,21 @@ def parse_news_rss_items(text: str) -> NewsRssParseResult:
     blank `guid` or `title` (FX-57A Section 3/26 -- identity and
     headline are the sole hard requirements); a missing, malformed, or
     implausible `pubDate` never invalidates an item. Raises
-    `MalformedNewsFeedError` if `text` does not parse as XML, or its
-    root is not a recognized RSS/Atom root."""
+    `MalformedNewsFeedError` if `text` does not parse as XML, its root
+    is not exactly `rss` (this parser is RSS-only -- an Atom `<feed>`
+    fails closed here, never silently read as an empty RSS response),
+    or that `<rss>` root has no `<channel>` child at all."""
     try:
         root = ElementTree.fromstring(text)
     except ElementTree.ParseError as exc:
         raise MalformedNewsFeedError(f"text does not parse as XML: {exc}") from exc
-    if _local_name(root.tag) not in _RECOGNIZED_ROOT_LOCAL_NAMES:
-        raise MalformedNewsFeedError(f"root element {root.tag!r} is not a recognized RSS/Atom root")
+    if _local_name(root.tag) != _RSS_ROOT_LOCAL_NAME:
+        raise MalformedNewsFeedError(
+            f"root element {root.tag!r} is not an RSS root (expected 'rss' -- this "
+            "parser is RSS-only and never reads an Atom <feed> as a valid response)"
+        )
+    if not any(_local_name(child.tag) == "channel" for child in root):
+        raise MalformedNewsFeedError("<rss> root has no <channel> child -- malformed RSS")
 
     items: list[NewsRssItem] = []
     invalid_reasons: list[str] = []

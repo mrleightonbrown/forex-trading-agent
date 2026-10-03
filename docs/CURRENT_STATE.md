@@ -1880,7 +1880,10 @@ _Last updated: 2026-09-27 (FX-54V)_
   startup hook) -- run live against the real Fed feeds and Postgres
   during this story: created 45 items on the first run, then `created=
   0, unchanged=45` on an immediate second run, confirming idempotency
-  end-to-end against real data, not just fixtures. 93 new tests (15
+  end-to-end against real data, not just fixtures. 54 new tests
+  (corrected by FX-57AH -- the original report's "93" did not sum
+  from its own listed categories; verified by counting actual test
+  functions added in commit `fb8cf25`: 15+8+17+8+5+1 = 54) (15
   parser unit + 8 transport unit + 17 Fed-adapter unit + 8 orchestration
   unit + 5 Postgres end-to-end integration + 1 separately-marked
   `live_source` Fed test, run via `pytest -m live_source`) -- all green
@@ -1894,6 +1897,30 @@ _Last updated: 2026-09-27 (FX-54V)_
   start FX-57B (ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/
   FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk
   Engine.**
+- **FX-57AH: common news ingestion contract hardening (complete)**. A
+  narrow hardening pass on FX-57A, found by review, before FX-57B. Four
+  reusable-foundation fixes, Fed behaviour unchanged (verified by
+  re-running the full Fed-specific suite): (1) `NewsSourceFetchOutcome`
+  now ENFORCES one shared `retrieved_at` across every observation in
+  a response (`NewsSourceFetchContractError`, never silently rewrites
+  a mismatched timestamp); (2) `IngestNewsSourceOnce` now enforces
+  source-key isolation (`SourceKeyMismatchError`, propagates uncaught
+  -- a mis-wired fetcher can never make a `"FED"` run persist
+  `"ECB"`/`"BOE"`/... evidence); (3) `rss_item_parsing` is now RSS-only
+  -- it previously also accepted an Atom `<feed>` root while only ever
+  reading RSS `<item>`s, silently misreading a real Atom response as a
+  valid empty RSS feed (fail-open data loss); root must now be exactly
+  `rss` with a `<channel>` child; (4) `NewsIngestionResult`'s single
+  `items_seen` is now three explicit counters (`items_fetched`/
+  `items_normalized`/`items_processed`). Also corrected two genuine
+  errors in FX-57A's own prior report: ADR 0005 WAS amended with a
+  sentinel-pubDate addendum (FX-57A's own report wrongly claimed it
+  was not); FX-57A added 54 new tests, not 93 (its own listed
+  categories summed to 54; "93" was a plain arithmetic error). 13 new
+  tests (67 total for FX-57/FX-57AH). No schema change. Full details
+  in `docs/DECISIONS.md`'s FX-57AH entry. **Stop after FX-57AH -- do
+  not start FX-57B/FX-57C/FX-57D/FX-57E/FX-57F/FX-58/FX-59/FX-60/
+  FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

@@ -139,7 +139,7 @@ async def test_single_poll_persists_item_and_first_vintage(session: AsyncSession
     await session.commit()
 
     assert result.created == 1
-    assert result.items_seen == 1
+    assert result.items_processed == 1
 
     identity = NewsSourceIdentity(SOURCE_KEY, f"{_TEST_GUID_PREFIX}single-poll")
     item = await repository.get_item_by_source_identity(identity)
@@ -223,7 +223,7 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
     await session.commit()
 
     assert result.created == 0
-    assert result.items_seen == 0
+    assert result.items_processed == 0
     assert len(result.errors) == 1
 
     identity = NewsSourceIdentity(SOURCE_KEY, f"{_TEST_GUID_PREFIX}single-poll")

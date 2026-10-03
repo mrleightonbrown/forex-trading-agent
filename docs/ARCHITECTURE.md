@@ -1778,6 +1778,35 @@ dashboard change (FX-61); any source-reputation/credibility scoring
 (FX-EPIC-09); any Decision/Risk Engine integration, trade signal, or
 BUY/SELL logic anywhere.
 
+**FX-57AH (common ingestion contract hardening) then closed four
+reusable-foundation gaps a review found in the above, before FX-57B
+was authorized** -- the Fed-specific behaviour described above is
+unchanged, verified by re-running every Fed-specific test after each
+fix: (1) `NewsSourceFetchOutcome.__post_init__` now ENFORCES, not
+just documents, that every observation shares its response's own
+`retrieved_at` -- raises `NewsSourceFetchContractError` rather than
+silently rewriting a mismatched timestamp if a future adapter's own
+bug ever produces one; (2) `IngestNewsSourceOnce` now enforces source-
+key isolation -- `SourceKeyMismatchError` propagates uncaught (never
+swallowed into `errors`) if any observation's own `source_key`
+disagrees with the run's own configured source key, so a mis-wired
+fetcher can never make a `"FED"` run persist `"ECB"`/`"BOE"`/...
+evidence; (3) `rss_item_parsing.parse_news_rss_items` is now RSS-only
+-- it previously also accepted an Atom `<feed>` root as "recognized"
+while only ever extracting RSS `<item>` elements, so a real Atom
+response was silently misread as a valid, empty RSS result (fail-
+open data loss); the root must now be exactly `rss` AND contain a
+`<channel>` child; (4) `NewsIngestionResult`'s single, ambiguous
+`items_seen` counter is now three explicit fields -- `items_fetched`
+(every raw item, including invalid/duplicate), `items_normalized`
+(valid, pre-dedup), `items_processed` (post-dedup, actually
+persisted). See `docs/DECISIONS.md`'s FX-57AH entry for the full
+reasoning, including a correction to two genuine errors in FX-57A's
+own prior report (ADR 0005 WAS in fact amended with a sentinel-
+pubDate addendum, contrary to that report's own claim otherwise; the
+test count was 54, not 93 -- its own listed categories never summed
+to 93).
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

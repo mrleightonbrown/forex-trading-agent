@@ -149,3 +149,31 @@ def test_html_masquerading_as_feed_raises() -> None:
 def test_unrecognized_root_raises() -> None:
     with pytest.raises(MalformedNewsFeedError):
         parse_news_rss_items("<somethingelse/>")
+
+
+def test_rss_root_with_channel_and_zero_items_is_valid_empty() -> None:
+    result = parse_news_rss_items("<rss><channel></channel></rss>")
+    assert result.invalid_count == 0
+    assert result.items == ()
+
+
+def test_rss_root_with_no_channel_at_all_is_malformed() -> None:
+    with pytest.raises(MalformedNewsFeedError):
+        parse_news_rss_items("<rss/>")
+
+
+def test_atom_feed_root_fails_closed_never_read_as_valid_empty_rss() -> None:
+    atom = (
+        "<feed xmlns='http://www.w3.org/2005/Atom'>"
+        "<title>Atom Feed</title>"
+        "<entry><id>1</id><title>An entry</title></entry>"
+        "</feed>"
+    )
+    with pytest.raises(MalformedNewsFeedError):
+        parse_news_rss_items(atom)
+
+
+def test_normal_fed_rss_shape_is_unaffected_by_rss_only_restriction() -> None:
+    result = parse_news_rss_items(_rss(_item()))
+    assert result.invalid_count == 0
+    assert len(result.items) == 1

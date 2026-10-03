@@ -1,6 +1,9 @@
 """FX-57A: the provider-neutral one-shot ingestion orchestration every
 concrete news-source adapter (Fed now; ECB/BoE/... later) reuses
-unchanged.
+unchanged. Hardened by FX-57AH: source-key isolation is now an
+enforced, fail-closed contract (Section 2), and the result's own
+item counters (Section 4) now distinguish fetched/normalized/
+processed explicitly rather than relying on one ambiguous count.
 
 Deliberately the SMALLEST shared orchestration piece (FX-57A Section
 8/9): given a tuple of already-configured channel fetchers (each one
@@ -62,16 +65,65 @@ class ConflictingDuplicateExternalIdError(Exception):
         )
 
 
+class SourceKeyMismatchError(Exception):
+    """Raised when a fetcher handed to `IngestNewsSourceOnce(source_
+    key=...)` produces an observation whose own `source_key` disagrees
+    with the source key this ingestion run was identified as (FX-57AH
+    Section 2) -- an explicit source-contract violation, never a plain
+    assertion, and never silently corrected by rewriting the
+    observation's own `source_key`. This is a wiring bug (a fetcher
+    supplying the wrong source's data to the wrong run) and must be
+    fixed at the call site, not worked around here: a run identified
+    as `"FED"` must never persist `"ECB"`/`"BOE"`/... evidence. Raised
+    BEFORE the mismatched observation reaches deduplication or
+    `RecordNewsObservation`, and propagates uncaught out of
+    `IngestNewsSourceOnce.__call__` -- it is never recorded in
+    `NewsIngestionResult.errors` and swallowed, unlike a channel's own
+    `NewsSourceUnavailableError`."""
+
+    def __init__(self, expected_source_key: str, observation: NormalizedNewsObservation) -> None:
+        self.expected_source_key = expected_source_key
+        self.actual_source_key = observation.source_key
+        self.external_item_id = observation.external_item_id
+        super().__init__(
+            f"ingestion run identified as source_key={expected_source_key!r} received an "
+            f"observation with source_key={observation.source_key!r} "
+            f"(external_item_id={observation.external_item_id!r}) -- a fetcher was wired "
+            "incorrectly; refusing to persist evidence under the wrong source identity"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class NewsIngestionResult:
     """A purely factual summary of one `IngestNewsSourceOnce` call
     (FX-57A Section 42) -- counts only, never sentiment/importance/
-    pair-relevance/trading-direction, which belong to later stories."""
+    pair-relevance/trading-direction, which belong to later stories.
+
+    **FX-57AH Section 4**: the item counters are now explicit about
+    which stage they describe, rather than one ambiguous `items_seen`:
+
+    - `items_fetched`: every raw item element presented by a
+      structurally valid response, INCLUDING invalid items and
+      duplicates (i.e. `len(outcome.observations) + outcome.
+      items_invalid`, summed over every successfully-fetched
+      response).
+    - `items_normalized`: valid normalized observations, BEFORE
+      within-response deduplication (`len(outcome.observations)`,
+      summed over every successfully-fetched response).
+    - `items_processed`: observations remaining after identical-
+      duplicate collapse, actually submitted to `RecordNewsObserva
+      tion` (zero for a response that failed closed on a conflicting
+      duplicate guid -- see `ConflictingDuplicateExternalIdError`).
+      `items_processed == created + revisions_added + unchanged`
+      always.
+    """
 
     source_key: str
     source_channels: tuple[str, ...]
     retrieved_at: tuple[UtcTimestamp, ...]
-    items_seen: int
+    items_fetched: int
+    items_normalized: int
+    items_processed: int
     items_invalid: int
     created: int
     revisions_added: int
@@ -90,7 +142,9 @@ class IngestNewsSourceOnce:
     async def __call__(self, fetchers: tuple[NewsSourceChannelFetcher, ...]) -> NewsIngestionResult:
         channels: list[str] = []
         retrieved_ats: list[UtcTimestamp] = []
-        items_seen = 0
+        items_fetched = 0
+        items_normalized = 0
+        items_processed = 0
         items_invalid = 0
         created = 0
         revisions_added = 0
@@ -109,7 +163,13 @@ class IngestNewsSourceOnce:
                 channels.append(outcome.source_channel)
             retrieved_ats.append(outcome.retrieved_at)
             items_invalid += outcome.items_invalid
+            items_fetched += len(outcome.observations) + outcome.items_invalid
+            items_normalized += len(outcome.observations)
             errors.extend(outcome.invalid_reasons)
+
+            for observation in outcome.observations:
+                if observation.source_key != self._source_key:
+                    raise SourceKeyMismatchError(self._source_key, observation)
 
             try:
                 deduped = _dedupe_within_response(self._source_key, outcome.observations)
@@ -118,7 +178,7 @@ class IngestNewsSourceOnce:
                 continue
 
             for observation in deduped:
-                items_seen += 1
+                items_processed += 1
                 record_result = await self._record_observation(observation)
                 if record_result.outcome is RecordNewsObservationOutcome.CREATED:
                     created += 1
@@ -133,7 +193,9 @@ class IngestNewsSourceOnce:
             source_key=self._source_key,
             source_channels=tuple(channels),
             retrieved_at=tuple(retrieved_ats),
-            items_seen=items_seen,
+            items_fetched=items_fetched,
+            items_normalized=items_normalized,
+            items_processed=items_processed,
             items_invalid=items_invalid,
             created=created,
             revisions_added=revisions_added,

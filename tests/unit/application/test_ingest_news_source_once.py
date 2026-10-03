@@ -22,6 +22,7 @@ from forex_agent.application.ports.news_source import (
 )
 from forex_agent.application.use_cases.ingest_news_source_once import (
     IngestNewsSourceOnce,
+    SourceKeyMismatchError,
 )
 from forex_agent.application.use_cases.record_news_observation import (
     NewsObservationOutOfOrderError,
@@ -117,9 +118,10 @@ def _observation(
     external_item_id: str = "guid-1",
     headline: str = "A Headline",
     observed_at: UtcTimestamp | None = None,
+    source_key: str = _SOURCE_KEY,
 ) -> NormalizedNewsObservation:
     return NormalizedNewsObservation(
-        source_key=_SOURCE_KEY,
+        source_key=source_key,
         external_item_id=external_item_id,
         observed_at=observed_at or _ts(),
         observation_mode=NewsObservationMode.PROSPECTIVE,
@@ -158,7 +160,9 @@ async def test_single_observation_is_created() -> None:
     assert result.created == 1
     assert result.revisions_added == 0
     assert result.unchanged == 0
-    assert result.items_seen == 1
+    assert result.items_fetched == 1
+    assert result.items_normalized == 1
+    assert result.items_processed == 1
     assert result.items_invalid == 0
     assert result.source_channels == ("press_monetary",)
     assert result.errors == ()
@@ -250,8 +254,31 @@ async def test_item_invalid_counts_and_reasons_are_aggregated() -> None:
     result = await ingest((_fetcher_returning(outcome),))
 
     assert result.items_invalid == 2
+    assert result.items_fetched == 2
+    assert result.items_normalized == 0
+    assert result.items_processed == 0
     assert "item at index 0: missing guid" in result.errors
     assert "item at index 1: missing title" in result.errors
+
+
+@pytest.mark.asyncio
+async def test_one_valid_plus_one_invalid_item_counters_match_worked_example() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(external_item_id="valid-1"),),
+        items_invalid=1,
+        invalid_reasons=("item at index 1: missing title",),
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+
+    assert result.items_fetched == 2
+    assert result.items_normalized == 1
+    assert result.items_invalid == 1
+    assert result.items_processed == 1
+    assert result.created == 1
 
 
 @pytest.mark.asyncio
@@ -270,7 +297,9 @@ async def test_identical_duplicate_guid_within_response_is_deduped_idempotently(
     )
     result = await ingest((_fetcher_returning(outcome),))
 
-    assert result.items_seen == 1
+    assert result.items_fetched == 2
+    assert result.items_normalized == 2
+    assert result.items_processed == 1
     assert result.created == 1
     assert result.errors == ()
 
@@ -324,3 +353,68 @@ async def test_out_of_order_error_propagates_and_is_never_swallowed() -> None:
     )
     with pytest.raises(NewsObservationOutOfOrderError):
         await ingest((_fetcher_returning(backdated_outcome),))
+
+
+@pytest.mark.asyncio
+async def test_matching_source_key_succeeds() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(source_key=_SOURCE_KEY),),
+        items_invalid=0,
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+    assert result.created == 1
+
+
+@pytest.mark.asyncio
+async def test_one_mismatched_source_key_observation_fails_closed() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(source_key="ECB"),),
+        items_invalid=0,
+    )
+    with pytest.raises(SourceKeyMismatchError):
+        await ingest((_fetcher_returning(outcome),))
+
+
+@pytest.mark.asyncio
+async def test_no_mismatched_evidence_reaches_record_news_observation() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(external_item_id="wrongly-wired", source_key="BOE"),),
+        items_invalid=0,
+    )
+    with pytest.raises(SourceKeyMismatchError):
+        await ingest((_fetcher_returning(outcome),))
+
+    identity = NewsSourceIdentity(source_key="BOE", external_item_id="wrongly-wired")
+    assert await repo.get_item_by_source_identity(identity) is None
+    fed_identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="wrongly-wired")
+    assert await repo.get_item_by_source_identity(fed_identity) is None
+
+
+@pytest.mark.asyncio
+async def test_result_source_key_never_disagrees_with_persisted_source_identity() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(source_key=_SOURCE_KEY),),
+        items_invalid=0,
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+    assert result.source_key == _SOURCE_KEY
+
+    identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-1")
+    item = await repo.get_item_by_source_identity(identity)
+    assert item is not None

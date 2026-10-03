@@ -107,12 +107,29 @@ class NewsSourceUnavailableError(Exception):
     non-error result."""
 
 
+class NewsSourceFetchContractError(Exception):
+    """Raised when a source adapter's own `NewsSourceFetchOutcome`
+    violates the common fetch contract every adapter must uphold
+    (FX-57AH Section 1) -- fails closed at CONSTRUCTION time, never
+    silently corrected, so a violating adapter's own bug can never
+    propagate into stored evidence. The adapter itself must be fixed;
+    this exception exists precisely so that never happens quietly."""
+
+
 @dataclass(frozen=True, slots=True)
 class NewsSourceFetchOutcome:
     """One channel/response's own fetch-and-normalize result -- what
     any source adapter hands to `IngestNewsSourceOnce` (FX-57A). One
     `retrieved_at` per response, shared by every observation in
     `observations` (FX-57A Section 4) -- never a per-item clock call.
+
+    **FX-57AH Section 1**: this is now an ENFORCED invariant, not just
+    documentation -- `__post_init__` requires `observation.observed_at
+    == retrieved_at` for every observation in `observations`, raising
+    `NewsSourceFetchContractError` (never silently rewriting the
+    mismatched timestamp) if any observation disagrees. A source's own
+    `source_published_at` is irrelevant to this check -- only FTA's own
+    retrieval instant is compared.
 
     `items_invalid`/`invalid_reasons` describe ITEM-level parse
     failures within an otherwise structurally-valid response (FX-57A
@@ -125,6 +142,19 @@ class NewsSourceFetchOutcome:
     observations: tuple[NormalizedNewsObservation, ...]
     items_invalid: int
     invalid_reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for observation in self.observations:
+            if observation.observed_at != self.retrieved_at:
+                raise NewsSourceFetchContractError(
+                    f"observation external_item_id={observation.external_item_id!r} has "
+                    f"observed_at={observation.observed_at.value.isoformat()!r}, which "
+                    f"differs from this response's own retrieved_at="
+                    f"{self.retrieved_at.value.isoformat()!r} -- every observation "
+                    "produced from the SAME response must share the exact same FTA "
+                    "retrieval instant; the adapter that built this outcome has a bug "
+                    "and must be fixed, not worked around here"
+                )
 
 
 NewsSourceChannelFetcher = Callable[[], Awaitable[NewsSourceFetchOutcome]]

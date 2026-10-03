@@ -10746,13 +10746,19 @@ that Fed publication times appear hour-granular, not a contradiction
 of it** -- both describe genuine properties of the same feeds'
 `pubDate` field, one about precision and one about an occasional
 placeholder value, and neither changes Fed's own ADOPT_PROSPECTIVE
-verdict. No ADR 0005 text amendment was made; this finding is
-recorded here and in `docs/ARCHITECTURE.md`/`docs/CURRENT_STATE.md`/
-`docs/NEXT_STEPS.md` instead, per this story's own instruction that an
-ADR update is warranted only when live evidence changes or clarifies
-the ADR's own feasibility verdict in a way not already covered by its
-existing hour-granularity finding -- judged here to be a refinement
-of an already-recorded property, not a new feasibility fact.
+verdict. **Corrected by FX-57AH**: ADR 0005 WAS amended, with a short
+addendum inserted directly into its own Federal Reserve entry
+(`docs/adr/0005-news-intelligence-source-feasibility.md`, immediately
+after the existing hour-granularity finding), recording this sentinel
+exactly as described above and stating explicitly that it clarifies
+rather than changes the finding and does not change the
+ADOPT_PROSPECTIVE verdict -- this was the right call under this
+story's own instruction that an ADR update is warranted when live
+evidence clarifies the ADR's own feasibility record, even without
+changing its verdict; the earlier FX-57A report's claim that "no ADR
+0005 text amendment was made" was simply wrong, since the addendum
+was in fact written during FX-57A itself. Also recorded here and in
+`docs/ARCHITECTURE.md`/`docs/CURRENT_STATE.md`/`docs/NEXT_STEPS.md`.
 
 **Content mapping, each field decision made against the live-
 confirmed schema above**: `title`->`headline` (required, non-empty;
@@ -10819,7 +10825,13 @@ not test fixtures, and not cleaned up.
 above means FX-56's existing tables/columns are sufficient for FX-57A
 in full; no Alembic revision was authored by this story.
 
-**93 new tests**: 15 deterministic RSS-parser-fixture unit tests
+**54 new tests** (corrected by FX-57AH: the original report claimed
+"93 new tests," but its own listed categories below sum to 15+8+17+
+8+5+1 = 54, not 93 -- an uncaught arithmetic error, not a different
+actual test count; verified directly by counting `def test_`/`async
+def test_` functions added in commit `fb8cf25`'s own diff, which also
+gives exactly 54. Do not re-guess a number -- 54 is the verified
+count): 15 deterministic RSS-parser-fixture unit tests
 (`tests/unit/infrastructure/news_sources/test_rss_item_parsing.py` --
 one normal item, multiple items, missing optional description,
 malformed pubDate, sentinel pubDate, missing pubDate entirely, missing
@@ -10912,3 +10924,189 @@ Per this story's own explicit stop instruction: do not start FX-57B
 its own known timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/
 FX-EPIC-09, or any Decision/Risk Engine work. FX-49 remains DEFER;
 FX-52 remains DEFER; FX-53 remains BLOCKED. Return FX-57A for review.
+
+## 2026-10-03 — FX-57AH: common news ingestion contract hardening
+
+A narrowly-scoped hardening pass on FX-57A, found by review, performed
+before FX-57B is authorized. Does not touch the Fed adapter's own
+field mappings, endpoints, source key, or lifecycle semantics (all of
+which were explicitly required to remain unchanged and were verified
+unchanged by re-running the full Fed-specific test suite after each
+change below).
+
+**1. Enforced the retrieval-time invariant as executable code, not
+just documentation.** `NewsSourceFetchOutcome.__post_init__`
+(`application/ports/news_source.py`) now requires `observation.
+observed_at == self.retrieved_at` for every observation in
+`observations`, raising a new `NewsSourceFetchContractError` if any
+observation disagrees -- checked at CONSTRUCTION time, the common
+boundary every adapter's own outcome passes through, rather than
+relying on each future adapter (FX-57B-F) to remember the rule
+independently. Never rewrites the mismatched timestamp; the exception
+message says explicitly that the adapter which built the outcome has
+a bug and must be fixed. A source's own `source_published_at` is
+irrelevant to this check -- confirmed by a dedicated test
+(`test_source_published_at_is_irrelevant_to_this_check`) that varies
+`source_published_at` freely while the `observed_at`/`retrieved_at`
+check still fires correctly. 4 new tests in a new file,
+`tests/unit/application/test_news_source_fetch_outcome.py`.
+
+**2. Enforced source-key isolation in `IngestNewsSourceOnce`.** A new
+`SourceKeyMismatchError` (`application/use_cases/
+ingest_news_source_once.py`) is raised, for EVERY observation in
+every fetched `NewsSourceFetchOutcome`, before deduplication or any
+`RecordNewsObservation` call, if `observation.source_key != self.
+_source_key`. This is an explicit exception, never a plain
+`assert` -- and deliberately PROPAGATES uncaught out of `__call__`
+(the same treatment as an unexpected system failure like
+`NewsObservationOutOfOrderError`), never caught and recorded into
+`NewsIngestionResult.errors` the way a per-channel `NewsSource
+UnavailableError` is. **Reasoning for propagate-vs-skip**: a source-
+key mismatch is a wiring bug in the CALLING code (a fetcher supplying
+the wrong source's own data to a run identified under a different
+source key), not a legitimate, expected operational condition like a
+transient network failure -- it should stop the whole run rather than
+quietly continuing with a result that might still look superficially
+healthy. Verified: a matching source succeeds; one mismatched
+observation raises and is never persisted under either the wrong OR
+the claimed source key; `NewsIngestionResult.source_key` can never
+disagree with what was actually persisted, because a disagreement now
+aborts the call entirely rather than ever being returned. 4 new tests
+in `tests/unit/application/test_ingest_news_source_once.py`.
+
+**3. `rss_item_parsing` no longer claims Atom support it never had.**
+The original FX-57A version recognized both `rss` and `feed` as valid
+roots but ONLY ever extracted `<item>` elements -- so a real Atom
+document (`<feed><entry>...</entry></feed>`) parsed "successfully" to
+zero items, indistinguishable from a genuinely empty RSS feed: a
+fail-open silent-data-loss bug, exactly the opposite of this parser's
+own stated fail-closed philosophy. Fixed: the root must now be
+exactly `rss` (an Atom `<feed>` fails closed with `MalformedNewsFeed
+Error`, verified by `test_atom_feed_root_fails_closed_never_read_as_
+valid_empty_rss`), AND that `<rss>` root must contain a `<channel>`
+child -- an `<rss/>` with no channel at all is now malformed, not
+valid-empty (`test_rss_root_with_no_channel_at_all_is_malformed`). A
+well-formed `<rss><channel></channel></rss>` with zero items remains
+correctly valid-empty (`test_rss_root_with_channel_and_zero_items_is_
+valid_empty`). The real Fed RSS shape is unaffected (`test_normal_
+fed_rss_shape_is_unaffected_by_rss_only_restriction`, plus all 15
+original fixture tests still pass unchanged). Statistics Canada's own
+Atom Daily feeds (FX-57E) will get a genuinely separate Atom parser
+when that story is authorized -- this module is deliberately never
+extended to understand Atom itself. Docstrings/error messages no
+longer say "RSS/Atom" anywhere. 4 new tests in `tests/unit/
+infrastructure/news_sources/test_rss_item_parsing.py`.
+
+**4. `NewsIngestionResult`'s item counters are now unambiguous.** The
+original FX-57A `items_seen` conflated "normalized" and "post-dedup"
+into one number with no way to tell which stage it described. Split
+into three explicit fields: `items_fetched` (every raw item element
+from a structurally valid response, INCLUDING invalid items and
+duplicates -- `len(outcome.observations) + outcome.items_invalid`,
+summed per successfully-fetched response), `items_normalized` (valid
+normalized observations BEFORE within-response dedup -- `len
+(outcome.observations)`), and `items_processed` (observations
+remaining after identical-duplicate collapse, actually submitted to
+`RecordNewsObservation` -- zero for a response that failed closed on
+a conflicting duplicate guid). Pinned against all three of this
+story's own worked examples: 2 identical valid records sharing one
+guid -> `fetched=2, normalized=2, processed=1`; 2 conflicting valid
+records sharing one guid -> `fetched=2, normalized=2, processed=0`
+(plus a recorded conflict); 1 valid + 1 invalid -> `fetched=2,
+normalized=1, invalid=1, processed=1`
+(`test_one_valid_plus_one_invalid_item_counters_match_worked_
+example`, new). `scripts/ingest_fed_news.py`'s own printout updated
+to the three new field names. No database change -- this is a
+pure application-layer DTO. Existing tests asserting the old
+`items_seen` field were updated to the new field names rather than
+kept as a compatibility alias, per this project's own stated
+preference against backwards-compatibility shims for an internal,
+not-yet-externally-consumed type.
+
+**5. Fed behaviour verified unchanged.** All 17 `test_fed_rss_source.
+py` tests, all 5 Postgres end-to-end integration tests, and the
+separately-marked `live_source` Fed test continue to pass unchanged
+after every edit above -- the three feed paths, `source_key="FED"`,
+guid identity, `source_content_type` mapping, headline/description/
+link mapping, `body_text=None`, `authors=()`, `language="en"`,
+`source_updated_at=None`, `ACTIVE`/`EVIDENCE_ELIGIBLE`/`PROSPECTIVE`,
+pubDate provenance handling (including the 1899 sentinel), the no-
+withdrawal-from-disappearance rule, and the no-historical-ingestion
+rule are all exactly as FX-57A left them. No schema or migration
+change.
+
+**6. Documentation corrections -- two genuine errors in the FX-57A
+report, found by review, fixed here rather than silently left
+standing:**
+
+- **ADR 0005 WAS amended, contradicting the FX-57A report's own
+  claim that it was not.** FX-57A's own work actually inserted a
+  clarifying addendum directly into `docs/adr/0005-news-intelligence-
+  source-feasibility.md`'s Federal Reserve entry (immediately after
+  the existing hour-granularity finding), recording the sentinel-
+  pubDate finding and stating it does not change the ADOPT_PROSPECTIVE
+  verdict -- confirmed still present there, grep-verified
+  (`FX-57A addendum (2026-10-03, live-reconfirmed)`). The FX-57A
+  report's own prose in this file, in `docs/CURRENT_STATE.md`'s FX-57A
+  entry (implicitly, by omission), and in `docs/NEXT_STEPS.md`'s FX-57A
+  section nonetheless claimed "no ADR 0005 text amendment was made" --
+  simply wrong, and corrected in both files now.
+- **"93 new tests" did not match its own listed category counts.**
+  15 (parser) + 8 (transport) + 17 (Fed adapter) + 8 (orchestration) +
+  5 (Postgres end-to-end) + 1 (live_source) = 54, not 93 -- a plain
+  arithmetic error in the original report, not a different actual
+  test count. Verified two independent ways: summing the category
+  list above, and counting `def test_`/`async def test_` function
+  definitions actually added in commit `fb8cf25`'s own diff (`git show
+  fb8cf25:<path>` for each of the six FX-57A test files, grepped for
+  test-function definitions) -- both give exactly 54. Corrected in
+  this file, `docs/CURRENT_STATE.md`, and `docs/NEXT_STEPS.md`; no
+  other number was guessed.
+
+**7. The 45 genuinely-ingested Fed rows were left untouched.** No
+cleanup, no deletion, and no additional permanent fake/demo rows were
+added for this hardening patch -- confirmed by re-running `scripts/
+ingest_fed_news.py` live against the real Fed feeds and the same
+Postgres after all the above changes: `items_fetched=45, items_
+normalized=45, items_processed=45, created=0, unchanged=45`, proving
+both that the real rows are untouched and that the hardened contract
+checks do not themselves break real-world Fed ingestion (every real
+Fed observation naturally satisfies `observed_at == retrieved_at` and
+`source_key == "FED"`, so neither new check ever fires against
+genuine Fed data).
+
+**8/9. Tests and verification.** 13 new tests total (4 retrieval-time
+contract + 4 source-key isolation + 4 RSS-only-root/Atom/no-channel +
+1 fetched/normalized/processed worked-example), on top of FX-57A's
+own corrected 54 -- 67 FX-57/FX-57AH tests altogether. Focused run
+(`pytest tests/unit/infrastructure/news_sources/ tests/unit/
+application/test_ingest_news_source_once.py tests/unit/application/
+test_news_source_fetch_outcome.py tests/integration/
+test_fed_news_ingestion.py`): `66 passed`. Separately, the Fed
+`live_source` test (`pytest tests/integration/
+test_fed_rss_source_live.py -m live_source`): `1 passed`. Separately,
+the deterministic default suite (`pytest`, `-m "not live_source"`):
+`7 failed, 1793 passed, 5 deselected` -- the same seven pre-existing,
+documented, unrelated OANDA-practice-candle strategy-live failures as
+every prior story in this epic, confirmed unchanged (1793 = FX-57A's
+own 1780 plus this story's 13 new tests). Separately, the full
+`live_source` suite (`pytest -m live_source`): `1 failed, 4 passed` --
+the same pre-existing, documented BLS 403, confirmed unchanged; the
+Fed live test is among the 4 passes. `ruff check .`, `ruff format
+--check .`, `mypy .` (417 source files), and `pre-commit run
+--all-files` all pass clean across the whole repository.
+
+**10. Documentation updated**: this entry; `docs/ARCHITECTURE.md`'s
+FX-57A section amended in place with the hardening; `docs/
+CURRENT_STATE.md`'s and `docs/NEXT_STEPS.md`'s FX-57A entries
+corrected (ADR-amendment claim, test count) and extended with this
+story's own summary. No new ADR -- `docs/adr/0005-...md`'s own text
+needed no further change beyond the addendum FX-57A had already
+written; this story only corrected the SURROUNDING documentation's
+false claim about it.
+
+**11. Stop rule.** Per this story's own explicit instruction: do not
+start FX-57B (ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/
+FX-57F (BoC), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk
+Engine work. FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains
+BLOCKED. Return FX-57AH for review.
