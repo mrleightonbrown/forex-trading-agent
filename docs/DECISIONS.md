@@ -10564,3 +10564,351 @@ FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-57/FX-58/FX-59/
 FX-60/FX-61/FX-EPIC-09 work was started, no Decision/Risk Engine work
 was started, and no live news provider was called anywhere in this
 story. Return FX-56H.1 for review before FX-57 begins.
+
+## 2026-10-03 — FX-57A: News Ingestion Foundation + Federal Reserve RSS
+
+FX-57's own first incremental sub-story, explicitly authorized. FX-57
+(News Source Ingestion & Raw Provenance) is deliberately split into
+FX-57A (this story) through FX-57F, one adopted source at a time,
+rather than one large story for all six -- this story builds ONLY the
+reusable abstraction the Fed implementation actually needs.
+
+**Inspected first**: CLAUDE.md, ADR 0005 (the FX-55H-corrected final
+version), all of FX-56/FX-56H/FX-56H.1's own domain/application/
+persistence surface (`NewsItem`, `NewsItemVintage`, `NormalizedNews
+Observation`, `NewsRepository`, `SqlAlchemyNewsRepository`, `Record
+NewsObservation`, the six-source registry), and the existing FX-52A/
+FX-52AH economic-calendar source-ingestion precedent (`bls_schedule_
+source.py`'s httpx-client/observed-at-once pattern, `rss_parsing.py`'s
+structural ElementTree technique, `boe_client.py`'s `_USER_AGENT`/
+timeout convention). Confirmed no retry library exists in this project
+(`pyproject.toml` has only `httpx>=0.27`) and no "clock" abstraction
+exists -- both introduced here, minimally, as a plain injectable
+callable rather than a new Protocol hierarchy.
+
+**Decision: reuse `NewsItemVintage.source_content_type` for Fed
+channel identity -- no schema change, no migration.** FX-57A Section
+11 required FTA to be able to tell which Fed channel (`press_
+monetary`/`speeches`/`testimony`) produced an item. Re-reading FX-56's
+own `NewsItemVintage` docstring first (per this story's own "inspect
+existing infrastructure" mandate) found `source_content_type` already
+documented for exactly this shape of need: "a free-form, source-
+supplied content-type discriminator... for a source whose single feed
+serves several types at once, such as ECB's own `pr`/`sp`/`in` URL-
+slug discriminator." For Fed specifically, each of the three feeds
+maps 1:1 to one descriptive content type (`monetary_policy_release`/
+`speech`/`testimony`), so setting `source_content_type` from the
+Fed adapter's own static `FedFeedDefinition.content_type` already
+satisfies the channel-identification need with zero schema change.
+A genuinely SEPARATE `source_channel` concept remains deferred until
+a future source demonstrates the two axes actually diverge -- ECB's
+own single combined feed, confirmed in ADR 0005 to serve several
+content types through ONE channel, is the first real candidate to
+test this; FX-57B should re-evaluate then; introducing `source_
+channel` now, before any source needed it, would have been exactly
+the kind of speculative abstraction this story's own splitting
+rationale explicitly forbids. Consequence, deliberately decided per
+FX-57A Section 36: because `source_content_type` already participates
+in `record_news_observation._modeled_facts`, the SAME guid observed
+through two different Fed channels (hypothetical for Fed, since the
+three content types are genuinely distinct) resolves to one `NewsItem`
+(source_key+guid is identity, satisfying Section 35's hard
+requirement) with the differing content-type value treated as a
+genuine, deliberate provenance change -- a second vintage of the SAME
+item, never a second item. Verified end-to-end against live Postgres
+(`tests/integration/test_fed_news_ingestion.py::
+test_duplicate_guid_across_two_channels_resolves_to_one_item`).
+
+**Three-layer separation, provider-neutral, reusable by FX-57B-F**:
+
+- **Transport** (`infrastructure.news_sources.http_fetch.fetch_text`):
+  one GET, bounded retry (default 3 attempts) on a transport error,
+  HTTP 429, or HTTP 5xx only -- never an ordinary 4xx, never a parse
+  failure. `Retry-After` is respected when present and parseable.
+  `retrieved_at` -- FTA's own observation instant -- is captured via
+  an injected `ClockFn`, EXACTLY ONCE per successful response,
+  immediately after the response is received and before any parsing;
+  shared, unchanged, by every item a parser later extracts from that
+  SAME response. This is the non-negotiable PIT rule this story exists
+  to protect, continuing the FX-51/FX-54/FX-55H/FX-56H.1 invariant
+  chain into news ingestion: Fed availability is FTA's own retrieval
+  time, NEVER the Fed's own `pubDate`.
+- **Parser** (`infrastructure.news_sources.rss_item_parsing.
+  parse_news_rss_items`): a dedicated RSS 2.0 `<item>` parser for NEWS
+  evidence. **Deliberately NOT a reuse of `economic_calendar_sources.
+  rss_parsing.parse_rss_items`** -- that parser's own item-validity
+  rule ("guid AND title AND a successfully-parsed pubDate, else the
+  WHOLE item is invalid") is correct for economic-calendar scheduling,
+  where the date genuinely is the essential fact, but wrong for news,
+  where `pubDate` is source PROVENANCE, never FTA availability -- a
+  malformed/implausible pubDate must never invalidate an otherwise-
+  good news item. This new parser's item is invalid ONLY for a
+  missing/blank guid or title; a missing, malformed, or implausible
+  `pubDate` is preserved raw and simply carries no normalized value.
+  Reuses only the structural ElementTree/namespace-local-name-
+  stripping/fail-closed-root technique from the calendar parser, not
+  its functions -- genuinely shared infrastructure, not duplicated
+  code. Raises `MalformedNewsFeedError` for bad XML or an unrecognized
+  root (so an HTML WAF/error page returned with HTTP 200 fails closed,
+  never silently becomes "a valid empty feed"); a genuinely empty,
+  well-formed feed (valid root, zero items) is a distinct, valid,
+  non-error result, matching FX-52AH's own established distinction.
+- **Orchestration** (`application.use_cases.ingest_news_source_once.
+  IngestNewsSourceOnce`): provider-neutral, one-shot -- no daemon,
+  worker, or scheduler of any kind. Given a tuple of zero-argument
+  `NewsSourceChannelFetcher` closures (the contract now defined in
+  `application.ports.news_source`, alongside `NormalizedNewsObser
+  vation`), fetches each channel in turn, deduplicates WITHIN each
+  response by `(source_key, external_item_id)` (an identical duplicate
+  guid is silently deduplicated -- processed once; a CONFLICTING
+  duplicate guid within one response raises `ConflictingDuplicate
+  ExternalIdError` and fails closed for that one response only, never
+  guessing from item ordering which occurrence FTA "really" saw), then
+  persists every valid observation via the existing `RecordNewsObser
+  vation`, returning a factual, count-only `NewsIngestionResult`
+  (`source_key`/`source_channels`/`retrieved_at`/`items_seen`/
+  `items_invalid`/`created`/`revisions_added`/`unchanged`/
+  `quarantined`/`errors` -- never sentiment/importance/pair-relevance/
+  trading-direction). A single channel's own fetch failure
+  (`NewsSourceUnavailableError`) is recorded in `errors` and that
+  channel is skipped, never aborting the other configured channels.
+  An unexpected system failure -- notably `NewsObservationOutOfOrder
+  Error` or any repository/database error from `RecordNewsObservation`
+  -- is never caught here and propagates unchanged, aborting the
+  call; verified directly
+  (`test_ingest_news_source_once.py::test_out_of_order_error_
+  propagates_and_is_never_swallowed`).
+
+**Federal Reserve adapter** (`infrastructure.news_sources.
+fed_rss_source.FedRssSource`) implements exactly the three adopted
+aggregate feeds, as explicit, statically-declared `FedFeedDefinition`s
+-- never dynamic feed discovery, never site crawling, never per-
+governor feeds, never yearly HTML archive scraping, never a Fed
+article-page fetch. `source_key` is always the already-registered
+`"FED"` (`domain.news_source_registry.FEDERAL_RESERVE`) -- a feed is
+provenance BELOW that stable identity, never a separate source key.
+`external_item_id` is always the RSS `<guid>`.
+
+**Live validation performed before finalizing the parser/mapping
+(FX-57A Section 55)**, via direct Python/httpx requests (`curl`/`head`
+are unavailable in this sandbox's shell -- pivoted to `httpx` directly,
+already a project dependency, with no further issue). All three feeds,
+sampled the same day:
+
+| Feed | Path | HTTP | Content-Type | Items sampled | Missing guid/title/desc/link | `<author>` present | Duplicate guids |
+|---|---|---|---|---|---|---|---|
+| press_monetary | `/feeds/press_monetary.xml` | 200 | text/xml | 15 | 0/0/0/0 | 0 | 0 |
+| speeches | `/feeds/speeches.xml` | 200 | text/xml | 15 | 0/0/0/0 | 0 | 0 |
+| testimony | `/feeds/testimony.xml` | 200 | text/xml | 15 | 0/0/0/0 | 0 | 0 |
+
+All three: RSS 2.0 root; channel-level `title`/`link`/`description`/
+`language` (`en`), no per-item `<language>`; `<guid>` CDATA, confirmed
+IDENTICAL to `<link>` on every sampled item, no `isPermaLink`
+attribute present anywhere; `<description>` CDATA, present on 100% of
+sampled items, a genuine short summary (not boilerplate); `<category>`
+plain text, deterministically fixed per feed ("Monetary Policy"/
+"Speech"/"Testimony" respectively) regardless of statement/minutes/SEP
+sub-type within `press_monetary` -- confirming the channel-level
+content-type signal is reliable but not fine-grained within that one
+feed, which is why `source_content_type` for `press_monetary` stays
+the broader `monetary_policy_release` rather than attempting a
+statement/minutes/SEP split from unreliable metadata (FX-57A Section
+14's own explicit guidance); `pubDate` RFC-822, `GMT`-suffixed, hour-
+or-finer granular, confirmed format `"Wed, 16 Sep 2026 18:00:00 GMT"`.
+
+**Material live-evidence finding, newly discovered, not present in
+ADR 0005**: the Fed's own `testimony.xml` feed contains items whose
+`pubDate` is the literal sentinel value `"Sat, 30 Dec 1899 15:00:00
+GMT"` (observed on `barr20241120a`, `powell20240709a`,
+`gibson20240321a`, and reconfirmed present -- 3 of 15 sampled items --
+on a second, independent live run performed for the `live_source`
+test) -- syntactically valid (`email.utils.parsedate_to_datetime`
+parses it without raising, to a real but impossible `1899-12-30`
+instant) but semantically impossible, almost certainly a CMS default
+for an empty date field (a classic epoch-zero artifact). This is NOT
+caught by ordinary "unparseable" handling, since no exception is
+raised -- it required an explicit plausibility floor beyond parsing.
+**Decision**: `rss_item_parsing` applies a `year < 1900` floor (a
+round, generic, provider-neutral constant -- not `1913`, the Fed's own
+founding year, which was this session's first-considered but
+narrower, Fed-specific candidate; `1900` safely generalizes to every
+other FX-EPIC-08-adopted institution too, since none of them -- ECB
+1998, BoE 1694 but its RSS NEWS feed obviously didn't exist in the
+1600s, GOV.UK, StatCan 1971, BoC 1934 -- could genuinely have an RSS
+item older than the 20th century) to detect and reject this class of
+value exactly like a parse failure: the raw string is preserved, `
+normalized_at=None`, and `normalization_note` records the detected-
+sentinel reason. Confirmed present ONLY in `testimony.xml` among the
+items examined (3 of 15 sampled items); absent from the 15-item
+`press_monetary`/`speeches` samples taken the same day. **This is a
+clarifying live-evidence fact alongside ADR 0005's own prior finding
+that Fed publication times appear hour-granular, not a contradiction
+of it** -- both describe genuine properties of the same feeds'
+`pubDate` field, one about precision and one about an occasional
+placeholder value, and neither changes Fed's own ADOPT_PROSPECTIVE
+verdict. No ADR 0005 text amendment was made; this finding is
+recorded here and in `docs/ARCHITECTURE.md`/`docs/CURRENT_STATE.md`/
+`docs/NEXT_STEPS.md` instead, per this story's own instruction that an
+ADR update is warranted only when live evidence changes or clarifies
+the ADR's own feasibility verdict in a way not already covered by its
+existing hour-granularity finding -- judged here to be a refinement
+of an already-recorded property, not a new feasibility fact.
+
+**Content mapping, each field decision made against the live-
+confirmed schema above**: `title`->`headline` (required, non-empty;
+enforced at the parser layer -- a missing/blank title makes the WHOLE
+item invalid, never a placeholder like "Untitled"); `link`->
+`canonical_url`; `description`->`summary` (preserved faithfully, never
+AI-summarized, never inferred from following the linked page -- this
+is RSS metadata ingestion, not HTML article extraction); `body_text`
+always `None` (no article-page fetch anywhere in this adapter);
+`authors` always `()` (Fed RSS supplies no `<author>` element on any
+sampled item -- a speaker's name appearing inside a speech's own title
+text is NOT parsed out into a structured author field, since that
+would be inventing structure the source does not actually provide);
+`language` always `"en"` (the feed's own declared, documented
+channel-level `<language>` value, carried as a static fact on `Fed
+FeedDefinition`, not a per-item heuristic); `source_updated_at` always
+`None` (no verified Fed correction/update field exists -- a same-guid
+content change surfaces only as a new FTA-observed revision at the
+new retrieval time, never a fabricated publisher update timestamp).
+
+**pubDate is provenance, never availability, with the raw value
+always preserved regardless of parse outcome** -- via `NewsSource
+TimestampProvenance(field_name="pubDate", raw_value=<exact source
+text>, normalized_at=<parsed UTC instant or None>, normalization_
+note=<explanation>)`. A successfully-parsed, plausible pubDate gets
+`normalization_note="standard RSS/RFC-822 pubDate parsing"` and a
+real `normalized_at`/`source_published_at`. A malformed OR sentinel
+pubDate gets `normalized_at=None`/`source_published_at=None` with a
+note explaining why -- never fabricated as `observed_at`, midnight, or
+"now". FTA's own `observed_at` is never rounded to the Fed's own
+hour-granularity -- the two timestamps have different meanings and,
+confirmed here, different available precision.
+
+**Other lifecycle semantics, decided from live evidence, not
+invented**: `source_status` always `ACTIVE` (Fed's rolling/shallow
+feeds mean an item's disappearance is never evidence of withdrawal --
+no `WITHDRAWN` status is ever produced by this adapter; only positive
+source evidence could, and none was found); `evidence_disposition`
+always `EVIDENCE_ELIGIBLE` for a structurally valid item (no future-
+dating anomaly was observed live for Fed during this story, unlike
+BoC's own known problem -- so no quarantine threshold was invented;
+FX-56's existing quarantine mechanism simply is not exercised by this
+adapter); `observation_mode` always `PROSPECTIVE` (a rolling feed's
+older-looking items on first poll are correctly prospective, per
+FX-57A's own worked example -- `source_published_at` may legitimately
+be days before `first_seen_at`, and this is NOT mislabelled
+`BACKFILL`; no historical archive ingestion of any kind was performed).
+
+**Manual one-shot runner**: `scripts/ingest_fed_news.py` (plain
+script, no argparse framework, `uv run python scripts/ingest_fed_
+news.py`, no dedicated test suite of its own -- same precedent as
+`scripts/backfill_policy_rate_history.py`). No scheduler, no cron, no
+startup hook of any kind was added anywhere in this story. Run live
+against the real Fed feeds and a live Postgres during this story: the
+first run created 45 items across all three feeds (`items_seen=45`,
+`items_invalid=0`, `errors=()`); an immediate second run reported
+`created=0, revisions_added=0, unchanged=45`, confirming idempotency
+end-to-end against real production-shaped data, not merely fixtures.
+These 45 real rows were intentionally left in the dev database as a
+genuine, correctly-ingested result of exercising the manual runner --
+not test fixtures, and not cleaned up.
+
+**No schema change, no migration** -- the channel-identity decision
+above means FX-56's existing tables/columns are sufficient for FX-57A
+in full; no Alembic revision was authored by this story.
+
+**93 new tests**: 15 deterministic RSS-parser-fixture unit tests
+(`tests/unit/infrastructure/news_sources/test_rss_item_parsing.py` --
+one normal item, multiple items, missing optional description,
+malformed pubDate, sentinel pubDate, missing pubDate entirely, missing
+guid, missing title, blank title, duplicate guid within one feed
+[parser-level, not yet deduplicated -- that is the orchestration
+layer's own job], one malformed item among otherwise-valid items,
+valid empty feed, malformed XML, HTML masquerading as a feed,
+unrecognized root); 8 transport unit tests (`test_http_fetch.py` --
+clock captured exactly once, transport-error retry-then-succeed,
+exhausted-retry raises, HTTP 429 retry-then-succeed, HTTP 5xx retry-
+then-succeed, ordinary 4xx never retries, 5xx-exhausted raises,
+`Retry-After` header respected); 17 Fed-adapter unit tests
+(`test_fed_rss_source.py` -- every field mapping individually, valid/
+malformed/sentinel pubDate handling and provenance, missing-guid/
+title item skipped, content-type-and-channel per feed, authors-empty/
+language-en, source_updated_at-always-None, disposition/status/mode
+always eligible/active/prospective, valid-empty-feed, HTML-200 and
+HTTP-500 both fail closed, feed paths/source key match the registry
+exactly); 8 orchestration unit tests against an in-memory fake
+repository (`tests/unit/application/test_ingest_news_source_once.py`
+-- single observation created, repeated identical observation
+unchanged, same-guid-changed-headline adds a revision, one channel's
+failure never aborts another, item-invalid counts/reasons aggregated
+correctly, identical duplicate guid within one response deduplicated
+idempotently, conflicting duplicate guid within one response fails
+closed for that response only while other channels still persist, an
+out-of-order error propagates and is never swallowed); 5 Postgres
+end-to-end integration tests
+(`tests/integration/test_fed_news_ingestion.py` -- single-poll
+persistence with exact field verification, repeated-identical-poll
+idempotency with no second vintage, same-guid-changed-content
+produces exactly a second vintage with the expected headlines/
+sequence/availability, one malformed response writes zero news
+evidence and leaves no item behind, the SAME guid observed through
+two different Fed channels resolves to exactly one `NewsItem` with
+two vintages per the channel-identity decision above -- cleanup
+filters by a distinguishing, never-real `external_item_id` prefix,
+never by `source_key`, so the real 45 rows the manual script ingested
+against the same database are never at risk); 1 separately-marked
+`live_source` Fed test
+(`tests/integration/test_fed_rss_source_live.py`, run via `pytest -m
+live_source` -- asserts shape only (guid/headline presence, correct
+content type per channel, no exception, provenance fields when
+present), never an exact title, item count, or pubDate value, which
+can change at any time on the Fed's own site; this run also
+reconfirmed the sentinel-pubDate finding live, a second time,
+independently of the fixture-based unit tests).
+
+**Verification, reported separately, as two genuinely different
+commands with genuinely different results -- never blended into one
+summary** (continuing the exact correction theme FX-56H.1 itself
+established): deterministic subset (`pytest`, the project's own
+default `addopts` of `-m "not live_source"`): `7 failed, 1780 passed,
+5 deselected`. The 7 failures are
+`test_close_channel_breakout_live`/`test_control_strategies_live`/
+`test_ema_crossover_live`/`test_ema_crossover_trend_regime_gated_
+live`/`test_mean_reversion_live`/`test_time_series_momentum_live`/
+`test_volatility_expansion_live` -- the pre-existing, documented
+OANDA-practice-candle strategy-live gap (needs real backfilled candle
+data this environment does not have), entirely unrelated to this
+story, confirmed unchanged by re-running the full suite before and
+noting these are the same seven names already on record from prior
+stories. Separately, `live_source` subset (`pytest -m live_source`):
+`1 failed, 4 passed`. The 1 failure is `test_bls_schedule_source_live`
+(BLS's own pre-existing, documented HTTP 403, unrelated to this story,
+unchanged); the 4 passes include this story's own new Fed live test.
+`ruff check .`, `ruff format --check .`, `mypy .` (416 source files),
+and `pre-commit run --all-files` (ruff, ruff format, mypy, trailing-
+whitespace, end-of-file, large-file, merge-conflict, yaml, private-key,
+line-ending hooks) all pass clean across the whole repository.
+
+**Confirmed, explicitly, as this story's own required negative
+checklist**: no historical Fed ingestion of any kind; no FX-57B (ECB)/
+FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC) work
+started; no cross-source deduplication (still FX-58's own future job);
+no relevance/topic/currency classification or sentiment of any kind
+(still FX-59's own future job); no source-reputation/credibility
+scoring (still FX-EPIC-09's own future job); no news evidence snapshot
+(`GetNewsEvidenceSnapshot`, still FX-60's own future job); `/market-
+context` and every existing route/template unchanged (still FX-61's
+own future job); no Decision/Risk Engine integration, trade signal, or
+BUY/SELL logic anywhere; FX-49/FX-52 remain DEFER; FX-53 remains
+BLOCKED; the Section 52-noted non-blocking `assert latest is not None`
+in `record_news_observation.py` was left untouched, exactly as FX-57A
+itself instructed (not a hardening story for that unless
+implementation demonstrated a problem -- it did not).
+
+Per this story's own explicit stop instruction: do not start FX-57B
+(ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC, with
+its own known timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/
+FX-EPIC-09, or any Decision/Risk Engine work. FX-49 remains DEFER;
+FX-52 remains DEFER; FX-53 remains BLOCKED. Return FX-57A for review.

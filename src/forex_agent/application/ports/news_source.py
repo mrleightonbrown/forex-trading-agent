@@ -1,18 +1,20 @@
-"""The normalized, provider-neutral intermediate shape a FUTURE source
-adapter (FX-57) will produce (FX-56 Section 31).
+"""The normalized, provider-neutral intermediate shape a source
+adapter produces (FX-56 Section 31; the contract itself -- `NewsSource
+UnavailableError`/`NewsSourceFetchOutcome`/`NewsSourceChannelFetcher`
+-- defined by FX-57A, the first story to actually need it).
 
 Mirrors `application.ports.economic_calendar_source.
 RawScheduleObservation`'s own role exactly: keeps source-specific
-parsing (a future `infrastructure.news_sources` package, FX-57's own
-job), and application-level evidence modeling (`application.use_cases.
-record_news_observation.RecordNewsObservation`, this story) as separate
-responsibilities. No `NewsSource`/`Protocol` is defined here yet --
-deliberately: FX-56 provides the model a future adapter will target,
-it does not build or assume the shape of the adapter itself. `Normal
-izedNewsObservation` performs no network I/O; nothing in this module
-imports `httpx` or any provider SDK.
+parsing (`infrastructure.news_sources`, e.g. `fed_rss_source.py`), and
+application-level evidence modeling (`application.use_cases.
+record_news_observation.RecordNewsObservation`) as separate
+responsibilities. Nothing in this module imports `httpx`, `xml.etree`,
+or any provider SDK -- `NormalizedNewsObservation` performs no network
+I/O, and `NewsSourceChannelFetcher` is a plain callable contract an
+adapter implements, not a concrete transport.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from forex_agent.domain.news_evidence_disposition import NewsEvidenceDisposition
@@ -91,3 +93,43 @@ class NormalizedNewsObservation:
             raise ValueError(
                 "quarantine_reason must be None when evidence_disposition is EVIDENCE_ELIGIBLE"
             )
+
+
+class NewsSourceUnavailableError(Exception):
+    """Raised by a source adapter on a genuine network/transport
+    failure, a non-2xx HTTP status, or a response that fails to parse
+    as a recognizable document for this source's own format at all --
+    mirrors `EconomicCalendarSourceUnavailableError`. A caller
+    (`IngestNewsSourceOnce`, FX-57A) treats this as "this one
+    channel's fetch failed," recorded in `NewsIngestionResult.errors`,
+    never as "the channel genuinely has nothing new" -- that is a
+    zero-observation `NewsSourceFetchOutcome`, a distinct, valid,
+    non-error result."""
+
+
+@dataclass(frozen=True, slots=True)
+class NewsSourceFetchOutcome:
+    """One channel/response's own fetch-and-normalize result -- what
+    any source adapter hands to `IngestNewsSourceOnce` (FX-57A). One
+    `retrieved_at` per response, shared by every observation in
+    `observations` (FX-57A Section 4) -- never a per-item clock call.
+
+    `items_invalid`/`invalid_reasons` describe ITEM-level parse
+    failures within an otherwise structurally-valid response (FX-57A
+    Section 27) -- a malformed item is never silently included in
+    `observations`, and never escalates to `NewsSourceUnavailableError`
+    on its own."""
+
+    source_channel: str | None
+    retrieved_at: UtcTimestamp
+    observations: tuple[NormalizedNewsObservation, ...]
+    items_invalid: int
+    invalid_reasons: tuple[str, ...] = ()
+
+
+NewsSourceChannelFetcher = Callable[[], Awaitable[NewsSourceFetchOutcome]]
+"""One configured channel's own zero-argument fetch -- e.g.
+`functools.partial(fed_source.fetch_feed, FED_FEEDS[0])`. Raises
+`NewsSourceUnavailableError` on failure; otherwise returns a
+`NewsSourceFetchOutcome`, even when it fetched zero items (a valid,
+empty result, never an error)."""

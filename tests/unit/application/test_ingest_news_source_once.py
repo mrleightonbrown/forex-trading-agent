@@ -1,0 +1,326 @@
+"""FX-57A: fast, DB-free unit tests for `IngestNewsSourceOnce` against
+an in-memory `FakeNewsRepository` -- mirrors `test_record_news_
+observation.py`'s own fake (locally redefined here, following this
+test suite's per-module fake convention)."""
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+import pytest
+
+from forex_agent.application.ports.news_repository import (
+    FirstObservationResult,
+    NewsItemRegistrationOutcome,
+    NewsVintageConflictError,
+    NewsVintageWriteOutcome,
+)
+from forex_agent.application.ports.news_source import (
+    NewsSourceChannelFetcher,
+    NewsSourceFetchOutcome,
+    NewsSourceUnavailableError,
+    NormalizedNewsObservation,
+)
+from forex_agent.application.use_cases.ingest_news_source_once import (
+    IngestNewsSourceOnce,
+)
+from forex_agent.application.use_cases.record_news_observation import (
+    NewsObservationOutOfOrderError,
+    RecordNewsObservation,
+)
+from forex_agent.domain.news_evidence_disposition import NewsEvidenceDisposition
+from forex_agent.domain.news_item import NewsItem
+from forex_agent.domain.news_item_identity import mint_news_item_key
+from forex_agent.domain.news_item_vintage import NewsItemVintage
+from forex_agent.domain.news_observation_mode import NewsObservationMode
+from forex_agent.domain.news_source_identity import NewsSourceIdentity
+from forex_agent.domain.news_source_status import NewsSourceStatus
+from forex_agent.domain.timestamps import UtcTimestamp
+
+_SOURCE_KEY = "FED"
+
+
+class FakeNewsRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, NewsItem] = {}
+        self._mappings: dict[tuple[str, str], str] = {}
+        self._vintages: dict[str, list[NewsItemVintage]] = {}
+
+    async def register_source_item_with_first_vintage(
+        self,
+        identity: NewsSourceIdentity,
+        observed_at: UtcTimestamp,
+        observation_mode: NewsObservationMode,
+        build_vintage: Callable[[str], NewsItemVintage],
+    ) -> FirstObservationResult:
+        key = (identity.source_key, identity.external_item_id)
+        existing_key = self._mappings.get(key)
+        if existing_key is not None:
+            return FirstObservationResult(existing_key, NewsItemRegistrationOutcome.ALREADY_EXISTS)
+
+        candidate_key = mint_news_item_key(identity.source_key)
+        vintage = build_vintage(candidate_key)
+        self._items[candidate_key] = NewsItem(candidate_key, observed_at, observation_mode)
+        self._mappings[key] = candidate_key
+        self._vintages[candidate_key] = [vintage]
+        return FirstObservationResult(candidate_key, NewsItemRegistrationOutcome.CREATED)
+
+    async def get_item(self, news_item_key: str) -> NewsItem | None:
+        return self._items.get(news_item_key)
+
+    async def get_item_by_source_identity(self, identity: NewsSourceIdentity) -> NewsItem | None:
+        key = self._mappings.get((identity.source_key, identity.external_item_id))
+        return None if key is None else self._items.get(key)
+
+    async def add_vintage(self, vintage: NewsItemVintage) -> NewsVintageWriteOutcome:
+        existing_list = self._vintages.setdefault(vintage.news_item_key, [])
+        for existing in existing_list:
+            if existing.revision_sequence == vintage.revision_sequence:
+                if existing == vintage:
+                    return NewsVintageWriteOutcome.ALREADY_PRESENT
+                raise NewsVintageConflictError(existing, vintage)
+        existing_list.append(vintage)
+        return NewsVintageWriteOutcome.INSERTED
+
+    async def list_vintages(self, news_item_key: str) -> tuple[NewsItemVintage, ...]:
+        return tuple(self._vintages.get(news_item_key, []))
+
+    async def latest_vintage_as_of(
+        self, news_item_key: str, as_of: UtcTimestamp
+    ) -> NewsItemVintage | None:
+        candidates = [
+            v for v in self._vintages.get(news_item_key, []) if v.availability.value <= as_of.value
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda v: (v.availability.value, v.revision_sequence))
+
+    async def latest_evidence_eligible_vintage_as_of(
+        self, news_item_key: str, as_of: UtcTimestamp, *, include_backfill: bool = False
+    ) -> NewsItemVintage | None:
+        candidates = [
+            v
+            for v in self._vintages.get(news_item_key, [])
+            if v.availability.value <= as_of.value
+            and v.evidence_disposition is NewsEvidenceDisposition.EVIDENCE_ELIGIBLE
+            and (include_backfill or v.observation_mode is not NewsObservationMode.BACKFILL)
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda v: (v.availability.value, v.revision_sequence))
+
+
+def _ts(hour: int = 12) -> UtcTimestamp:
+    return UtcTimestamp(datetime(2026, 10, 3, hour, 0, 0, tzinfo=UTC))
+
+
+def _observation(
+    external_item_id: str = "guid-1",
+    headline: str = "A Headline",
+    observed_at: UtcTimestamp | None = None,
+) -> NormalizedNewsObservation:
+    return NormalizedNewsObservation(
+        source_key=_SOURCE_KEY,
+        external_item_id=external_item_id,
+        observed_at=observed_at or _ts(),
+        observation_mode=NewsObservationMode.PROSPECTIVE,
+        headline=headline,
+        source_status=NewsSourceStatus.ACTIVE,
+        evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
+    )
+
+
+def _fetcher_returning(outcome: NewsSourceFetchOutcome) -> NewsSourceChannelFetcher:
+    async def fetcher() -> NewsSourceFetchOutcome:
+        return outcome
+
+    return fetcher
+
+
+def _fetcher_raising(exc: Exception) -> NewsSourceChannelFetcher:
+    async def fetcher() -> NewsSourceFetchOutcome:
+        raise exc
+
+    return fetcher
+
+
+@pytest.mark.asyncio
+async def test_single_observation_is_created() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(_observation(),),
+        items_invalid=0,
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+
+    assert result.created == 1
+    assert result.revisions_added == 0
+    assert result.unchanged == 0
+    assert result.items_seen == 1
+    assert result.items_invalid == 0
+    assert result.source_channels == ("press_monetary",)
+    assert result.errors == ()
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_observation_is_unchanged() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(12),
+        observations=(_observation(observed_at=_ts(12)),),
+        items_invalid=0,
+    )
+    first = await ingest((_fetcher_returning(outcome),))
+    outcome2 = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(13),
+        observations=(_observation(observed_at=_ts(13)),),
+        items_invalid=0,
+    )
+    second = await ingest((_fetcher_returning(outcome2),))
+
+    assert first.created == 1
+    assert second.created == 0
+    assert second.unchanged == 1
+    assert second.revisions_added == 0
+
+
+@pytest.mark.asyncio
+async def test_same_guid_changed_headline_adds_a_revision() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    first_outcome = NewsSourceFetchOutcome(
+        source_channel="speeches",
+        retrieved_at=_ts(12),
+        observations=(_observation(headline="A", observed_at=_ts(12)),),
+        items_invalid=0,
+    )
+    await ingest((_fetcher_returning(first_outcome),))
+
+    second_outcome = NewsSourceFetchOutcome(
+        source_channel="speeches",
+        retrieved_at=_ts(13),
+        observations=(_observation(headline="B", observed_at=_ts(13)),),
+        items_invalid=0,
+    )
+    second = await ingest((_fetcher_returning(second_outcome),))
+
+    assert second.revisions_added == 1
+    assert second.created == 0
+
+
+@pytest.mark.asyncio
+async def test_one_channel_failure_does_not_abort_other_channels() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    good_outcome = NewsSourceFetchOutcome(
+        source_channel="speeches",
+        retrieved_at=_ts(),
+        observations=(_observation(external_item_id="good-guid"),),
+        items_invalid=0,
+    )
+    result = await ingest(
+        (
+            _fetcher_raising(NewsSourceUnavailableError("feed unreachable")),
+            _fetcher_returning(good_outcome),
+        )
+    )
+
+    assert result.created == 1
+    assert len(result.errors) == 1
+    assert "unreachable" in result.errors[0]
+    assert result.source_channels == ("speeches",)
+
+
+@pytest.mark.asyncio
+async def test_item_invalid_counts_and_reasons_are_aggregated() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcome = NewsSourceFetchOutcome(
+        source_channel="testimony",
+        retrieved_at=_ts(),
+        observations=(),
+        items_invalid=2,
+        invalid_reasons=("item at index 0: missing guid", "item at index 1: missing title"),
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+
+    assert result.items_invalid == 2
+    assert "item at index 0: missing guid" in result.errors
+    assert "item at index 1: missing title" in result.errors
+
+
+@pytest.mark.asyncio
+async def test_identical_duplicate_guid_within_response_is_deduped_idempotently() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    observed_at = _ts()
+    outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=observed_at,
+        observations=(
+            _observation(external_item_id="dup", headline="Same", observed_at=observed_at),
+            _observation(external_item_id="dup", headline="Same", observed_at=observed_at),
+        ),
+        items_invalid=0,
+    )
+    result = await ingest((_fetcher_returning(outcome),))
+
+    assert result.items_seen == 1
+    assert result.created == 1
+    assert result.errors == ()
+
+
+@pytest.mark.asyncio
+async def test_conflicting_duplicate_guid_within_response_fails_closed_for_that_response() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    observed_at = _ts()
+    conflicting_outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=observed_at,
+        observations=(
+            _observation(external_item_id="dup", headline="A", observed_at=observed_at),
+            _observation(external_item_id="dup", headline="B", observed_at=observed_at),
+        ),
+        items_invalid=0,
+    )
+    other_outcome = NewsSourceFetchOutcome(
+        source_channel="speeches",
+        retrieved_at=observed_at,
+        observations=(_observation(external_item_id="unrelated", observed_at=observed_at),),
+        items_invalid=0,
+    )
+    result = await ingest(
+        (_fetcher_returning(conflicting_outcome), _fetcher_returning(other_outcome))
+    )
+
+    assert result.created == 1  # only the unrelated, non-conflicting channel persisted
+    assert len(result.errors) == 1
+    assert "dup" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_error_propagates_and_is_never_swallowed() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    first_outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(14),
+        observations=(_observation(observed_at=_ts(14)),),
+        items_invalid=0,
+    )
+    await ingest((_fetcher_returning(first_outcome),))
+
+    backdated_outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(10),
+        observations=(_observation(headline="Changed", observed_at=_ts(10)),),
+        items_invalid=0,
+    )
+    with pytest.raises(NewsObservationOutOfOrderError):
+        await ingest((_fetcher_returning(backdated_outcome),))

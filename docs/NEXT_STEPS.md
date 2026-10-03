@@ -2523,3 +2523,180 @@ the current phase.
 Each of these should be tracked as its own Jira story and worked per
 CLAUDE.md's "Development rules" (tests first where practical, smallest
 change satisfying acceptance criteria, one story per commit).
+
+## FX-57A: News Ingestion Foundation + Federal Reserve RSS (complete)
+
+FX-57's own first incremental sub-story, explicitly authorized.
+FX-57 (News Source Ingestion & Raw Provenance) is deliberately split
+into FX-57A (this story) through FX-57F, one adopted source at a
+time, rather than one large story for all six -- this story builds
+ONLY the reusable abstraction the Fed implementation actually needs,
+no speculative abstraction for ECB/BoE/GOV.UK/StatCan/BoC ahead of
+need.
+
+Inspected first, per this story's own mandate: CLAUDE.md, ADR 0005
+(the FX-55H-corrected final version), all of FX-56/FX-56H/FX-56H.1's
+own domain/application/persistence surface, and the existing FX-52A/
+FX-52AH economic-calendar source-ingestion precedent (`bls_schedule_
+source.py`'s httpx client/retry-free/observed-at-once pattern,
+`rss_parsing.py`'s structural ElementTree technique, `boe_client.py`'s
+`_USER_AGENT`/timeout convention). Confirmed no retry library exists
+in this project (`pyproject.toml` has only `httpx>=0.27`) and no
+"Clock" abstraction exists -- both introduced here, minimally.
+
+**Built (provider-neutral, reusable by FX-57B-F)**:
+`infrastructure.news_sources.http_fetch.fetch_text` -- one GET with
+bounded retry (transport error/429/5xx only, max 3 attempts by
+default, `Retry-After` respected, never retries an ordinary 4xx or a
+parse failure) and an injected `ClockFn` that captures FTA's own
+`retrieved_at` EXACTLY ONCE per response, immediately after it is
+received and before any parsing. `infrastructure.news_sources.
+rss_item_parsing.parse_news_rss_items` -- a dedicated RSS 2.0 `<item>`
+parser for NEWS evidence, NOT a reuse of `economic_calendar_sources.
+rss_parsing`: that parser's rule ("guid AND title AND a successfully-
+parsed pubDate, else the whole item is invalid") is wrong for news,
+where `pubDate` is source provenance, never FTA availability -- an
+item here is invalid ONLY for a missing/blank guid or title.
+`application.use_cases.ingest_news_source_once.IngestNewsSourceOnce`
+-- the provider-neutral one-shot orchestration: given a tuple of
+zero-argument channel fetchers, fetch each in turn, deduplicate
+within each response (`ConflictingDuplicateExternalIdError` fails
+closed for a genuinely conflicting duplicate guid within one
+response; an identical duplicate is silently deduplicated), persist
+every valid observation via `RecordNewsObservation`, and return a
+factual, count-only `NewsIngestionResult`. A single channel's own
+fetch failure is recorded in `errors` and skipped; it never aborts
+the other configured channels. An unexpected system failure (e.g.
+`NewsObservationOutOfOrderError`, a repository error) is never
+swallowed -- it propagates and aborts the call. No daemon, worker, or
+scheduler of any kind.
+
+**Federal Reserve adapter** (`infrastructure.news_sources.
+fed_rss_source.FedRssSource`) implements exactly the three adopted
+aggregate feeds (live-reconfirmed: `/feeds/press_monetary.xml`,
+`/feeds/speeches.xml`, `/feeds/testimony.xml`, all RSS 2.0, HTTP 200,
+`content-type: text/xml`) under the already-registered `source_key=
+"FED"` -- never per-governor feeds, yearly HTML archive scraping, or
+Fed article-page fetching. `external_item_id` is the RSS `<guid>`
+(live-confirmed identical to `<link>`, no `isPermaLink` attribute on
+any sampled item, zero duplicate guids within any single feed sampled).
+Content mapping: `title`->`headline` (required; blank/missing fails
+that item closed, no placeholder), `link`->`canonical_url`,
+`description`->`summary` (a genuine short snippet, present on 100% of
+45 live-sampled items; never AI-summarized or fetched from the linked
+page), `body_text` always `None` (RSS metadata only, no article-page
+fetch), `authors` always `()` (Fed RSS supplies no `<author>` element
+anywhere, confirmed live), `language` always `"en"` (the feed's own
+declared channel-level language, a static, documented fact -- not a
+per-item heuristic), `source_content_type` set per-channel
+(`monetary_policy_release`/`speech`/`testimony`).
+
+**No schema change**: FX-56's existing `source_content_type` field
+already lets FTA tell which Fed channel produced an item, since each
+Fed feed maps 1:1 to one content type -- a genuinely separate
+`source_channel` concept is deliberately deferred until a future
+source (ECB's own single combined feed serves several content types
+through ONE channel) actually demonstrates the two axes diverge. See
+`docs/DECISIONS.md`'s FX-57A entry for this decision in full,
+including its consequence for cross-channel duplicate-guid handling
+(a genuine content-type difference across channels for the same guid
+is treated as a deliberate provenance change -- a second vintage of
+the SAME item, never a second item, per ADR-style Section 35/36
+reasoning recorded there).
+
+**pubDate handling**: parsed via `email.utils.parsedate_to_datetime`
+(RFC-822/2822), preserved raw via `NewsSourceTimestampProvenance`
+regardless of parse outcome, NEVER promoted to FTA's own `observed_at`
+(which is always the exact retrieval instant). A malformed pubDate
+leaves `source_published_at=None` with the raw value and a failure
+note preserved -- never fabricated as `observed_at`/midnight/now.
+
+**Live-evidence finding, newly discovered, not in ADR 0005**: the
+Fed's own `testimony.xml` feed contains items whose `pubDate` is the
+literal sentinel value `"Sat, 30 Dec 1899 ..."` -- syntactically valid
+(parses without raising via `parsedate_to_datetime`) but semantically
+impossible, almost certainly a CMS default for an empty date field.
+A plausibility floor (`year < 1900`, provider-neutral, not Fed-only)
+in `rss_item_parsing` catches this and treats it exactly like a parse
+failure. Confirmed present in 3 of 15 live-sampled testimony items;
+absent from the 15-item `press_monetary`/`speeches` samples. This is
+a clarifying live-evidence fact, not a change to ADR 0005's own
+ADOPT_PROSPECTIVE verdict for Fed -- recorded in `docs/DECISIONS.md`,
+no ADR text amendment made (the ADR's own hour-granularity finding
+and this sentinel-date finding are compatible, not contradictory).
+
+**Other PIT/lifecycle semantics, live-verified**: `source_updated_at`
+always `None` (no verified Fed correction/update field exists);
+`source_status` always `ACTIVE` (feed disappearance never implies
+`WITHDRAWN` -- Fed feeds are rolling/shallow, only positive source
+evidence could); `evidence_disposition` always `EVIDENCE_ELIGIBLE`
+for a structurally valid item (no quarantine logic added for Fed --
+no future-dating anomaly was observed live, unlike BoC's own known
+problem); `observation_mode` always `PROSPECTIVE` (a rolling feed's
+older-looking items on first poll are correctly prospective, not
+`BACKFILL` -- no historical archive scraping was done).
+
+**Manual one-shot runner**: `scripts/ingest_fed_news.py` (plain
+script, `uv run python scripts/ingest_fed_news.py`, no scheduler, no
+startup hook, no dedicated test suite of its own, same precedent as
+`scripts/backfill_policy_rate_history.py`). Run live against the real
+Fed feeds and Postgres during this story: first run created 45 items
+across all three feeds with zero invalid items and zero errors; an
+immediate second run reported `created=0, unchanged=45`, confirming
+idempotency end-to-end against real production-shaped data, not just
+fixtures.
+
+**Tests**: 93 new (15 deterministic RSS-parser-fixture unit tests
+covering normal/multi-item/missing-description/malformed-pubDate/
+sentinel-pubDate/missing-pubDate/missing-guid/missing-title/blank-
+title/duplicate-guid/one-malformed-among-valid/valid-empty/malformed-
+XML/HTML-masquerading-as-feed/unrecognized-root; 8 transport unit
+tests covering clock-exactly-once, transport-error-retry, 429-retry,
+5xx-retry, ordinary-4xx-no-retry, retries-exhausted, `Retry-After`
+respected; 17 Fed-adapter unit tests covering every field mapping,
+content-type-per-channel, valid/malformed/sentinel pubDate, missing-
+guid/title skip, HTML-200/500 fail-closed, valid-empty-feed; 8
+orchestration unit tests against an in-memory fake repository covering
+create/unchanged/revision-added, one-channel-failure-does-not-abort-
+others, item-invalid aggregation, identical-duplicate-guid dedup,
+conflicting-duplicate-guid fail-closed-per-response, out-of-order
+propagation-not-swallowed; 5 Postgres end-to-end integration tests
+covering single-poll persistence, repeated-identical-poll idempotency,
+same-guid-changed-content revision, one-malformed-response-writes-
+zero-evidence, duplicate-guid-across-two-channels resolving to one
+item with a deliberate second vintage; 1 separately-marked
+`live_source` Fed test run via `pytest -m live_source`, asserting
+shape only, never exact titles/counts/dates).
+
+**Verification, reported separately per this story's own instruction**:
+deterministic subset (`pytest`, default `-m "not live_source"`): `7
+failed, 1780 passed, 5 deselected` -- the 7 failures are the
+pre-existing, documented OANDA-practice-candle strategy-live gap
+(unrelated to this story, confirmed unchanged). `live_source` subset
+(`pytest -m live_source`): `1 failed, 4 passed` -- the 1 failure is
+BLS's own pre-existing, documented 403 (unrelated to this story,
+confirmed unchanged); this story's own new Fed `live_source` test is
+among the 4 passes. `ruff check .`, `ruff format --check .`, `mypy .`,
+and `pre-commit run --all-files` all pass clean across the whole repo.
+
+No cross-source deduplication (FX-58), relevance/topic classification
+or sentiment (FX-59), news evidence snapshot (FX-60), dashboard
+visualization (FX-61), or source-reputation scoring (FX-EPIC-09) --
+all explicitly out of scope and untouched. No Decision/Risk Engine
+work. `/market-context` unchanged. FX-49/FX-52/FX-53's own own gated
+status unchanged. Full details in `docs/DECISIONS.md`'s FX-57A entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57B (ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F
+(BoC, with its own known timestamp-remediation need), FX-58/FX-59/
+FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
+remain DEFER; FX-53 remains BLOCKED.
+
+Do not start any of the FX-57B-F sources, cross-source deduplication
+(FX-58), relevance/topic classification or sentiment (FX-59), a news
+evidence snapshot (FX-60), dashboard visualization (FX-61), or
+source-reputation scoring (FX-EPIC-09) -- out of scope until each is
+explicitly assigned in turn, per CLAUDE.md. FX-57A above is the
+explicitly-scoped exception (common ingestion foundation plus exactly
+one adopted source, Federal Reserve RSS) and does not open the door
+to the rest of FX-57 or any later FX-EPIC-08 story.

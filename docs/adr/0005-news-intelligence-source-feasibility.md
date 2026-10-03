@@ -198,7 +198,18 @@ with different semantics even at a source FX-52A already adopted.
   `pubDate` is RFC-822 with explicit `GMT` and matches real release
   times (18:00 GMT = 2:00pm ET), but every observed value sits on the
   exact hour -- sub-hour ordering is not resolvable from the feed, and
-  there is no correction/update field. VERIFIED permitted use: the
+  there is no correction/update field. **FX-57A addendum (2026-10-03,
+  live-reconfirmed)**: `testimony.xml` additionally carries, for a
+  small minority of items, the literal sentinel value `pubDate: Sat,
+  30 Dec 1899 ...` -- syntactically valid but semantically impossible,
+  almost certainly a CMS default for an empty date field. This
+  clarifies rather than changes the finding above: `pubDate` was
+  already known to be an unreliable, PARTIALLY_VERIFIED provenance
+  field, not an availability anchor; this adds "occasionally a
+  provider-side placeholder" to "occasionally only hour-granular,"
+  both handled identically downstream (raw value preserved, never
+  promoted to FTA's own observation time). Does not change the
+  ADOPT_PROSPECTIVE verdict. VERIFIED permitted use: the
   Fed's own disclaimer states information is "in the public domain and
   may be copied and distributed without permission," with attribution
   only requested, not required -- storage, retention, and

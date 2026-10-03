@@ -1824,6 +1824,76 @@ _Last updated: 2026-09-27 (FX-54V)_
   details in `docs/DECISIONS.md`'s FX-56H.1 entry. **Stop after
   FX-56H.1 -- FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; do not
   start FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09.**
+- **FX-57A: News Ingestion Foundation + Federal Reserve RSS
+  (complete)**. FX-57's own first incremental sub-story -- FX-57 is
+  deliberately split into FX-57A (this story, common foundation + Fed)
+  through FX-57F (BoC), one adopted source at a time, rather than one
+  large story for all six. Built the provider-neutral ingestion
+  pipeline every future adapter reuses: `infrastructure.news_sources.
+  http_fetch.fetch_text` (transport -- bounded retry on transport
+  errors/429/5xx only, never ordinary 4xx or parse failures; captures
+  FTA's own `retrieved_at` via an injected clock EXACTLY ONCE per
+  response, before parsing); `infrastructure.news_sources.
+  rss_item_parsing.parse_news_rss_items` (a dedicated news-RSS item
+  parser -- deliberately NOT a reuse of `economic_calendar_sources.
+  rss_parsing`, whose pubDate-is-essential item-validity rule is wrong
+  for news: a missing/malformed/implausible `pubDate` never
+  invalidates a news item, since `pubDate` is source provenance, never
+  FTA availability); `application.use_cases.ingest_news_source_once.
+  IngestNewsSourceOnce` (provider-neutral one-shot orchestration --
+  fetch each configured channel, dedupe within each response, persist
+  via `RecordNewsObservation`, return a factual `NewsIngestionResult`;
+  no daemon/scheduler of any kind). **Federal Reserve adapter**
+  (`infrastructure.news_sources.fed_rss_source.FedRssSource`)
+  implements exactly the three adopted aggregate feeds
+  (`/feeds/press_monetary.xml`, `/feeds/speeches.xml`,
+  `/feeds/testimony.xml`) under the already-registered `source_key=
+  "FED"` -- never per-governor feeds, never HTML archive scraping.
+  `external_item_id` is the RSS `<guid>` (live-confirmed identical to
+  `<link>`, no `isPermaLink` attribute). **No schema change**: FX-56's
+  existing `source_content_type` field already lets FTA tell which Fed
+  channel (`press_monetary`/`speeches`/`testimony`) produced an item,
+  since each Fed feed maps 1:1 to one content type -- a genuinely
+  separate `source_channel` concept is deliberately deferred until a
+  future source (e.g. ECB's own single combined feed, serving several
+  content types through ONE channel) actually demonstrates the two
+  axes diverge; see `docs/DECISIONS.md`'s FX-57A entry for the decision
+  in full. **Live-evidence finding, not previously known at ADR 0005
+  time**: the Fed's own `testimony.xml` feed contains items whose
+  `pubDate` is the literal sentinel value `"Sat, 30 Dec 1899 ..."` --
+  syntactically valid (parses without raising) but semantically
+  impossible, almost certainly a CMS default for an empty date field.
+  `rss_item_parsing` applies a `year < 1900` plausibility floor
+  (provider-neutral, not Fed-specific) to detect and reject this class
+  of value exactly like a parse failure: raw string preserved,
+  `normalized_at=None`, an explanatory `normalization_note`, never
+  promoted to `source_published_at`. Confirmed present in 3 of the 15
+  live-sampled testimony items; absent from `press_monetary`/
+  `speeches`. **PIT discipline carried through exactly**: `observed_at`
+  is always FTA's own retrieval instant, never the Fed's `pubDate`;
+  `source_updated_at` is always `None` (no verified Fed update field);
+  feed disappearance never produces `WITHDRAWN` (Fed feeds are
+  rolling/shallow -- only positive source evidence could); every
+  ordinary item is `EVIDENCE_ELIGIBLE`/`ACTIVE`/`PROSPECTIVE`, with no
+  future-dating anomaly observed live for Fed (unlike BoC). Manual
+  one-shot runner: `scripts/ingest_fed_news.py` (no scheduler, no
+  startup hook) -- run live against the real Fed feeds and Postgres
+  during this story: created 45 items on the first run, then `created=
+  0, unchanged=45` on an immediate second run, confirming idempotency
+  end-to-end against real data, not just fixtures. 93 new tests (15
+  parser unit + 8 transport unit + 17 Fed-adapter unit + 8 orchestration
+  unit + 5 Postgres end-to-end integration + 1 separately-marked
+  `live_source` Fed test, run via `pytest -m live_source`) -- all green
+  independently of the pre-existing, documented BLS 403 live-test
+  failure and the pre-existing OANDA-practice-candle strategy-live
+  gap (both unrelated, confirmed unchanged by this story). No cross-
+  source dedup, classification, sentiment, source reputation, news
+  snapshot, dashboard change, or Decision/Risk integration -- all
+  explicitly out of scope and untouched. Full details in
+  `docs/DECISIONS.md`'s FX-57A entry. **Stop after FX-57A -- do not
+  start FX-57B (ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/
+  FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk
+  Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

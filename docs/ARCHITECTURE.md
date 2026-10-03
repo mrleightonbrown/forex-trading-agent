@@ -1617,6 +1617,167 @@ invariant is deliberately NOT attempted as a cross-table `CHECK`
 transactional guarantee (`register_source_item_with_first_vintage`),
 proven by integration test instead.
 
+## News source ingestion foundation + Federal Reserve RSS (FX-57A)
+
+FX-57 (News Source Ingestion & Raw Provenance) is deliberately split
+into FX-57A through FX-57F, one adopted source at a time (FX-57A: Fed;
+FX-57B: ECB; FX-57C: BoE; FX-57D: GOV.UK/HM Treasury; FX-57E: StatCan;
+FX-57F: BoC, with its own known timestamp-remediation need) -- never
+one large story for all six. FX-57A builds only the reusable
+abstraction the Fed implementation actually needs.
+
+**Three-layer separation (`infrastructure.news_sources`/
+`application.use_cases.ingest_news_source_once`)**, matching FX-56's
+own stated boundary ("no source adapter yet -- FX-57's job"):
+
+- **Transport** (`http_fetch.fetch_text`): HTTP GET -> raw response
+  text + FTA's own `retrieved_at`. Bounded retry (default 3 attempts)
+  on a transport error, HTTP 429, or HTTP 5xx only -- never an
+  ordinary 4xx, never a parse failure (parsing happens strictly after
+  this layer returns). `retrieved_at` is captured via an injected
+  `ClockFn`, EXACTLY ONCE per successful response, immediately after
+  the body is received and before any parsing -- shared, unchanged,
+  by every item a parser later extracts from that SAME response. This
+  is the non-negotiable PIT rule FX-57A exists to protect: FTA
+  availability is always its own retrieval instant, never any
+  provider-supplied publish timestamp (continuing the FX-51/FX-54/
+  FX-55H/FX-56H.1 invariant chain into the news-ingestion domain).
+- **Parser** (`rss_item_parsing.parse_news_rss_items`): a dedicated
+  RSS 2.0 `<item>` parser for NEWS evidence -- deliberately NOT a
+  reuse of `economic_calendar_sources.rss_parsing.parse_rss_items`,
+  whose item-validity rule ("guid AND title AND a successfully-parsed
+  pubDate, else the whole item is invalid") is correct for scheduling
+  but wrong for news: a news item's `pubDate` is source PROVENANCE,
+  never FTA availability, so a missing/malformed/implausible `pubDate`
+  must never invalidate an otherwise-good item. An item here is
+  invalid ONLY for a missing/blank guid or title. Reuses only the
+  structural ElementTree/namespace-stripping/fail-closed-root
+  technique from the calendar parser, not its functions. Raises
+  `MalformedNewsFeedError` for bad XML or an unrecognized root (an
+  HTML WAF/error page returned with HTTP 200 fails here, never
+  silently becomes a "valid empty feed"); a genuinely empty,
+  well-formed feed (`invalid_count=0`, zero items) is a distinct,
+  valid, non-error result.
+- **Orchestration** (`ingest_news_source_once.IngestNewsSourceOnce`):
+  provider-neutral, one-shot (no daemon/worker/scheduler of any kind).
+  Given a tuple of zero-argument `NewsSourceChannelFetcher` closures
+  (`application.ports.news_source`), fetches each channel in turn,
+  deduplicates WITHIN each response by `(source_key, external_item_
+  id)` (an identical duplicate guid is silently deduplicated; a
+  CONFLICTING duplicate guid within one response raises
+  `ConflictingDuplicateExternalIdError` and fails closed for that one
+  response only, never guessing which occurrence FTA "really" saw),
+  then persists every valid observation via `RecordNewsObservation`,
+  returning a factual, count-only `NewsIngestionResult` (`created`/
+  `revisions_added`/`unchanged`/`quarantined`/`items_invalid`/
+  `errors` -- never sentiment/importance/pair-relevance). A single
+  channel's own fetch failure (`NewsSourceUnavailableError`) is
+  recorded in `errors` and that channel is skipped, never aborting
+  the others; an unexpected system failure (e.g.
+  `NewsObservationOutOfOrderError`, a repository error) propagates
+  unchanged and aborts the call -- never swallowed.
+
+**Federal Reserve adapter** (`infrastructure.news_sources.
+fed_rss_source.FedRssSource`) implements exactly the three adopted
+aggregate feeds, as explicit `FedFeedDefinition`s (no dynamic feed
+discovery, no site crawling): `/feeds/press_monetary.xml` (content
+type `monetary_policy_release`), `/feeds/speeches.xml` (`speech`),
+`/feeds/testimony.xml` (`testimony`) -- live-reconfirmed RSS 2.0,
+HTTP 200, `content-type: text/xml`. Reuses the already-registered
+`source_key="FED"` throughout (`domain.news_source_registry`) -- a
+feed/channel is provenance BELOW that stable identity, never a
+separate source key. `external_item_id` is the RSS `<guid>`
+(live-confirmed identical to the item's own `<link>`, with no
+`isPermaLink` attribute on any sampled item -- a stable, URL-shaped,
+source-verified identity, never title/pubDate/content-hash).
+
+**Channel identity reuses `NewsItemVintage.source_content_type`,
+deliberately no schema change**: each Fed feed maps 1:1 to one
+descriptive content type, so that existing FX-56 field already lets
+FTA tell which Fed channel produced an item. A genuinely separate
+`source_channel` concept is deferred until a future source actually
+demonstrates the two axes diverge (ECB's own single combined feed
+serves several content types through ONE channel -- the first real
+test of whether "channel" and "content type" need to be modeled
+separately). Because `source_content_type` already participates in
+`record_news_observation._modeled_facts`, this choice has a direct,
+deliberate consequence: if the exact same guid is ever observed
+through two different Fed channels (hypothetical for Fed, since
+press_monetary/speeches/testimony are genuinely distinct content), the
+differing content-type value is treated as a genuine provenance
+change -- a second vintage of the SAME item, never a second item
+(`source_key`+`guid` remains identity regardless of channel). See
+`docs/DECISIONS.md`'s FX-57A entry for this decision recorded in full.
+
+**Content mapping**: `title`->`headline` (required, non-empty; a
+missing/blank title fails that item closed at the parser layer, never
+a placeholder); `link`->`canonical_url`; `description`->`summary`
+(a genuine short snippet, confirmed present on 100% of 45 live-sampled
+items across the three feeds -- preserved faithfully, never
+AI-summarized, never fetched from the linked page); `body_text`
+always `None` (RSS metadata ingestion only -- no article-page fetch
+anywhere in this adapter); `authors` always `()` (Fed RSS supplies no
+`<author>` element on any sampled item); `language` always `"en"`
+(the feed's own declared channel-level language, a static fact
+carried on `FedFeedDefinition`, not inferred per item);
+`source_updated_at` always `None` (no verified Fed correction/update
+field exists -- same-guid content changes surface only as a new FTA-
+observed revision at the new retrieval time, never a fabricated
+publisher update timestamp).
+
+**pubDate handling**: parsed via `email.utils.parsedate_to_datetime`
+(RFC-822/2822, `GMT`-suffixed, confirmed hour-or-finer granular live).
+The raw string is ALWAYS preserved via `NewsSourceTimestampProvenance
+(field_name="pubDate", raw_value=..., normalized_at=..., normalization
+_note=...)` regardless of parse outcome -- never discarded, never
+promoted to `observed_at`. A malformed `pubDate` leaves
+`source_published_at=None` with the raw value and a failure note
+preserved, never fabricated as `observed_at`/midnight/now.
+
+**Sentinel-pubDate finding (live evidence, not in ADR 0005 at the
+time ADR 0005 was written)**: the Fed's own `testimony.xml` feed
+contains items whose `pubDate` is the literal value `"Sat, 30 Dec
+1899 ..."` -- syntactically valid (`parsedate_to_datetime` parses it
+without raising) but semantically impossible, almost certainly a CMS
+default for an empty date field. `rss_item_parsing` applies a `year <
+1900` plausibility floor (a generic, provider-neutral constant --
+no RSS feed from any FX-EPIC-08-adopted source genuinely publishes
+pre-20th-century news) to detect and reject this class of value
+exactly like a parse failure. Confirmed present in 3 of 15
+live-sampled `testimony.xml` items; absent from the 15-item
+`press_monetary`/`speeches` samples taken the same day. This is a
+clarifying live-evidence fact alongside ADR 0005's own prior
+hour-granularity finding, not a contradiction of it, and does not
+change Fed's ADOPT_PROSPECTIVE verdict.
+
+**Other lifecycle semantics, live-verified for Fed**: `source_status`
+always `ACTIVE` (Fed's rolling/shallow feeds mean disappearance from
+the feed is never evidence of withdrawal -- only positive source
+evidence could produce `WITHDRAWN`, and none was found);
+`evidence_disposition` always `EVIDENCE_ELIGIBLE` for a structurally
+valid item (no quarantine/future-dating anomaly observed live for
+Fed, unlike BoC's own known problem -- FX-56's existing quarantine
+mechanism is simply not exercised by this adapter); `observation_mode`
+always `PROSPECTIVE` (a rolling feed's older-looking items on first
+poll are correctly prospective, not `BACKFILL` -- this story performs
+no historical archive ingestion of any kind).
+
+**No daemon, no scheduler, no startup hook**: `scripts/
+ingest_fed_news.py` is a plain, manually-invoked one-shot script
+(`uv run python scripts/ingest_fed_news.py`), matching this project's
+existing `scripts/` convention -- operational scheduling, if ever
+wanted, is a future, explicitly separate decision.
+
+**Explicitly NOT built in FX-57A** (all deferred to the named future
+story): FX-57B (ECB)/FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E (StatCan)/
+FX-57F (BoC); any scheduler/daemon/worker fleet; historical Fed
+backfill or archive scraping; cross-source deduplication (FX-58); any
+relevance/topic/currency classification or sentiment (FX-59); a
+pair-specific news evidence snapshot (FX-60); any Market Context
+dashboard change (FX-61); any source-reputation/credibility scoring
+(FX-EPIC-09); any Decision/Risk Engine integration, trade signal, or
+BUY/SELL logic anywhere.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
