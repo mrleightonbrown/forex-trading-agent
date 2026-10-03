@@ -46,11 +46,20 @@ class NormalizedNewsObservation:
     timestamp suspiciously in the future?") is a future adapter's own
     job (FX-57), never this DTO's or `RecordNewsObservation`'s.
 
+    **FX-57B**: `source_channel` (a stable, provider-neutral technical
+    identifier for which configured feed/endpoint produced this item,
+    e.g. `"press_monetary"`/`"ecb_press"`) is a separate concept from
+    `source_content_type` (what kind of content this is) -- see
+    `domain.news_item_vintage.NewsItemVintage.source_channel`'s own
+    docstring for why collapsing the two is wrong in general, even
+    though FX-57A's own Fed adapter happened to find them 1:1.
+    Required, non-empty, validated below.
+
     **FX-56H**: unlike `RawScheduleObservation` (which carries no
-    validation of its own), this DTO DOES validate its own two
-    structural invariants in `__post_init__` -- a non-empty `headline`
-    and quarantine-reason mutual exclusivity, mirroring `domain.
-    news_item_vintage.NewsItemVintage`'s own checks exactly. This is
+    validation of its own), this DTO DOES validate its own structural
+    invariants in `__post_init__` -- non-empty `headline`/`source_
+    channel` and quarantine-reason mutual exclusivity, mirroring
+    `domain.news_item_vintage.NewsItemVintage`'s own checks exactly. This is
     deliberate defense in depth (FX-56H Section 3): a malformed
     observation must never reach `RecordNewsObservation`, let alone
     any repository call, at all -- rejecting it here means not even a
@@ -64,6 +73,7 @@ class NormalizedNewsObservation:
     observed_at: UtcTimestamp
     observation_mode: NewsObservationMode
     headline: str
+    source_channel: str
     source_status: NewsSourceStatus
     evidence_disposition: NewsEvidenceDisposition
     summary: str | None = None
@@ -81,6 +91,10 @@ class NormalizedNewsObservation:
     def __post_init__(self) -> None:
         if not isinstance(self.headline, str) or not self.headline.strip():
             raise ValueError(f"headline must be a non-empty string, got {self.headline!r}")
+        if not isinstance(self.source_channel, str) or not self.source_channel.strip():
+            raise ValueError(
+                f"source_channel must be a non-empty string, got {self.source_channel!r}"
+            )
         is_quarantined = self.evidence_disposition is NewsEvidenceDisposition.QUARANTINED
         if is_quarantined and (
             not isinstance(self.quarantine_reason, str) or not self.quarantine_reason.strip()

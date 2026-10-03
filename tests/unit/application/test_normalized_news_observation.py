@@ -23,6 +23,7 @@ def _observation(**overrides: object) -> NormalizedNewsObservation:
         "observed_at": _T,
         "observation_mode": NewsObservationMode.PROSPECTIVE,
         "headline": "A valid headline",
+        "source_channel": "press_monetary",
         "source_status": NewsSourceStatus.ACTIVE,
         "evidence_disposition": NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     }
@@ -43,6 +44,11 @@ def test_blank_headline_is_rejected() -> None:
 def test_whitespace_only_headline_is_rejected() -> None:
     with pytest.raises(ValueError, match="headline"):
         _observation(headline="   ")
+
+
+def test_blank_source_channel_is_rejected() -> None:
+    with pytest.raises(ValueError, match="source_channel"):
+        _observation(source_channel="")
 
 
 def test_quarantined_without_reason_is_rejected() -> None:

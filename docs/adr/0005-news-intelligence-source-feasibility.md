@@ -278,7 +278,23 @@ with different semantics even at a source FX-52A already adopted.
   Papers" requires prior written authorisation. Only 15 items in the
   feed, so tight polling is required to avoid missing items on a heavy
   release day. **Verdict: ADOPT_PROSPECTIVE (strong, tight-polling
-  caveat).**
+  caveat).** **FX-57B addendum (2026-10-03, live-reconfirmed)**: two
+  refinements, neither changing the verdict above. (1) Live sampling
+  found pubDate values with genuine sub-hour precision (e.g. `17:45`,
+  `04:20`, `18:30`), not purely on-the-hour as this entry's own
+  "scheduled-hour granularity" phrasing suggested -- the source
+  appears MORE precise than originally characterized, not less; FTA's
+  own `observed_at` remains the availability anchor regardless. (2)
+  the feed carries a FOURTH URL-slug code beyond the documented `pr`/
+  `sp`/`in` trio: `gc`, "Governing Council" decision notices (e.g.
+  "Decisions taken by the Governing Council of the ECB (in addition to
+  decisions setting interest rates)"). Admitted as `press_release`:
+  a Governing Council decision notice bears no individual author's
+  name, so it cannot fall inside the Working/Occasional-Paper written-
+  authorisation carve-out above, and it is served through this SAME
+  single adopted feed URL. Any OTHER, still-unrecognized code
+  continues to fail closed as an invalid item, never guessed -- see
+  `docs/DECISIONS.md`'s FX-57B entry for the reasoning in full.
 
 - **ECB bulk speeches CSV** (`all_ECB_speeches.csv`) -- the single best
   historical full-text asset found across the entire official-source

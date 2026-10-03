@@ -145,6 +145,7 @@ def _observation(
         "observed_at": observed_at,
         "observation_mode": NewsObservationMode.PROSPECTIVE,
         "headline": headline,
+        "source_channel": "test_channel",
         "source_status": NewsSourceStatus.ACTIVE,
         "evidence_disposition": NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     }
@@ -188,6 +189,24 @@ async def test_changed_later_observation_adds_revision(use_case: RecordNewsObser
     await use_case(_observation("x4", _ts(2026, 9, 29, 9, 0), "A"))
     second = await use_case(_observation("x4", _ts(2026, 9, 29, 10, 0), "B"))
     assert second.outcome is RecordNewsObservationOutcome.REVISION_ADDED
+    assert second.revision_sequence == 1
+
+
+async def test_source_channel_change_alone_adds_a_revision_not_a_new_item(
+    use_case: RecordNewsObservation,
+) -> None:
+    # FX-57B Section 12: source_channel participates in modeled-fact
+    # equality -- a genuine channel change for the SAME external
+    # identity is a new vintage of the SAME item, never a new item,
+    # even when the headline itself is unchanged.
+    first = await use_case(
+        _observation("x4b", _ts(2026, 9, 29, 9, 0), "Same headline", source_channel="channel_a")
+    )
+    second = await use_case(
+        _observation("x4b", _ts(2026, 9, 29, 10, 0), "Same headline", source_channel="channel_b")
+    )
+    assert second.outcome is RecordNewsObservationOutcome.REVISION_ADDED
+    assert second.news_item_key == first.news_item_key
     assert second.revision_sequence == 1
 
 

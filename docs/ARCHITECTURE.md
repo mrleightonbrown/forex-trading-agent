@@ -1807,6 +1807,102 @@ pubDate addendum, contrary to that report's own claim otherwise; the
 test count was 54, not 93 -- its own listed categories never summed
 to 93).
 
+## ECB combined press/speech/interview RSS ingestion (FX-57B)
+
+FX-57's second incremental sub-story. Implements exactly the ONE
+adopted ECB feed, `/rss/press.html` (ADR 0005), reusing the common
+transport and RSS parser UNCHANGED -- live re-verification confirmed
+the feed remains a well-formed RSS 2.0 document, fully compatible
+with the shared, RSS-only parser FX-57AH hardened.
+
+**Proves `source_channel` and `source_content_type` are genuinely
+separate concepts, not just two names for the same thing.** Unlike
+Fed's three feeds (one content type each, FX-57A), ECB's ONE feed
+serves THREE content types -- every ECB observation shares the same
+`source_channel` (`"ecb_press"`) while `source_content_type` varies
+per item (`press_release`/`speech`/`interview`). This is the first
+adapter to exercise a real, separate `source_channel` field:
+migration `a95058f88727` adds it to `NewsItemVintage`/`NormalizedNews
+Observation` as a required, non-empty string (same discipline as
+`headline`), participating in modeled-fact equality -- a genuine
+channel change for the same external identity is a new vintage of the
+SAME item, never a new item. The migration backfills every
+PRE-EXISTING (Fed-only) row deterministically from its own `source_
+content_type` (`monetary_policy_release -> press_monetary`, `speech ->
+speeches`, `testimony -> testimony`) before making the column `NOT
+NULL`; Fed's own adapter now simply sets `source_channel=feed.channel`
+going forward -- a pure provenance refinement, Fed's own item
+identity/mapping/content-type values are unchanged. Downgrade refuses
+while any row exists (mirrors `504030474987`'s own blanket guard):
+channel provenance is not, in general, re-derivable from content type
+alone for an arbitrary future source.
+
+**Content-type discrimination is a source-structural fact, read from
+ECB's own URL namespace, never FX-59 classification.** The link/guid
+filename encodes content class immediately after the literal `"ecb."`
+prefix -- `pr` (press release), `sp` (speech), `in` (interview), live-
+reconfirmed exactly as ADR 0005 described. Live re-verification also
+found a FOURTH code, `gc` ("Governing Council" decision notices,
+e.g. "Decisions taken by the Governing Council of the ECB"), not
+documented in ADR 0005's own stated trio -- mapped to `press_release`
+after explicit reasoning (a Governing Council decision notice bears
+no individual author's name, so it cannot fall inside the ECB's own
+Working/Occasional-Paper written-authorisation carve-out, and it is
+served through the SAME single adopted feed URL already blanket-
+adopted) rather than silently guessed; see `docs/DECISIONS.md`'s
+FX-57B entry and the ADR 0005 addendum for the reasoning in full. Any
+OTHER, unrecognized content class fails closed as an invalid item --
+`infrastructure.news_sources.ecb_rss_source._CONTENT_CLASS_TO_TYPE` is
+a WHITELIST, never a blocklist, so a Working Paper/Occasional Paper
+(rights-excluded) would be refused automatically without needing a
+separate exclusion list, should one ever appear in this feed.
+
+**External identity, timestamps, and other mappings, all live-
+reconfirmed**: `external_item_id` is the RSS `<guid>`, confirmed
+identical to the item's own canonical `<link>` (including ECB's own
+double-slash URL quirk, `https://www.ecb.europa.eu//press/...`,
+preserved verbatim, never "fixed"); `pubDate` carries an explicit
+numeric offset (`+0200`), parsed via the SAME shared RFC-822 parser
+Fed uses (`email.utils.parsedate_to_datetime` already handles a
+numeric offset correctly -- no separate ECB-specific arithmetic was
+needed), preserved raw via `NewsSourceTimestampProvenance` regardless
+of parse outcome, never promoted to `observed_at`. Live-reconfirmed
+sub-hour pubDate precision (e.g. `17:45`, `04:20`, `18:30`), refining
+-- not contradicting -- ADR 0005's own "scheduled-hour granularity"
+characterization (see the ADR addendum). No `<description>`/`<author>`
+element on any live-sampled item -- `summary`/`authors` resolve to
+`None`/`()`; `language` is the feed's own static, declared channel-
+level value (`"en"`), not a per-item field. `source_updated_at` is
+always `None` (no verified ECB update field); `source_status` is
+always `ACTIVE` (feed disappearance is never withdrawal); `evidence_
+disposition` is always `EVIDENCE_ELIGIBLE` for a structurally valid,
+recognized item (no future-dating anomaly observed live); `observation
+_mode` is always `PROSPECTIVE` (no historical ingestion of any kind --
+the bulk speeches CSV remains untouched, still `DEFER_HISTORICAL`).
+`body_text` is always `None` -- this adapter never fetches the linked
+ECB article page.
+
+**Operational caveat, documented, no scheduler added**: live-
+reconfirmed at exactly 15 items, matching ADR 0005's own "~15 items"
+finding -- genuinely shallow. A future operational poller (not built
+here) must run frequently enough that a burst of more items than the
+feed retains between polls cannot create a silent evidence gap; this
+module cannot detect such a gap itself and makes no completeness
+claim beyond "the response returned N items."
+
+**No daemon, no scheduler**: `scripts/ingest_ecb_news.py` is a plain,
+manually-invoked one-shot script, matching `scripts/ingest_fed_
+news.py`'s own precedent exactly.
+
+**Explicitly NOT built in FX-57B**: FX-57C (BoE)/FX-57D (GOV.UK)/
+FX-57E (StatCan)/FX-57F (BoC); any scheduler/daemon; ECB historical
+ingestion of any kind (the bulk speeches CSV remains `DEFER_
+HISTORICAL`, untouched); ECB article-page fetching; cross-source
+deduplication (FX-58); relevance/topic/sentiment classification
+(FX-59); a news evidence snapshot (FX-60); any Market Context
+dashboard change (FX-61); source-reputation scoring (FX-EPIC-09); any
+Decision/Risk Engine integration.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

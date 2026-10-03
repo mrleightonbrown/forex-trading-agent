@@ -223,6 +223,7 @@ def _dedupe_within_response(
 def _observation_facts(observation: NormalizedNewsObservation) -> tuple[object, ...]:
     return (
         observation.headline,
+        observation.source_channel,
         observation.summary,
         observation.body_text,
         observation.canonical_url,

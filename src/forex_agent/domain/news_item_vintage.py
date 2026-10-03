@@ -53,6 +53,19 @@ class NewsItemVintage:
             NewsObservationMode`).
         headline: the item's headline/title as FTA observed it.
             Required, non-empty -- every adopted source supplies one.
+        source_channel: a stable, provider-neutral technical identifier
+            for WHICH configured feed/endpoint produced this item
+            (e.g. `"press_monetary"` for Fed, `"ecb_press"` for ECB's
+            own single combined feed) -- distinct from `source_
+            content_type` (FX-57B Section 10): a source may serve
+            several content types through ONE channel (ECB does), so
+            collapsing the two into one field is wrong in general even
+            though they happened to coincide 1:1 for Fed (FX-57A).
+            Required, non-empty -- every adapter must supply one, same
+            discipline as `headline`. Participates in modeled-fact
+            equality (FX-57B Section 12): a genuine channel change for
+            the same external identity is a new vintage, never a new
+            `NewsItem`.
         summary: a short summary/snippet, if the source supplies one.
         body_text: full article body text, if the source supplies one
             -- `None` is expected and normal; FX-56 never fetches a
@@ -118,6 +131,7 @@ class NewsItemVintage:
     availability: UtcTimestamp
     observation_mode: NewsObservationMode
     headline: str
+    source_channel: str
     source_status: NewsSourceStatus
     evidence_disposition: NewsEvidenceDisposition
     summary: str | None = None
@@ -149,6 +163,10 @@ class NewsItemVintage:
             )
         if not isinstance(self.headline, str) or not self.headline.strip():
             raise ValueError(f"headline must be a non-empty string, got {self.headline!r}")
+        if not isinstance(self.source_channel, str) or not self.source_channel.strip():
+            raise ValueError(
+                f"source_channel must be a non-empty string, got {self.source_channel!r}"
+            )
         for optional_text_field in (
             self.summary,
             self.body_text,

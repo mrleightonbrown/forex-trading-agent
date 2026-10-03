@@ -192,6 +192,7 @@ def _build_vintage(
         availability=observation.observed_at,
         observation_mode=observation.observation_mode,
         headline=observation.headline,
+        source_channel=observation.source_channel,
         source_status=observation.source_status,
         evidence_disposition=observation.evidence_disposition,
         summary=observation.summary,
@@ -223,6 +224,7 @@ def _modeled_facts(vintage: NewsItemVintage) -> tuple[object, ...]:
     return (
         vintage.observation_mode,
         vintage.headline,
+        vintage.source_channel,
         vintage.summary,
         vintage.body_text,
         vintage.canonical_url,

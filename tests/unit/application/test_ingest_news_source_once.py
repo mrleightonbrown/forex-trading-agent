@@ -119,6 +119,7 @@ def _observation(
     headline: str = "A Headline",
     observed_at: UtcTimestamp | None = None,
     source_key: str = _SOURCE_KEY,
+    source_channel: str = "press_monetary",
 ) -> NormalizedNewsObservation:
     return NormalizedNewsObservation(
         source_key=source_key,
@@ -126,6 +127,7 @@ def _observation(
         observed_at=observed_at or _ts(),
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline=headline,
+        source_channel=source_channel,
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )

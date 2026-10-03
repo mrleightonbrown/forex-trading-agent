@@ -57,6 +57,7 @@ def _observation(
         "observed_at": observed_at,
         "observation_mode": NewsObservationMode.PROSPECTIVE,
         "headline": headline,
+        "source_channel": "test_channel",
         "source_status": NewsSourceStatus.ACTIVE,
         "evidence_disposition": NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     }

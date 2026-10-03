@@ -40,6 +40,12 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     way -- added by a follow-up migration, not by editing the
     already-deployed table-creation migration in place.
 
+    `source_channel` (FX-57B, migration `a95058f88727`) is `NOT NULL`
+    -- every row written since that migration supplies a real channel
+    value; the migration backfilled every pre-existing (Fed-only) row
+    deterministically from its own `source_content_type` before
+    adding the constraint.
+
     `authors`/`source_timestamp_provenance`/`source_revision_metadata`
     are `JSONB` -- this project's first use of semi-structured
     persistence (no existing JSONB convention to reuse; see this
@@ -97,6 +103,7 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     availability: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observation_mode: Mapped[str] = mapped_column(String, nullable=False)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
+    source_channel: Mapped[str] = mapped_column(String, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_url: Mapped[str | None] = mapped_column(String, nullable=True)

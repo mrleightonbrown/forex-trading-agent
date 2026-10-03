@@ -14,15 +14,20 @@ feed/channel is provenance BELOW that stable identity (FX-57A Section
 equal the item's own canonical `<link>` with no `isPermaLink`
 attribute present on any sampled item.
 
-**Channel identity reuses `source_content_type`, no schema change
-(FX-57A Section 11)**: each Fed feed maps 1:1 to one descriptive
-content type (`monetary_policy_release`/`speech`/`testimony`), so the
-FX-56 model's existing `source_content_type` field already lets FTA
-tell which Fed channel produced an item -- a genuinely separate
-`source_channel` concept is deferred until a future source (e.g.
-ECB's single combined feed, which serves several content types
-through ONE channel) actually demonstrates the two axes diverge; see
-`docs/DECISIONS.md` for this decision recorded in full.
+**FX-57A originally reused `source_content_type` for Fed's own
+channel identity** (each Fed feed maps 1:1 to one descriptive content
+type), deferring a genuinely separate `source_channel` field until a
+future source demonstrated the two axes diverge. **FX-57B's own ECB
+adapter did exactly that** (ECB's single combined feed serves three
+content types through ONE channel), so `source_channel` now exists as
+a real, separate, `NOT NULL` field (migration `a95058f88727`) -- Fed
+simply sets it to its own already-known channel value
+(`feed.channel`: `press_monetary`/`speeches`/`testimony`), identical
+to what it always reported via `source_content_type`. This is a pure
+provenance refinement: Fed's own item identity, mapping, and content-
+type values are completely unchanged; see `docs/DECISIONS.md` for
+both decisions (FX-57A's original reuse, and FX-57B's follow-up
+field) recorded in full.
 """
 
 from dataclasses import dataclass
@@ -152,6 +157,7 @@ def _to_observation(
         observed_at=retrieved_at,
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline=item.title,
+        source_channel=feed.channel,
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         summary=item.description,

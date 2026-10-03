@@ -32,6 +32,7 @@ def _observation(
         observed_at=observed_at,
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="A headline",
+        source_channel="press_monetary",
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_published_at=source_published_at,

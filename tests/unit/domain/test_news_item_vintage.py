@@ -23,6 +23,7 @@ def _minimal_vintage(**overrides: object) -> NewsItemVintage:
         "availability": _T,
         "observation_mode": NewsObservationMode.PROSPECTIVE,
         "headline": "Federal Reserve issues FOMC statement",
+        "source_channel": "press_monetary",
         "source_status": NewsSourceStatus.ACTIVE,
         "evidence_disposition": NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     }
@@ -48,6 +49,11 @@ def test_revision_sequence_must_be_non_negative() -> None:
 def test_headline_is_required_non_empty() -> None:
     with pytest.raises(ValueError, match="headline"):
         _minimal_vintage(headline="")
+
+
+def test_source_channel_is_required_non_empty() -> None:
+    with pytest.raises(ValueError, match="source_channel"):
+        _minimal_vintage(source_channel="")
 
 
 def test_availability_must_be_a_utc_timestamp() -> None:

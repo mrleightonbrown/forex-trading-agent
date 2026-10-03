@@ -1921,6 +1921,57 @@ _Last updated: 2026-09-27 (FX-54V)_
   in `docs/DECISIONS.md`'s FX-57AH entry. **Stop after FX-57AH -- do
   not start FX-57B/FX-57C/FX-57D/FX-57E/FX-57F/FX-58/FX-59/FX-60/
   FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57B: ECB combined press/speech/interview RSS ingestion
+  (complete)**. FX-57's second incremental sub-story. Implements
+  exactly the one adopted ECB feed (`/rss/press.html`), reusing the
+  common transport and RSS parser unchanged -- live-reconfirmed still
+  compatible. **Proves `source_channel` != `source_content_type`**:
+  ECB's ONE feed serves THREE content types
+  (`press_release`/`speech`/`interview`), so a genuinely separate,
+  required `source_channel` field was added (migration
+  `a95058f88727`) -- backfilled deterministically for all 45
+  pre-existing Fed rows from their own `source_content_type`
+  (`monetary_policy_release -> press_monetary`, `speech -> speeches`,
+  `testimony -> testimony`), then made `NOT NULL`; Fed's own identity/
+  mapping/content-type values are unchanged, verified by re-running
+  the full Fed regression suite. Content-type discrimination reads
+  ECB's own URL-slug code (`pr`/`sp`/`in`, plus a live-discovered
+  fourth code `gc` -- "Governing Council" decision notices, admitted
+  as `press_release` after explicit reasoning, not a silent guess;
+  any other code fails closed as invalid, never guessed) -- a
+  source-structural fact, never FX-59 classification. `external_
+  item_id` is the RSS guid (confirmed identical to `<link>`, double-
+  slash URL quirk preserved verbatim); pubDate carries an explicit
+  `+0200` offset, parsed by the same shared parser Fed uses, with
+  live-reconfirmed sub-hour precision (refining, not contradicting,
+  ADR 0005's own "scheduled-hour granularity" finding -- addendum
+  added). No description/author field on any live-sampled item
+  (`summary=None`, `authors=()`); `language="en"` (static,
+  channel-level); `source_updated_at` always `None`; `source_status`
+  always `ACTIVE`; `evidence_disposition` always `EVIDENCE_ELIGIBLE`;
+  `observation_mode` always `PROSPECTIVE`; `body_text` always `None`
+  (no article-page fetch). Feed genuinely shallow (15 items, live-
+  reconfirmed) -- documented as a future operational polling
+  consideration, no scheduler added. Manual runner: `scripts/
+  ingest_ecb_news.py` -- run live against the real ECB feed and
+  Postgres: created 15 items on the first run, then `created=0,
+  unchanged=15` on an immediate second run, confirming idempotency
+  end-to-end. 25 new tests, verified via `git diff` test-function
+  count (16 ECB-adapter unit + 5 Postgres end-to-end integration + 1
+  separately-marked `live_source` ECB test + 1 unit test pinning that
+  a `source_channel` change alone adds a revision without minting a
+  new item + 2 required-field-validation tests mirroring `headline`'s
+  own pattern). Deterministic
+  suite: `7 failed, 1817 passed, 6 deselected` (same seven pre-
+  existing, unrelated OANDA failures). `live_source` suite: `1
+  failed, 5 passed` (same pre-existing BLS 403; both Fed's and ECB's
+  own live tests pass). `ruff`/`mypy`/`pre-commit` all clean. No
+  cross-source dedup, classification, sentiment, source reputation,
+  news snapshot, dashboard change, or Decision/Risk integration.
+  Full details in `docs/DECISIONS.md`'s FX-57B entry. **Stop after
+  FX-57B -- do not start FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E
+  (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision
+  Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
