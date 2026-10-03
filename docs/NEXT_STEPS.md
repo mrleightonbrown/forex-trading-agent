@@ -2139,6 +2139,159 @@ FX-61 visualization, or FX-EPIC-09 source-reputation work was started;
 no Decision/Risk Engine work was started; no live news provider was
 called anywhere in this story.
 
+## FX-56H: first-observation atomicity & PIT ordering hardening (complete)
+
+A focused hardening pass on FX-56, performed before FX-57 is
+authorized to begin. FX-56 was functionally complete but had a real
+atomicity gap: `register_source_item` made IDENTITY registration
+atomic (item+mapping together), but a first observation's revision-0
+vintage was still written in a SEPARATE, later transaction via a plain
+`add_vintage` call -- so a failure between those two steps (a crash, a
+validation error, an injected fault) could leave a durably-committed
+`NewsItem` with no revision 0 at all, and a naive retry would then
+mint revision 0 at the retry's OWN `observed_at`, violating "revision
+0's own `availability` must equal `NewsItem.first_seen_at`."
+
+**The fix**: a new repository method, `register_source_item_with_
+first_vintage`, extends the EXACT SAME atomicity discipline
+`register_source_item` already established one step further -- item,
+mapping, AND revision 0 are inserted (flushed, not committed) in ONE
+transaction, and committed together only once all three are known to
+succeed. `build_vintage(candidate_key)` constructs (and therefore
+fully domain-validates) the first vintage BEFORE any database write is
+attempted, so a malformed observation leaves zero rows of any kind. A
+shared private helper, `_insert_item_and_mapping`, factors the
+identity-race handling out of both `register_source_item` and the new
+method so it cannot drift between them. `RecordNewsObservation` now
+calls ONLY the new combined method for every observation (first or
+not) -- it never calls bare `register_source_item` followed by a
+separate `add_vintage` for a first observation.
+
+**Validate before durable mutation**: `NormalizedNewsObservation`
+itself now validates its own headline/quarantine-reason invariants in
+`__post_init__`, mirroring `NewsItemVintage`'s own checks -- a
+malformed observation never reaches `RecordNewsObservation`, let
+alone any repository call, at all. This is defense in depth alongside
+the transactional guarantee above, not a replacement for it (the
+transactional guarantee also covers a genuine infrastructure-level
+failure after validation already succeeded, which DTO validation
+alone cannot catch).
+
+**PIT ordering guard**: once an item already has a latest vintage, a
+CHANGED observation whose `observed_at` is EARLIER than that latest
+vintage's own `availability` is refused outright
+(`NewsObservationOutOfOrderError`) rather than silently appended as a
+backdated revision. This check only applies to a genuinely NEW fact --
+an observation identical to the latest vintage is always `UNCHANGED`
+regardless of its own timing, since no append happens in that case at
+all (getting this ordering backward was an early design mistake,
+caught and corrected during this story's own implementation: checking
+timing BEFORE checking for an identical repeat would have falsely
+rejected a benign "lost the first-observation race" retry whose own
+`observed_at` happens to be marginally earlier than the race's
+winner). Equal `availability` values between consecutive revisions
+remain explicitly permitted, tie-broken by `revision_sequence` --
+matching `NewsItemVintage`'s own PIT-query ordering (`availability
+DESC, revision_sequence DESC`).
+
+**Truthful idempotent outcomes**: `RecordNewsObservation` now inspects
+`add_vintage`'s own write outcome instead of discarding it -- if a
+concurrent identical writer already inserted the exact revision this
+call was about to write (`NewsVintageWriteOutcome.ALREADY_PRESENT`),
+the result is `UNCHANGED`, never `REVISION_ADDED` (which this caller
+did not actually cause). A genuine same-identity, different-payload
+conflict still raises `NewsVintageConflictError` and fails closed,
+unchanged from FX-56's own original behaviour.
+
+**Database constraint hardening**: new migration `b2bbebf8ee3b`
+(revises `504030474987`, purely additive, unguarded downgrade -- every
+row this codebase has ever written already satisfies all four new
+constraints) adds `CHECK` constraints mirroring the remaining domain
+`__post_init__` enum/range checks in storage: `news_items.first_
+observation_mode` and `news_item_vintages.observation_mode` against
+`NewsObservationMode`; `news_item_vintages.source_status` against
+`NewsSourceStatus`; `news_item_vintages.evidence_disposition` against
+`NewsEvidenceDisposition`; `news_item_vintages.revision_sequence >=
+0`. Deliberately does NOT attempt a cross-table `CHECK` for "revision
+0's own `availability` equals `NewsItem.first_seen_at`" (Postgres
+cannot reference another table in a `CHECK`) -- that invariant stays
+a transactional guarantee, proven by integration test instead, exactly
+as this story's own instructions required. Verified via up/down/up
+against the real dev database (both the new migration alone, and a
+two-step down/up through `504030474987` as well) and via a mocked-`op`
+unit test proving the original table-drop guard still runs correctly.
+
+**Tests**: ~20 new tests -- DTO validation (blank headline, invalid
+quarantine state), a strengthened version of the existing
+registration-race test proving no orphan `NewsItem` survives under
+ANY key (not merely that the winning key's own row count is 1), and a
+new integration suite covering: a malformed first observation leaves
+zero durable rows; an INJECTED first-vintage persistence failure
+(monkeypatching a dedicated, separately-named `_insert_vintage_row`
+helper so a test can simulate an unexpected infra fault without
+faking a lower-level database error) also leaves zero durable rows; a
+successful first observation creates item+mapping+revision-0
+atomically; revision 0's own `availability`/`observation_mode` equal
+the item's own `first_seen_at`/`first_observation_mode`; two
+genuinely concurrent sessions submitting the FULL first-observation
+path (not merely bare `register_source_item`) for an identical,
+never-before-seen observation leave exactly one item/mapping/
+revision-0, both resolving to the same key; two concurrent identical
+CHANGED observations of an already-existing item never both report
+`REVISION_ADDED`; a changed, out-of-order observation raises and adds
+nothing; equal-timestamp revisions remain deterministically ordered
+by `revision_sequence`; and raw-SQL attempts to insert a negative
+`revision_sequence` or an invalid enum value are rejected by the new
+`CHECK` constraints. **A real test-authoring bug was caught and fixed
+during this story's own "run concurrency tests repeatedly"
+verification step** (explicitly required by this story's own
+instructions, not merely run once): two new concurrency tests
+correctly used two independent, real sessions of their own (the
+scenario needs genuinely separate connections, not one shared fixture
+session) but never ran the file's own cleanup fixture as a result, so
+their own rows silently survived past the test into every later run
+-- a second run of the SAME test then raised `NewsObservationOutOf
+OrderError` against the FIRST run's own un-cleaned-up revision
+history. A first attempted fix introduced a SECOND bug (deleting
+`news_items` before `news_source_mappings`, violating that table's
+own foreign key, since both reference `news_items`); the final,
+correct fix is an explicit `try`/`finally` cleanup helper deleting in
+proper FK-dependency order, verified clean across 10 consecutive runs
+with no flakiness and confirmed via direct inspection that the dev
+database returns to zero rows after each run.
+
+Baseline re-established: `pytest --no-cov -q` -> **1716 passed, 4
+deselected** (up from 1702 passed before this story -- ~20 new tests
+less 6 reclassified/consolidated along the way, no regressions). The
+same 7 live-OANDA-candle integration test failures present in this
+run are the project's own pre-existing, unrelated weekend-market-
+closed condition (confirmed by direct inspection of each failure's
+own assertion: zero live candles returned, a known Saturday/Sunday
+market-closed condition, not something this story introduced,
+touches, or needs to fix). `ruff check`/`ruff format --check`/
+`mypy .`/`pre-commit run --all-files` all clean.
+
+**Unchanged by this correction**: the six-source admitted registry;
+every ADR 0005 source verdict; the FTA-availability-equals-FTA-
+observation invariant itself (only its ENFORCEMENT boundary moved
+earlier, into the same transaction as identity registration); the
+cross-source dedup boundary (still none, still FX-58's own job);
+quarantine semantics; `BACKFILL` semantics; the source revision/
+provenance model; the `JSONB` representation (no column or shape
+changed, only new `CHECK` constraints on existing columns); the
+dashboard (still untouched); FX relevance/topic classification,
+sentiment, and source reputation (still none anywhere); Decision/Risk
+Engine integration (still none). FX-49 remains DEFER; FX-52 remains
+DEFER; FX-53 remains BLOCKED. Full details in `docs/DECISIONS.md`'s
+FX-56H entry.
+
+**Per this story's own explicit stop instruction**: FX-49 remains
+DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED; no FX-57 source
+ingestion, FX-58 deduplication, FX-59 classification, FX-60 snapshot,
+FX-61 visualization, or FX-EPIC-09 source-reputation work was started;
+no Decision/Risk Engine work was started; no live news provider was
+called anywhere in this story.
+
 No further work has been requested; check in before starting anything
 new here or elsewhere — including FX-53 (gated, still not started),
 FX-50 (gated on FX-49's own reopening conditions, not started), the
@@ -2163,8 +2316,8 @@ surprise ingestion, or event-risk trading rules — out of scope until
 explicitly assigned per CLAUDE.md. FX-41/FX-41H/FX-42/FX-42H/FX-42H.1/
 FX-43/FX-43H/FX-43H.1/FX-44/FX-44H/FX-44H.1/FX-45/FX-45H/FX-45H.1/
 FX-46/FX-46H/FX-47/FX-47H/FX-48/FX-49/FX-51/FX-51H/FX-51H.1/FX-52/
-FX-52A/FX-52AH/FX-52AH.1/FX-54/FX-54V/FX-55/FX-55H/FX-56 above are the
-explicitly-scoped exceptions (domain model, storage-integrity
+FX-52A/FX-52AH/FX-52AH.1/FX-54/FX-54V/FX-55/FX-55H/FX-56/FX-56H above
+are the explicitly-scoped exceptions (domain model, storage-integrity
 hardening, canonical registry/provider-mapping definitions, real
 policy-rate ingestion, hardening and correction rounds, genuine
 release-timing verification, a deterministic, auditable, scoring-free
@@ -2195,20 +2348,24 @@ only correction pass on that investigation's own PIT-anchor wording and
 three source-admission statuses (BEA, ECB's bulk speeches CSV, GOV.UK's
 Search API) plus a single canonical disposition for GDELT, and a
 provider-neutral, immutable, point-in-time NEWS EVIDENCE STORAGE MODEL
-(no source adapter, no network I/O, no ingestion job) -- still no
-strategy, no decision logic, no "carry"/"expected rate" framing, no
-tradability claim, no commercial calendar/news provider, no consensus,
-no surprise, no event-risk scoring, no cross-source deduplication, no
-relevance/topic/sentiment classification, no source-reputation score)
-and do not open the door to the rest of this phase. **FX-57 (News
-Source Ingestion & Raw Provenance) is the next gated story**: ADR 0005
-(FX-55, hardened FX-55H) authorizes FX-EPIC-08 to continue, but each
-remaining story is its own gate, strictly scoped to what ADR 0005 and
-FX-56 itself name -- FX-56's own completion is not a general license
-to build an adapter, deduplication, classification, a snapshot, or a
-dashboard beyond what its own "Explicitly NOT built in FX-56" list
-permits. The same "do not open the door" rule applies to the
-downstream epics not in this list at all (Decision Engine, Risk
+(no source adapter, no network I/O, no ingestion job), and a hardening
+pass on that storage model's own first-observation atomicity/PIT
+ordering (first-vintage-write transactional guarantee, an out-of-order
+guard, truthful idempotent outcomes, four additive DB `CHECK`
+constraints) -- still no strategy, no decision logic, no "carry"/
+"expected rate" framing, no tradability claim, no commercial calendar/
+news provider, no consensus, no surprise, no event-risk scoring, no
+cross-source deduplication, no relevance/topic/sentiment
+classification, no source-reputation score) and do not open the door
+to the rest of this phase. **FX-57 (News Source Ingestion & Raw
+Provenance) is the next gated story**: ADR 0005 (FX-55, hardened
+FX-55H) authorizes FX-EPIC-08 to continue, but each remaining story is
+its own gate, strictly scoped to what ADR 0005 and FX-56/FX-56H
+themselves name -- neither FX-56's nor FX-56H's own completion is a
+general license to build an adapter, deduplication, classification, a
+snapshot, or a dashboard beyond what FX-56's own "Explicitly NOT built
+in FX-56" list permits. The same "do not open the door" rule applies
+to the downstream epics not in this list at all (Decision Engine, Risk
 Engine, Paper Trading Execution, Performance Analytics, Shadow
 Trading) — none are part of the current phase.
 

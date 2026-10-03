@@ -6,7 +6,7 @@ Requires a live Postgres with the FX-56 migration applied -- run
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 
 import pytest
@@ -162,16 +162,22 @@ async def test_get_item_by_source_identity_resolves_after_registration(
 
 
 async def test_concurrent_first_registration_resolves_to_one_item() -> None:
-    """FX-56 Section 11/71: two sessions racing to register the SAME,
-    never-before-seen external identity must resolve to exactly ONE
-    durable `NewsItem`, with no orphan item left over from the loser.
-    Uses two real, independent connections against live Postgres --
-    Postgres's own row lock on the mapping table's unique index
-    serializes the two transactions correctly regardless of exact
-    timing, so this is deterministic in OUTCOME even though which
-    session "wins" is not."""
+    """FX-56 Section 11/71, strengthened by FX-56H Section 5: two
+    sessions racing to register the SAME, never-before-seen external
+    identity must resolve to exactly ONE durable `NewsItem`, with NO
+    orphan item -- not merely "the winning key's own row count is 1,"
+    but "no second candidate item, under ANY key, survived the race
+    at all." Uses a dedicated `source_key` (not shared with any other
+    test in this module) so the orphan check below can safely count
+    every `news_items` row under that prefix without risking a false
+    pass/fail from unrelated test data. Uses two real, independent
+    connections against live Postgres -- Postgres's own row lock on
+    the mapping table's unique index serializes the two transactions
+    correctly regardless of exact timing, so this is deterministic in
+    OUTCOME even though which session "wins" is not."""
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
-    identity = _identity("race-item")
+    race_source_key = f"{TEST_SOURCE_KEY}_race1"
+    identity = NewsSourceIdentity(source_key=race_source_key, external_item_id="race-item")
     observed_at = _ts(2026, 9, 29, 9, 2)
 
     async def _register() -> str:
@@ -187,12 +193,24 @@ async def test_concurrent_first_registration_resolves_to_one_item() -> None:
         assert key_a == key_b
 
         async with session_factory() as check_session:
-            item_count: int = (
-                await check_session.execute(
-                    text("SELECT COUNT(*) FROM news_items WHERE news_item_key = :key"),
-                    {"key": key_a},
+            # Every `news_items` row ever minted under THIS test's own
+            # dedicated source_key prefix -- not just a count filtered
+            # to the winning key -- so a surviving orphan candidate
+            # (under a DIFFERENT, losing uuid suffix) cannot hide from
+            # this assertion the way a `WHERE news_item_key = :key`
+            # count would let it.
+            all_items_under_prefix: Sequence[object] = (
+                (
+                    await check_session.execute(
+                        text(
+                            "SELECT news_item_key FROM news_items WHERE news_item_key LIKE :pattern"
+                        ),
+                        {"pattern": f"{race_source_key}:%"},
+                    )
                 )
-            ).scalar_one()
+                .scalars()
+                .all()
+            )
             mapping_count: int = (
                 await check_session.execute(
                     text(
@@ -205,17 +223,17 @@ async def test_concurrent_first_registration_resolves_to_one_item() -> None:
                     },
                 )
             ).scalar_one()
-            assert item_count == 1
+            assert all_items_under_prefix == [key_a]
             assert mapping_count == 1
     finally:
         async with session_factory() as cleanup_session:
             await cleanup_session.execute(
                 delete(NewsSourceMappingRow).where(
-                    NewsSourceMappingRow.external_item_id == "race-item"
+                    NewsSourceMappingRow.source_key == race_source_key
                 )
             )
             await cleanup_session.execute(
-                delete(NewsItemRow).where(NewsItemRow.news_item_key == key_a)
+                delete(NewsItemRow).where(NewsItemRow.news_item_key.startswith(race_source_key))
             )
             await cleanup_session.commit()
 
@@ -591,3 +609,100 @@ async def test_malformed_authors_json_fails_loudly_on_read(
 
     with pytest.raises(MalformedNewsVintageRowError):
         await repo.list_vintages(registration.news_item_key)
+
+
+# --- DB constraint hardening (FX-56H Section 8/11) --------------------------
+
+
+async def test_db_rejects_negative_revision_sequence_via_raw_sql(
+    repo: SqlAlchemyNewsRepository, session: AsyncSession
+) -> None:
+    registration = await repo.register_source_item(
+        _identity("constraint-revseq"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
+    )
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "INSERT INTO news_item_vintages "
+                "(news_item_key, revision_sequence, availability, observation_mode, "
+                "headline, source_status, evidence_disposition) "
+                "VALUES (:key, -1, now(), 'PROSPECTIVE', 'x', 'ACTIVE', 'EVIDENCE_ELIGIBLE')"
+            ),
+            {"key": registration.news_item_key},
+        )
+    await session.rollback()
+
+
+async def test_db_rejects_invalid_observation_mode_via_raw_sql(
+    repo: SqlAlchemyNewsRepository, session: AsyncSession
+) -> None:
+    registration = await repo.register_source_item(
+        _identity("constraint-obsmode"), _ts(2026, 9, 29, 9, 2), NewsObservationMode.PROSPECTIVE
+    )
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "INSERT INTO news_item_vintages "
+                "(news_item_key, revision_sequence, availability, observation_mode, "
+                "headline, source_status, evidence_disposition) "
+                "VALUES (:key, 0, now(), 'BOGUS_MODE', 'x', 'ACTIVE', 'EVIDENCE_ELIGIBLE')"
+            ),
+            {"key": registration.news_item_key},
+        )
+    await session.rollback()
+
+
+async def test_db_rejects_invalid_source_status_via_raw_sql(
+    repo: SqlAlchemyNewsRepository, session: AsyncSession
+) -> None:
+    registration = await repo.register_source_item(
+        _identity("constraint-sourcestatus"),
+        _ts(2026, 9, 29, 9, 2),
+        NewsObservationMode.PROSPECTIVE,
+    )
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "INSERT INTO news_item_vintages "
+                "(news_item_key, revision_sequence, availability, observation_mode, "
+                "headline, source_status, evidence_disposition) "
+                "VALUES (:key, 0, now(), 'PROSPECTIVE', 'x', 'BOGUS_STATUS', 'EVIDENCE_ELIGIBLE')"
+            ),
+            {"key": registration.news_item_key},
+        )
+    await session.rollback()
+
+
+async def test_db_rejects_invalid_evidence_disposition_via_raw_sql(
+    repo: SqlAlchemyNewsRepository, session: AsyncSession
+) -> None:
+    registration = await repo.register_source_item(
+        _identity("constraint-disposition"),
+        _ts(2026, 9, 29, 9, 2),
+        NewsObservationMode.PROSPECTIVE,
+    )
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "INSERT INTO news_item_vintages "
+                "(news_item_key, revision_sequence, availability, observation_mode, "
+                "headline, source_status, evidence_disposition) "
+                "VALUES (:key, 0, now(), 'PROSPECTIVE', 'x', 'ACTIVE', 'BOGUS_DISPOSITION')"
+            ),
+            {"key": registration.news_item_key},
+        )
+    await session.rollback()
+
+
+async def test_db_rejects_invalid_first_observation_mode_via_raw_sql(
+    session: AsyncSession,
+) -> None:
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "INSERT INTO news_items (news_item_key, first_seen_at, first_observation_mode) "
+                "VALUES (:key, now(), 'BOGUS_MODE')"
+            ),
+            {"key": f"{TEST_SOURCE_KEY}:constraint-item-mode"},
+        )
+    await session.rollback()

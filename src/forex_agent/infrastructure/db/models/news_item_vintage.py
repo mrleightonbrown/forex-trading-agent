@@ -33,7 +33,12 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     quarantine-reason mutual-exclusivity check (`domain.
     news_item_vintage.NewsItemVintage.__post_init__`) in storage, so
     the invariant holds even for a row written by a future path that
-    bypasses the domain constructor.
+    bypasses the domain constructor. `ck_..._revision_sequence`/
+    `ck_..._observation_mode`/`ck_..._source_status`/`ck_..._
+    evidence_disposition` (FX-56H) mirror the remaining domain
+    `__post_init__` checks and the enum members themselves the same
+    way -- added by a follow-up migration, not by editing the
+    already-deployed table-creation migration in place.
 
     `authors`/`source_timestamp_provenance`/`source_revision_metadata`
     are `JSONB` -- this project's first use of semi-structured
@@ -68,6 +73,22 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "(evidence_disposition = 'QUARANTINED') = (quarantine_reason IS NOT NULL)",
             name="ck_news_item_vintages_quarantine_reason",
+        ),
+        CheckConstraint(
+            "revision_sequence >= 0",
+            name="ck_news_item_vintages_revision_sequence",
+        ),
+        CheckConstraint(
+            "observation_mode IN ('PROSPECTIVE', 'BACKFILL')",
+            name="ck_news_item_vintages_observation_mode",
+        ),
+        CheckConstraint(
+            "source_status IN ('ACTIVE', 'WITHDRAWN')",
+            name="ck_news_item_vintages_source_status",
+        ),
+        CheckConstraint(
+            "evidence_disposition IN ('EVIDENCE_ELIGIBLE', 'QUARANTINED')",
+            name="ck_news_item_vintages_evidence_disposition",
         ),
     )
 

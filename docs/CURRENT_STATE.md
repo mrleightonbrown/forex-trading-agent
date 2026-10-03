@@ -1701,6 +1701,66 @@ _Last updated: 2026-09-27 (FX-54V)_
   **Stop after FX-56 -- FX-49/FX-52 remain DEFER; FX-53 remains
   BLOCKED; do not start FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09;
   no live news-provider call was made anywhere in this story.**
+- **FX-56H: first-observation atomicity & PIT ordering hardening
+  (complete)**. A hardening pass on FX-56, performed before FX-57 is
+  authorized -- closes a gap FX-56's own original design left open:
+  `register_source_item` (above) made identity registration atomic,
+  but FX-56 still committed a first observation's item+mapping and
+  its revision-0 vintage in TWO SEPARATE transactions, so a failure
+  between them (a crash, a validation error, an injected fault) could
+  leave a durably-committed `NewsItem` with no revision 0 at all --
+  violating "revision 0's own `availability` equals `NewsItem.
+  first_seen_at`" on a naive retry. New repository method
+  `register_source_item_with_first_vintage` (now the ONLY path
+  `RecordNewsObservation` uses for every observation, first or not)
+  inserts item, mapping, AND revision 0 in ONE uncommitted
+  transaction, committed together only once all three are known to
+  succeed; any failure rolls back the entire attempt. `Normalized
+  NewsObservation` now validates its own headline/quarantine-reason
+  invariants in `__post_init__` (defense in depth: a malformed
+  observation is rejected before any repository call at all).
+  `RecordNewsObservation` now inspects `add_vintage`'s own write
+  outcome -- a concurrent identical writer's `ALREADY_PRESENT` is
+  reported as `UNCHANGED`, never `REVISION_ADDED`. New
+  `NewsObservationOutOfOrderError`: a CHANGED observation claiming an
+  `observed_at` earlier than the latest known vintage's own
+  `availability` is refused outright rather than silently appended
+  backward in time -- an IDENTICAL observation is always `UNCHANGED`
+  regardless of its own timing (nothing is appended then, so there is
+  nothing to be out of order); equal timestamps between consecutive
+  revisions remain explicitly permitted, tie-broken by `revision_
+  sequence`. New migration `b2bbebf8ee3b` (additive, unguarded
+  downgrade) adds four `CHECK` constraints mirroring the remaining
+  domain enum/range invariants in storage (`revision_sequence >= 0`;
+  `observation_mode`/`first_observation_mode` against
+  `NewsObservationMode`; `source_status` against `NewsSourceStatus`;
+  `evidence_disposition` against `NewsEvidenceDisposition`) --
+  deliberately does NOT attempt the revision-0/first_seen_at
+  invariant as a cross-table `CHECK` (impossible in Postgres); that
+  one stays transactional, proven by integration test. One real
+  test-authoring bug was caught and fixed during this story's own
+  "run concurrency tests repeatedly" verification step, not reported
+  by the user: two new concurrency tests initially used two
+  independent sessions of their own (correctly, since the scenario
+  needs genuinely separate connections) but never used the file's own
+  cleanup fixture, so their rows silently survived into later test
+  runs -- a second run then raised `NewsObservationOutOfOrderError`
+  against the FIRST run's own leftover revision history; fixed with
+  an explicit `try`/`finally` cleanup helper, verified clean across
+  10 repeated runs. ~20 new tests (DTO validation, strengthened
+  registration-race test proving no orphan item survives under ANY
+  key -- not just the winning one, atomicity/ordering/outcome
+  integration tests, DB constraint rejection tests via raw SQL).
+  1716 tests pass overall (up from 1702); 4 deselected (unchanged);
+  the 7 live-OANDA-candle failures present in this run are the
+  project's own pre-existing, unrelated weekend-market-closed
+  condition, not something this story introduced or fixed. No source
+  adapter, no network I/O, no cross-source deduplication, no
+  relevance/topic/sentiment classification, no news snapshot, no
+  dashboard change, no Decision/Risk-Engine integration. Full details
+  in `docs/DECISIONS.md`'s FX-56H entry. **Stop after FX-56H --
+  FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED; do not start
+  FX-57/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

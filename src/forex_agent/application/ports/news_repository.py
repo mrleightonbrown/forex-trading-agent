@@ -26,8 +26,29 @@ insert actually wins the race -- a losing attempt rolls its own
 candidate item insert back entirely, then resolves to the winner's
 already-registered identity instead. No caller of this port can ever
 observe, or need to clean up, an orphan item.
+
+**FX-56H**: `register_source_item` alone is NOT sufficient for safely
+recording a FIRST observation, because committing the item/mapping
+and then separately writing revision 0 in a second, later transaction
+reopens a structurally identical gap one level up -- a failure
+between those two steps (a crash, a validation error, an injected
+fault) leaves a durably-committed `NewsItem` with no revision 0 at
+all, and a NAIVE retry would then mint revision 0 at the RETRY's own
+`observed_at`, violating the invariant that revision 0's own
+`availability` must equal `NewsItem.first_seen_at`.
+`register_source_item_with_first_vintage` closes this the same way
+`register_source_item` itself closes the identity race: item,
+mapping, AND revision 0 are inserted (flushed, not committed) in ONE
+transaction, and committed together only once all three are known to
+succeed -- any failure at any point (including the mapping losing its
+own race, or revision 0 failing validation/persistence) rolls back
+the ENTIRE attempt, discarding even the candidate item. `Record
+NewsObservation` always calls this method for a never-before-seen
+identity; it never calls bare `register_source_item` followed by a
+separate `add_vintage` for a first observation.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
@@ -63,6 +84,25 @@ class NewsItemRegistrationResult:
     outcome: NewsItemRegistrationOutcome
     first_seen_at: UtcTimestamp
     first_observation_mode: NewsObservationMode
+
+
+@dataclass(frozen=True, slots=True)
+class FirstObservationResult:
+    """`register_source_item_with_first_vintage`'s own result (FX-56H).
+
+    `outcome` reuses `NewsItemRegistrationOutcome` (`CREATED`/
+    `ALREADY_EXISTS`) -- the same two possibilities as plain
+    `register_source_item`, since this method only ever differs from
+    it in WHAT gets committed together, not in the shape of its own
+    outcome. When `outcome` is `ALREADY_EXISTS`, the caller's own
+    `build_vintage` callback was never invoked for persistence (the
+    candidate item/vintage this attempt would have built are
+    discarded entirely) -- a caller must fetch the existing item's own
+    vintages itself (e.g. via `list_vintages`) to continue.
+    """
+
+    news_item_key: str
+    outcome: NewsItemRegistrationOutcome
 
 
 class NewsVintageWriteOutcome(Enum):
@@ -112,7 +152,58 @@ class NewsRepository(Protocol):
         identity, creating a new one if -- and only if -- no mapping
         for `identity` exists yet. See the module docstring for why
         this is atomic and orphan-proof by construction, unlike
-        FX-52A/FX-52AH's own original two-step design."""
+        FX-52A/FX-52AH's own original two-step design.
+
+        Does NOT also persist a first vintage -- see
+        `register_source_item_with_first_vintage` for the method
+        `RecordNewsObservation` actually uses when a NEW item may need
+        to be created. This method remains useful on its own (e.g. a
+        pure identity lookup/registration with no content to record
+        yet), and is exercised directly by its own tests."""
+        ...
+
+    async def register_source_item_with_first_vintage(
+        self,
+        identity: NewsSourceIdentity,
+        observed_at: UtcTimestamp,
+        observation_mode: NewsObservationMode,
+        build_vintage: Callable[[str], NewsItemVintage],
+    ) -> FirstObservationResult:
+        """Atomically resolve `identity` to its internal `NewsItem`
+        identity AND, if -- and only if -- a brand NEW item is being
+        created, persist its first vintage (`revision_sequence == 0`)
+        together with it, in one transaction (FX-56H; see the module
+        docstring).
+
+        `build_vintage(candidate_news_item_key)` is called to
+        construct the candidate revision-0 `NewsItemVintage` BEFORE
+        any database write is attempted, for exactly ONE never-before-
+        seen candidate key -- so a `build_vintage` that raises (e.g. a
+        blank headline failing `NewsItemVintage.__post_init__`) leaves
+        zero rows of any kind persisted. The returned vintage's own
+        `revision_sequence` MUST be `0`, its `availability` MUST equal
+        `observed_at`, and its `observation_mode` MUST equal
+        `observation_mode` -- a concrete implementation validates this
+        defensively and raises `ValueError` if violated, since it is a
+        caller-construction bug, not a data condition.
+
+        If `identity` already resolves to an existing item (whether
+        because it was registered earlier, or because a CONCURRENT
+        attempt for the SAME identity wins the race during this very
+        call), `build_vintage` is simply never invoked for persistence
+        purposes and `FirstObservationResult.outcome` is
+        `ALREADY_EXISTS` -- the caller is responsible for comparing
+        its own observation against the existing item's own vintage
+        history itself (this method only ever handles the FIRST
+        observation of a genuinely new item).
+
+        If anything fails after the item/mapping insert attempt but
+        before the whole transaction commits -- including the mapping
+        losing its own race, or the vintage insert itself failing for
+        any reason -- the ENTIRE transaction rolls back, so no
+        candidate item, mapping, or vintage row survives. A losing
+        race resolves to the winner's identity (`ALREADY_EXISTS`); any
+        other failure propagates to the caller unchanged."""
         ...
 
     async def get_item(self, news_item_key: str) -> NewsItem | None:

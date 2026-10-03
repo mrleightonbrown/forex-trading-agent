@@ -10139,3 +10139,227 @@ visualization, or FX-EPIC-09 source-reputation work was started, no
 Decision/Risk Engine work was started, and no live news provider was
 called anywhere in this story. Return FX-56 for architectural review
 before FX-57 begins.
+
+## 2026-10-03 — FX-56H: first-observation atomicity & PIT ordering hardening
+
+A focused hardening pass on FX-56, performed before FX-57 is
+authorized to begin -- FX-56 was functionally complete but not yet
+approved. One principal defect, four secondary correctness gaps, and
+database constraint hardening.
+
+**Principal defect: a partially-written first observation was
+possible.** FX-56's own original `RecordNewsObservation` performed
+`register_source_item()` (item+mapping, atomic and committed) followed
+by a SEPARATE `list_vintages()`/`add_vintage()` sequence for revision
+0, committed in a second, later transaction. A failure between those
+two steps -- a crash, a validation error in the vintage's own
+construction, an injected infrastructure fault -- could leave a
+durably-committed `NewsItem` with NO revision 0 at all. A naive retry
+would then construct revision 0 at the RETRY's own `observed_at`,
+violating the invariant this story's own instructions state explicitly:
+"revision 0 availability == `NewsItem.first_seen_at`." This is
+structurally the SAME shape of gap `register_source_item` itself
+closes for identity registration, one level up -- atomicity had been
+established for item+mapping together, but not yet extended to
+item+mapping+first-vintage together.
+
+**The fix: `register_source_item_with_first_vintage`.** A new
+repository method joins the first vintage's own insert into the EXACT
+SAME uncommitted transaction `register_source_item` already uses for
+item+mapping: `build_vintage(candidate_key)` is called to construct
+(and therefore fully domain-validate) the candidate revision-0 vintage
+BEFORE any database write is attempted; the candidate `NewsItemRow`
+and its `NewsSourceMappingRow` insert are attempted via a newly-
+extracted shared private helper, `_insert_item_and_mapping` (factored
+out of `register_source_item` itself, so the identity-race handling
+cannot drift between the two methods); if the mapping wins its own
+`ON CONFLICT DO NOTHING`, the revision-0 vintage insert (via a
+separately-named `_insert_vintage_row` helper -- deliberately
+factored out so a test can monkeypatch exactly this one step to
+simulate an unexpected persistence failure) joins the SAME
+transaction and all three commit together; if the mapping loses its
+race, OR the vintage insert itself fails for any reason, the ENTIRE
+transaction rolls back via a wrapping `try`/`except Exception: roll
+back; raise`, discarding even the already-attempted item/mapping
+insert. `register_source_item` itself remains unchanged and still
+exercised by its own tests, for a caller that only needs identity
+resolution with no content to record yet; `RecordNewsObservation`
+now calls ONLY the new combined method for every observation, first
+or not.
+
+**Validate before durable mutation.** `application.ports.news_source.
+NormalizedNewsObservation` now validates its own headline (non-empty)
+and quarantine-reason mutual-exclusivity invariants in its own
+`__post_init__`, mirroring `NewsItemVintage`'s own checks exactly --
+this is deliberate DEFENSE IN DEPTH alongside the transactional
+guarantee above, not a replacement for it: DTO validation catches a
+malformed CALLER input before any repository call is even attempted,
+while the transactional guarantee separately covers a genuine
+infrastructure-level failure that can occur even after a fully valid
+observation's own domain object construction has already succeeded
+(the "injected first-vintage persistence failure" test exercises
+exactly this second case, which DTO validation alone cannot catch).
+
+**PIT ordering guard, with a design mistake caught and corrected
+during implementation itself.** A new exception, `NewsObservation
+OutOfOrderError`, is raised when a CHANGED observation's own
+`observed_at` is earlier than the latest known vintage's own
+`availability` for the same item -- refusing to append a backdated
+revision rather than silently rewriting PIT history. The FIRST
+implementation attempt checked timing BEFORE checking whether the
+observation's modeled facts were identical to the latest vintage; this
+was wrong and would have falsely rejected a benign, extremely common
+case: a losing concurrent FIRST-observation attempt (one that lost its
+own identity race and is now comparing its own observation against
+the winner's already-committed revision 0) whose own `observed_at`
+happens to be marginally earlier than the winner's, despite describing
+the IDENTICAL fact. The corrected ordering checks `_same_modeled_facts`
+FIRST -- an identical observation is always `UNCHANGED` regardless of
+its own timing, since nothing is actually appended in that case -- and
+only applies the out-of-order check to a genuinely NEW, DIFFERENT
+fact that would otherwise be appended backward in time. Equal
+`availability` values between consecutive revisions remain explicitly
+permitted (the ordering check is `<`, never `<=`), tie-broken by
+`revision_sequence`, matching `NewsItemVintage`'s own existing PIT-
+query ordering (`availability DESC, revision_sequence DESC`) exactly.
+
+**Truthful idempotent outcomes.** `RecordNewsObservation` previously
+discarded `add_vintage`'s own return value entirely. It now inspects
+it: if a concurrent identical writer already inserted the exact
+revision this call was about to write (`NewsVintageWriteOutcome.
+ALREADY_PRESENT`), the result is `UNCHANGED` -- this caller did not
+actually cause any change, and reporting `REVISION_ADDED` would have
+been a straightforward falsehood. A genuine same-identity, different-
+payload conflict still raises `NewsVintageConflictError` and fails
+closed, exactly as before.
+
+**Database constraint hardening -- migration `b2bbebf8ee3b`** (revises
+`504030474987`; a NEW follow-up migration, not an edit to the
+already-deployed/pushed one, per this story's own explicit
+instruction and this project's own established convention). Four
+`CHECK` constraints, each mirroring a domain `__post_init__` check
+already enforced in Python, added so the invariant holds even for a
+row written by a future path that bypasses the domain constructor:
+`news_items.first_observation_mode` and `news_item_vintages.
+observation_mode` against `NewsObservationMode`'s two members;
+`news_item_vintages.source_status` against `NewsSourceStatus`'s two
+members; `news_item_vintages.evidence_disposition` against `News
+EvidenceDisposition`'s two members; `news_item_vintages.revision_
+sequence >= 0`. Purely additive; `downgrade()` is deliberately
+UNGUARDED (unlike `504030474987`'s own guarded table-drop) since
+relaxing a `CHECK` constraint can never itself discard data -- every
+row this codebase has ever written already satisfies all four.
+Explicitly does NOT attempt a cross-table `CHECK` for "revision 0's
+own `availability` equals `NewsItem.first_seen_at`" -- Postgres cannot
+reference another table in a `CHECK` constraint, and this story's own
+instructions directed that this specific invariant remain a
+TRANSACTIONAL guarantee, proven by integration test, rather than
+attempted at the schema level. Verified via up/down/up against the
+real dev database three ways: the new migration alone; a two-step
+down/up through `504030474987` as well (confirming the original
+table-drop guard still fires correctly underneath the new migration);
+and the existing mocked-`op` unit test for that original guard,
+unaffected and still passing.
+
+**Tests**: ~20 new tests. DTO-level unit tests (blank headline,
+invalid quarantine state). A strengthened version of the existing
+`test_concurrent_first_registration_resolves_to_one_item` -- the
+original version only counted rows matching the WINNING key; the
+strengthened version uses a dedicated `source_key` prefix and counts
+EVERY `news_items` row under that prefix, proving no orphan candidate
+item survived under any OTHER key either. A new integration suite in
+`tests/integration/test_record_news_observation.py` covering: a
+malformed first observation leaves zero durable rows across all three
+tables (verified via a fresh, independent connection, not merely the
+same session that attempted the write); an INJECTED first-vintage
+persistence failure (monkeypatching `SqlAlchemyNewsRepository.
+_insert_vintage_row` to raise `RuntimeError`) also leaves zero durable
+rows; a successful first observation creates item+mapping+revision-0
+atomically; revision 0's own `availability`/`observation_mode` equal
+the item's own `first_seen_at`/`first_observation_mode`, pinned by
+integration test rather than left as a docstring claim; two genuinely
+concurrent sessions submitting the FULL first-observation path (via
+`RecordNewsObservation` itself, not merely bare `register_source_
+item`) for an identical, never-before-seen observation leave exactly
+one item/mapping/revision-0 row, both callers resolving to the same
+`news_item_key`; two concurrent identical CHANGED observations of an
+already-existing item never both report `REVISION_ADDED`; a changed,
+out-of-order observation raises `NewsObservationOutOfOrderError` and
+adds nothing; equal-timestamp revisions remain deterministically
+ordered by `revision_sequence`; and five raw-SQL tests confirming the
+new `CHECK` constraints reject a negative `revision_sequence` and
+each of the three invalid-enum cases plus `news_items.first_
+observation_mode`.
+
+**A real test-authoring bug was caught and fixed during this story's
+own "run concurrency tests repeatedly" verification step** -- this
+story's own instructions explicitly required running concurrency
+tests more than once, and that requirement caught a genuine bug this
+session introduced, not a pre-existing one. The two new true-
+concurrency tests correctly used two independent, real sessions of
+their own (the scenario under test needs genuinely separate
+connections, not one shared fixture session), but as a direct
+consequence never invoked the test file's own `session` fixture at
+all -- so its cleanup teardown never ran, and both tests' own rows
+silently survived past a single run into every subsequent one. On the
+SECOND run, this surfaced as `NewsObservationOutOfOrderError`: the
+first run's own leftover revision-1 vintage (with a LATER availability
+than the second run's own hardcoded, fixed `observed_at` values) made
+the second run's attempt to write what it believed was a fresh
+revision 0 look like a backdated append of a DIFFERENT fact. A first
+attempted fix (an explicit per-test cleanup helper) introduced a
+SECOND, independent bug: deleting `news_items` before `news_source_
+mappings` violates that table's own foreign key, since both
+`news_item_vintages` AND `news_source_mappings` reference `news_
+items` -- the correct deletion order deletes vintages, then captures
+the resolved `news_item_key`, then deletes the mapping, then finally
+the item. The corrected `_cleanup_identity` helper, invoked from an
+explicit `try`/`finally` block in both tests (with the test's own
+final assertions moved INSIDE the `try`, after a THIRD small mistake
+briefly had them running after cleanup had already deleted the rows
+they were asserting against), was verified clean across 10 consecutive
+runs of the full file with no flakiness, and a direct database
+inspection confirmed all three tables return to zero rows for this
+story's own test identities after each run.
+
+**Verification**: `pytest --no-cov -q` -> **1716 passed, 4 deselected**
+(up from 1702 before this story). The same 7 live-OANDA-candle
+integration-test failures observed in this run
+(`test_close_channel_breakout_live`, `test_control_strategies_live`,
+`test_ema_crossover_live`, `test_ema_crossover_trend_regime_gated_
+live`, `test_mean_reversion_live`, `test_time_series_momentum_live`,
+`test_volatility_expansion_live`) are the project's own pre-existing,
+unrelated weekend-market-closed condition -- confirmed directly, not
+assumed: each failure's own assertion shows zero live candles
+returned, and today (2026-10-03) is a Saturday; this story neither
+introduced nor needs to fix this. `ruff check`/`ruff format --check`/
+`mypy .`/`pre-commit run --all-files` all clean.
+
+**Unchanged by this correction, confirmed by re-reading rather than
+assumed**: the six-source admitted registry (`domain.news_source_
+registry`); every ADR 0005 source verdict; the "FTA availability
+equals FTA's own observation time" invariant ITSELF (only where it is
+now ENFORCED moved earlier -- into the same transaction as identity
+registration -- not the invariant's own meaning); the cross-source
+dedup boundary (still none; still FX-58's own future job); quarantine
+semantics (`NewsEvidenceDisposition`, unchanged); `BACKFILL` semantics
+(`NewsObservationMode`, unchanged); the source revision/provenance
+model (`NewsSourceRevisionFact`/`NewsSourceTimestampProvenance`,
+unchanged); the `JSONB` representation (no column or stored shape
+changed -- only new `CHECK` constraints added on top of existing
+columns); the Market Context dashboard (untouched); FX relevance/
+topic classification, sentiment, and source-reputation scoring (still
+none anywhere in this codebase); Decision/Risk Engine integration
+(still none). FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains
+BLOCKED.
+
+**No new ADR** -- this story corrects an implementation-level
+atomicity/ordering gap in FX-56's own code, not a durable
+architectural trade-off; ADR 0005's own verdict and adopted-source
+list are untouched, as this story's own instructions required.
+
+Per this story's own explicit stop instruction: FX-49 remains DEFER,
+FX-52 remains DEFER, FX-53 remains BLOCKED, no FX-57/FX-58/FX-59/
+FX-60/FX-61/FX-EPIC-09 work was started, no Decision/Risk Engine work
+was started, and no live news provider was called anywhere in this
+story. Return FX-56H for review before FX-57 begins.

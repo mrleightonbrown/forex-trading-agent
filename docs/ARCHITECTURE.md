@@ -1435,7 +1435,7 @@ source revision/correction metadata; raw provider provenance) that
 FX-55H introduced to keep those facts from ever being conflated. Full
 details in `docs/DECISIONS.md`'s own FX-55 and FX-55H entries.
 
-## Point-in-time news evidence model (FX-56)
+## Point-in-time news evidence model (FX-56, hardened FX-56H)
 
 FX-56 builds the provider-neutral, immutable, point-in-time storage
 model FX-57's own future source adapters will target -- it ingests
@@ -1478,6 +1478,25 @@ with it -- before resolving to the winner's already-registered
 identity. No caller can ever observe, or need to clean up, an orphan
 item. Verified against live Postgres with two genuinely concurrent
 sessions (`asyncio.gather`), not merely argued from the SQL shape.
+
+**FX-56H extended this exact same atomicity one level further, to
+cover the first VINTAGE too, not only the item/mapping.** FX-56's own
+original design still committed item+mapping (via `register_source_
+item`) in one transaction, then separately committed revision 0 (via
+a later `add_vintage` call) -- so a failure between those two steps
+(a crash, a validation error, an injected fault) could leave a
+durably-committed `NewsItem` with no revision 0 at all, and a naive
+retry would then mint revision 0 at the RETRY's own `observed_at`,
+violating "revision 0's own `availability` must equal `NewsItem.
+first_seen_at`." `register_source_item_with_first_vintage` -- the
+method `RecordNewsObservation` actually calls for every observation,
+first or not -- closes this the same way: item, mapping, AND revision
+0 are inserted in the SAME uncommitted transaction, committed
+together only once all three are known to succeed; any failure at any
+point (the mapping losing its own race, or the vintage insert itself
+failing) rolls back the ENTIRE attempt. Plain `register_source_item`
+remains in the port, unchanged, for a caller that only needs identity
+resolution with no content to record yet.
 
 **FTA availability is `NewsItemVintage.availability` alone, always
 FTA's own observation time, never a source-supplied timestamp --
@@ -1537,6 +1556,47 @@ relevance/topic/currency classification or sentiment of any kind
 Context dashboard change (FX-61); any source-reputation/credibility
 scoring (FX-EPIC-09); any Decision/Risk Engine integration, trade
 signal, or BUY/SELL logic anywhere.
+
+**FX-56H's own PIT-ordering guard protects history from out-of-order
+processing**: once an item already has a latest vintage, `RecordNews
+Observation` refuses (`NewsObservationOutOfOrderError`) to append a
+CHANGED observation whose own `observed_at` is earlier than that
+latest vintage's `availability` -- PIT history must never be
+rewritten. This check only ever applies to a genuinely NEW fact: an
+observation identical to the latest vintage is always `UNCHANGED`
+regardless of its own timing, since nothing is appended in that case
+at all. Equal `availability` values between consecutive revisions are
+explicitly permitted, tie-broken by `revision_sequence` -- matching
+`NewsItemVintage`'s own PIT-query ordering (`availability DESC,
+revision_sequence DESC`).
+
+**`RecordNewsObservation` now inspects `add_vintage`'s own write
+outcome rather than discarding it.** If a concurrent identical writer
+already inserted the exact revision this call was about to write
+(`NewsVintageWriteOutcome.ALREADY_PRESENT`), the use case reports
+`UNCHANGED` -- never `REVISION_ADDED`, which this caller did not
+actually cause. A genuine same-identity, different-payload conflict
+still raises `NewsVintageConflictError` and fails closed, unchanged
+from FX-56's own original behaviour.
+
+**`NormalizedNewsObservation` validates its own headline/quarantine-
+reason invariants in `__post_init__` (FX-56H)**, mirroring `NewsItem
+Vintage`'s own checks -- defense in depth so a malformed observation
+is rejected before `RecordNewsObservation` is even called, let alone
+before any repository write is attempted.
+
+**Four new `CHECK` constraints (migration `b2bbebf8ee3b`, additive,
+unguarded downgrade)** mirror the remaining domain `__post_init__`
+enum/range checks in storage: `news_items.first_observation_mode` and
+`news_item_vintages.observation_mode` against `NewsObservationMode`;
+`news_item_vintages.source_status` against `NewsSourceStatus`;
+`news_item_vintages.evidence_disposition` against `NewsEvidence
+Disposition`; and `news_item_vintages.revision_sequence >= 0`. The
+"revision 0's own `availability` equals `NewsItem.first_seen_at`"
+invariant is deliberately NOT attempted as a cross-table `CHECK`
+(Postgres cannot reference another table in one) -- it remains a
+transactional guarantee (`register_source_item_with_first_vintage`),
+proven by integration test instead.
 
 ## Current state
 

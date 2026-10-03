@@ -43,6 +43,18 @@ class NormalizedNewsObservation:
     DETECTION that decides a disposition (e.g. "is this source
     timestamp suspiciously in the future?") is a future adapter's own
     job (FX-57), never this DTO's or `RecordNewsObservation`'s.
+
+    **FX-56H**: unlike `RawScheduleObservation` (which carries no
+    validation of its own), this DTO DOES validate its own two
+    structural invariants in `__post_init__` -- a non-empty `headline`
+    and quarantine-reason mutual exclusivity, mirroring `domain.
+    news_item_vintage.NewsItemVintage`'s own checks exactly. This is
+    deliberate defense in depth (FX-56H Section 3): a malformed
+    observation must never reach `RecordNewsObservation`, let alone
+    any repository call, at all -- rejecting it here means not even a
+    candidate `NewsItem`/`NewsSourceMapping` row is ever considered,
+    rather than relying solely on the later domain-object construction
+    inside the use case to catch it first.
     """
 
     source_key: str
@@ -63,3 +75,19 @@ class NormalizedNewsObservation:
     source_timestamp_provenance: tuple[NewsSourceTimestampProvenance, ...] = ()
     source_revision_metadata: tuple[NewsSourceRevisionFact, ...] = ()
     quarantine_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.headline, str) or not self.headline.strip():
+            raise ValueError(f"headline must be a non-empty string, got {self.headline!r}")
+        is_quarantined = self.evidence_disposition is NewsEvidenceDisposition.QUARANTINED
+        if is_quarantined and (
+            not isinstance(self.quarantine_reason, str) or not self.quarantine_reason.strip()
+        ):
+            raise ValueError(
+                "quarantine_reason must be a non-empty string when evidence_disposition is "
+                "QUARANTINED -- a quarantined observation must always say why"
+            )
+        if not is_quarantined and self.quarantine_reason is not None:
+            raise ValueError(
+                "quarantine_reason must be None when evidence_disposition is EVIDENCE_ELIGIBLE"
+            )
