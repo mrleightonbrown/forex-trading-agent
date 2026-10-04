@@ -32,6 +32,28 @@ response revealed a collision with it -- this refactor closes that
 gap by construction: nothing is persisted until every channel in the
 run has been fetched and checked.
 
+**FX-57D Section 14/55: a narrow extension to the same two-phase
+design.** GOV.UK's own adapter configures ONE fetcher PER DISCOVERED
+PATH, all sharing a single `source_channel` -- a shape none of Fed/
+ECB/BoE ever produce (they configure exactly one fetcher per
+channel). This means the SAME identity could, in principle, be
+produced by TWO DIFFERENT fetchers/responses that happen to share one
+channel (e.g. two discovery paths that both hydrate to the same
+`content_id`) -- a case the original per-response-only dedupe never
+checked, since each of those two responses' own `observations` tuple
+has length 1 and is trivially "deduped" on its own. Phase 1 now ALSO
+accumulates every response's own deduped observations into one flat,
+whole-run list; after the Phase 1b cross-channel check passes, that
+flat list is deduped AGAIN at the whole-run level (`_dedupe_
+observations`, the same function, reused) -- an identical duplicate
+collapses silently; a genuinely conflicting one raises `Conflicting
+DuplicateExternalIdError` and aborts the WHOLE run, exactly like a
+cross-channel collision (not caught and skipped the way a single
+response's own internal conflict is). This is a no-op for Fed/ECB/
+BoE: none of them can ever have more than one response per channel
+in a single run, so the whole-run pass can never find anything the
+per-response pass didn't already resolve.
+
 Deliberately the SMALLEST shared orchestration piece (FX-57A Section
 8/9): given a tuple of already-configured channel fetchers (each one
 a zero-argument `NewsSourceChannelFetcher`, e.g. `functools.partial
@@ -76,12 +98,20 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 class ConflictingDuplicateExternalIdError(Exception):
     """Raised when the SAME `(source_key, external_item_id)` appears
-    more than once within a SINGLE response with DIFFERING modeled
-    facts (FX-57A Section 39) -- fails closed for that one response
-    rather than guessing, from item ordering, which occurrence FTA
-    "really" saw. An identical repeat of the same identity within one
-    response is NOT an error (handled idempotently, see `_dedupe_
-    within_response`); only a genuine content conflict is."""
+    more than once with DIFFERING modeled facts -- either within a
+    SINGLE response (FX-57A Section 39, e.g. a duplicate `<item>` in
+    one RSS document), or, more generally, ACROSS two different
+    responses sharing the SAME `source_channel` within one run
+    (FX-57D Section 14/55 -- e.g. GOV.UK's own one-fetcher-per-
+    discovered-path shape, where two different discovery paths could
+    legitimately hydrate to the same `content_id`). Both cases fail
+    closed rather than guessing, from response or item ordering,
+    which occurrence FTA "really" saw. An identical repeat of the
+    same identity -- within one response, or across responses in the
+    same channel -- is NOT an error (handled idempotently, see
+    `_dedupe_observations`); only a genuine content conflict is. This
+    is a no-op distinction for Fed/ECB/BoE, which never produce more
+    than one response per configured channel in a single run."""
 
     def __init__(self, source_key: str, external_item_id: str) -> None:
         self.source_key = source_key
@@ -217,7 +247,7 @@ class IngestNewsSourceOnce:
         # BEFORE persisting anything, so a cross-channel identity
         # collision can be detected and fail the WHOLE run closed
         # before any response's evidence is written (FX-57CH).
-        ready_batches: list[tuple[str, tuple[NormalizedNewsObservation, ...]]] = []
+        ready_batches: list[tuple[NormalizedNewsObservation, ...]] = []
         identity_channels: dict[str, set[str]] = {}
 
         for fetcher in fetchers:
@@ -239,7 +269,7 @@ class IngestNewsSourceOnce:
                     raise SourceKeyMismatchError(self._source_key, observation)
 
             try:
-                deduped = _dedupe_within_response(self._source_key, outcome.observations)
+                deduped = _dedupe_observations(self._source_key, outcome.observations)
             except ConflictingDuplicateExternalIdError as exc:
                 errors.append(str(exc))
                 continue
@@ -248,7 +278,7 @@ class IngestNewsSourceOnce:
                 identity_channels.setdefault(observation.external_item_id, set()).add(
                     observation.source_channel
                 )
-            ready_batches.append((outcome.source_channel, deduped))
+            ready_batches.append(deduped)
 
         # Phase 1b: cross-channel identity collision check, across
         # EVERY successfully-fetched, non-conflicting response in
@@ -259,25 +289,32 @@ class IngestNewsSourceOnce:
                     self._source_key, external_item_id, frozenset(observed_channels)
                 )
 
+        # Phase 1c (FX-57D): whole-run, cross-response, same-channel
+        # duplicate identity check -- a no-op for Fed/ECB/BoE (see the
+        # module docstring); raises uncaught, aborting the whole run,
+        # exactly like a cross-channel collision -- a run-level
+        # identity conflict is not one response's own problem to skip.
+        all_observations = tuple(obs for batch in ready_batches for obs in batch)
+        final_observations = _dedupe_observations(self._source_key, all_observations)
+
         # Phase 2: persist -- only reached once every response in
-        # this run is confirmed free of cross-channel collisions.
+        # this run is confirmed free of any identity collision.
         items_processed = 0
         created = 0
         revisions_added = 0
         unchanged = 0
         quarantined = 0
-        for _channel, deduped in ready_batches:
-            for observation in deduped:
-                items_processed += 1
-                record_result = await self._record_observation(observation)
-                if record_result.outcome is RecordNewsObservationOutcome.CREATED:
-                    created += 1
-                elif record_result.outcome is RecordNewsObservationOutcome.REVISION_ADDED:
-                    revisions_added += 1
-                else:
-                    unchanged += 1
-                if observation.evidence_disposition is NewsEvidenceDisposition.QUARANTINED:
-                    quarantined += 1
+        for observation in final_observations:
+            items_processed += 1
+            record_result = await self._record_observation(observation)
+            if record_result.outcome is RecordNewsObservationOutcome.CREATED:
+                created += 1
+            elif record_result.outcome is RecordNewsObservationOutcome.REVISION_ADDED:
+                revisions_added += 1
+            else:
+                unchanged += 1
+            if observation.evidence_disposition is NewsEvidenceDisposition.QUARANTINED:
+                quarantined += 1
 
         return NewsIngestionResult(
             source_key=self._source_key,
@@ -295,9 +332,14 @@ class IngestNewsSourceOnce:
         )
 
 
-def _dedupe_within_response(
+def _dedupe_observations(
     source_key: str, observations: tuple[NormalizedNewsObservation, ...]
 ) -> tuple[NormalizedNewsObservation, ...]:
+    """Collapses an identical duplicate identity to one entry;
+    raises `ConflictingDuplicateExternalIdError` for a genuinely
+    conflicting one. Used twice: once per response (Phase 1, FX-57A),
+    and once across the whole run's own flattened observations
+    (Phase 1c, FX-57D) -- the same logic applies at both scopes."""
     by_external_id: dict[str, NormalizedNewsObservation] = {}
     for observation in observations:
         existing = by_external_id.get(observation.external_item_id)

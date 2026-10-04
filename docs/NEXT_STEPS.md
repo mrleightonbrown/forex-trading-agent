@@ -3419,3 +3419,131 @@ FX-57D (GOV.UK)/FX-57E (Statistics Canada)/FX-57F (Bank of Canada,
 with its own known timestamp-remediation need), FX-58/FX-59/FX-60/
 FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
 remain DEFER; FX-53 remains BLOCKED. Return FX-57CH for review.
+
+## FX-57D: GOV.UK Content API / HM Treasury prospective news ingestion (complete)
+
+FX-57's fourth incremental sub-story, explicitly authorized.
+
+Inspected first: CLAUDE.md, ADR 0005's HM Treasury section, and the
+full current news infrastructure (including FX-57CH's two-phase
+`IngestNewsSourceOnce`, `NewsSourceFetchOutcome`'s channel contract,
+and the Fed/ECB/BoE adapters/manual runners/test suites), confirming
+none of the existing common contracts needed weakening before writing
+GOV.UK code.
+
+**Live re-verification of the two-stage design.** The GOV.UK Content
+API (`https://www.gov.uk/api/content/<path>`) is a lookup-by-path
+endpoint -- fetching it directly confirms it has no item-enumeration
+capability of its own. The official HM Treasury Atom discovery feed
+was re-fetched live and found to expose 20 entries, each with `id`/
+`title`/`link`/`updated` only -- no `published`, no identity beyond an
+opaque Atom entry ID, no body/correction/retraction data at all,
+exactly matching ADR 0005's own prior finding that the Atom feed alone
+is insufficient as an evidence source. Hydrating a live sample of
+those 20 paths through the Content API confirmed the full richer
+schema this story's spec required: `content_id` (a stable UUID,
+confirmed decoupled from the URL slug across several items),
+`base_path`, `title`, `description`, `document_type` (several distinct
+values observed, e.g. `news_story`/`speech`/`press_release`/
+`official_statement` -- confirming `document_type` must be preserved
+broadly, never whitelisted), `locale` (100% `"en"` across all 20),
+`details.body` (present, Govspeak/HTML markup, preserved faithfully,
+never re-fetched from the public page), `details.change_history`
+(ordered newest-first; a genuine live multi-entry example was found --
+`first-ever-entrepreneurship-advisor-appointed-to-the-treasury`,
+carrying both a 2025 "First published." entry and a 2026 "Updated with
+information of reappointment." entry, together on a single item's
+FIRST poll -- an exact live confirmation of the "one FTA revision 0
+carries all pre-existing history" scenario), `withdrawn_notice` (an
+empty dict `{}`, never `null`, confirmed on every live-sampled active
+item), `links.organisations` (structured HM Treasury base-path
+membership, confirmed present and the correct way to verify source
+membership rather than title matching), and a small number of items
+carrying `publishing_scheduled_at` (none in the future relative to
+retrieval). `first_published_at`/`public_updated_at`/`updated_at`
+were confirmed to genuinely diverge on at least one live item
+(`updated_at` newer than `public_updated_at`), confirming the
+three-timestamp separation this story's spec required is not merely
+theoretical for this source.
+
+**Cross-path content_id collision check (this story's own hard
+architectural gate, Section 14/55) -- result: ZERO collisions.** All
+20 live-discovered paths were hydrated and their `content_id`s
+compared pairwise; all 20 were unique. This clears the gate the story
+itself raised, the same way FX-57C's own BoE cross-channel check did:
+since no collision exists live, the standard model applies
+unmodified. A narrow, explicitly-permitted extension to
+`IngestNewsSourceOnce` (Phase 1c: a whole-run, cross-response,
+same-channel dedupe/collision check, reusing the existing
+`_dedupe_observations`/`ConflictingDuplicateExternalIdError`) still
+pins what the model WOULD do if this ever happens, deterministically,
+in both a benign-alias and a genuinely-conflicting shape -- proven a
+no-op for Fed/ECB/BoE by re-running their full 94-test regression
+suite unchanged after the extension.
+
+**Rate limit reconfirmed live**: GOV.UK's own developer documentation
+still states 10 requests/second/client for the Content API; `GovUkHmt
+Source` paces itself to at most one request per 0.15s (discovery
+included), via an injectable monotonic clock/async sleep so the
+deterministic unit test proves the pacing math (two scripted elapsed-
+time scenarios: one requiring a wait, one not) without ever actually
+waiting wall-clock time. No 429 was ever encountered live.
+
+**Rights reconfirmed live**: `gov.uk` content remains OGL v3.0-
+licensed; this adapter ingests only the Content API's own supplied
+metadata/body fields, never a linked attachment, PDF, or the rendered
+public HTML page.
+
+**No ADR 0005 amendment.** Every live finding above reconfirms,
+rather than contradicts, ADR 0005's existing HM Treasury section: the
+Atom-insufficiency finding, the Content API's richer schema, the 10
+req/s limit, the beta/self-described-drift caveat, the OGL v3.0
+rights, and the two-stage design were all already anticipated there;
+nothing discovered during this story's own research requires that
+text to change.
+
+**Verification, reported separately**: focused suite (GOV.UK
+discovery + Content-API/adapter unit tests + GOV.UK Postgres
+integration tests + the full common-orchestration test file,
+including its 2 new Phase 1c tests): `85 passed` (deterministic);
+GOV.UK's own `live_source` test, run separately: `1 passed`.
+Deterministic default suite
+(`pytest`): `7 failed, 1919 passed, 8 deselected` -- the same seven
+pre-existing, documented, unrelated OANDA failures, confirmed
+unchanged; deselected rose by exactly 1 (the new GOV.UK `live_source`
+test). `live_source` suite (`pytest -m live_source`): `1 failed, 7
+passed` -- the same pre-existing, documented BLS 403 (FX-EPIC-07,
+unrelated to news intelligence), confirmed unchanged; Fed's, ECB's,
+BoE's, and now GOV.UK's own live tests all pass. `ruff check .`,
+`ruff format --check .`, `mypy .` (435 source files), and `pre-commit
+run --all-files` all pass clean. 66 new test functions total
+(verified per-file via `grep -cE '^(async )?def test_'` on each new
+file, since 4 of the 5 touched test files are new/untracked and so
+invisible to a plain `git diff`; the 1 modified file's own `git diff`
+confirms exactly 2 added): 13 (discovery parser) + 39 (Content API
+parser/adapter, including rate-pacing) + 11 (Postgres integration) + 1
+(`live_source`) + 2 (common-orchestration Phase 1c matrix, G/H).
+
+`scripts/ingest_govuk_hmt_news.py` run live, twice, against the real
+feed and dev Postgres: run 1 discovered 20 paths, hydrated 20, 0
+invalid, created 20; run 2 discovered the same 20 paths, created 0,
+20 unchanged -- fully idempotent. Database spot-check (`news_source_
+mappings`/`news_item_vintages` grouped by `source_key`) confirmed the
+pre-existing 45 Fed + 15 ECB + 150 BoE rows (210 total) remained
+exactly untouched, alongside the 20 new, genuine `GOVUK_HMT` rows.
+
+No schema or migration change -- FX-56's model was deliberately built
+with GOV.UK-like evidence in mind (three-timestamp provenance,
+structured revision metadata, source status/withdrawal, body text,
+free-form source content type) and held exactly as designed under
+real GOV.UK data.
+
+Full details in `docs/DECISIONS.md`'s FX-57D entry; `docs/
+ARCHITECTURE.md` carries a new "GOV.UK / HM Treasury news ingestion"
+section; `docs/CURRENT_STATE.md` carries its own FX-57D entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57E (Statistics Canada)/FX-57F (Bank of Canada, with its own known
+timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or
+any Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
+BLOCKED. Return FX-57D for review.

@@ -2099,6 +2099,79 @@ _Last updated: 2026-09-27 (FX-54V)_
   FX-57CH entry. **Stop after FX-57CH -- do not start FX-57D
   (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/
   FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57D: GOV.UK Content API / HM Treasury prospective news
+  ingestion (complete)**. The first adopted source whose evidence is
+  NOT the feed FTA discovers it through: a DISCOVERY stage (the
+  official HM Treasury Atom feed, `govuk_discovery.py`, diagnostics
+  only) finds current `www.gov.uk` content paths; a HYDRATION stage
+  (`govuk_content_api.py`'s `GovUkHmtSource.fetch_content_item`, one
+  `GET /api/content/<path>` per path) is the SOLE authoritative
+  evidence source -- never the Atom feed itself (ADR 0005: Atom
+  exposes only `updated`, never `published`). One poll configures ONE
+  fetcher PER discovered path, all sharing a single `source_channel
+  = "hmt_news_and_communications"`, passed into the SAME
+  `IngestNewsSourceOnce` run together -- a shape none of Fed/ECB/BoE
+  ever produce (they configure one fetcher per channel, not per
+  item). `IngestNewsSourceOnce` gained a narrow Phase 1c: a whole-run,
+  cross-response, same-channel duplicate-identity dedupe/collision
+  check (reusing the existing `_dedupe_observations`/`Conflicting
+  DuplicateExternalIdError`), closing a gap FX-57CH's own
+  cross-CHANNEL guard didn't cover -- live-verified as a provable
+  no-op for Fed/ECB/BoE (94-test regression unchanged) and as a real
+  safety net for GOV.UK (0 live collisions found across 20 discovered
+  paths, but the guard exists and is unit-tested regardless).
+  `external_item_id = content_id` (a live-verified stable UUID,
+  decoupled from the URL slug); `canonical_url` always built from the
+  Content API's own `base_path`, never the discovery link. THREE
+  source timestamps kept strictly separate: `first_published_at` ->
+  `source_published_at`, `public_updated_at` -> `source_updated_at`,
+  `updated_at` -> provenance ONLY (never substituted for the other
+  two); a present `publishing_scheduled_at` -> provenance only
+  (live-found on a few items, none future-dated). `change_history` ->
+  one `NewsSourceRevisionFact(kind=UPDATE, ...)` per entry,
+  deterministic order preserved, including the live-confirmed case of
+  a multi-entry history already present on an item's FIRST poll
+  (exactly one FTA revision 0, carrying all of it as provenance, never
+  fabricating pre-FTA revisions). `withdrawn_notice` (empty dict =
+  active, live-confirmed never `null`) -> `source_status`/an
+  additional `WITHDRAWAL` revision fact, remaining ordinary
+  evidence-eligible, visible at FTA's own observation time, never the
+  source's own claimed `withdrawn_at` (pinned by a dedicated PIT
+  test); a 404/410 is an ordinary fetch failure, never inferred as
+  withdrawal. HM Treasury membership verified via structured
+  `links.organisations` base-path identity, never title matching.
+  Rate pacing (10 req/s/client documented limit, reconfirmed live) via
+  an injectable monotonic clock + async sleep, proven in a
+  deterministic unit test with no real wall-clock wait. Dedicated
+  Content-API JSON parser (`govuk_content_api.py`) and Atom-discovery
+  parser (`govuk_discovery.py`), neither touching the existing
+  RSS-only parser. GOV.UK Search API remains DEFER, unused (ADR
+  0005). 66 new test functions (verified via file-level `grep -cE
+  '^(async )?def test_'` on each new file, plus the modified common-
+  orchestration test file's own `git diff` confirming 2 added -- `git
+  diff` alone undercounts here since 4 of the 5 touched test files
+  are new/untracked): 13 discovery-parser unit tests, 39 Content-API-
+  parser/adapter unit tests (including the rate-pacing test), 11
+  Postgres integration tests (idempotency, revision, withdrawal, PIT,
+  cross-path collision/dedupe), 1 `live_source` test, + 2 new common
+  orchestration matrix tests (G/H) for the Phase 1c extension.
+  Deterministic suite: `7 failed, 1919 passed, 8 deselected` (same
+  seven pre-existing, unrelated OANDA failures; deselected count rose
+  by exactly 1, the new GOV.UK `live_source` test). `live_source`
+  suite: `1 failed, 7 passed` (same pre-existing BLS 403, unrelated to
+  news intelligence; Fed's, ECB's, BoE's, and now GOV.UK's own live
+  tests all pass). `ruff`/`mypy`/`pre-commit` all clean. Manual runner
+  (`scripts/ingest_govuk_hmt_news.py`) run live twice against the real
+  feed + dev Postgres: run 1 discovered 20 paths, created 20; run 2
+  created 0, 20 unchanged (idempotent) -- the existing 45 Fed + 15 ECB
+  + 150 BoE rows (210 total) confirmed untouched throughout. No
+  schema/migration change -- FX-56's model was deliberately built with
+  GOV.UK-like evidence in mind and held exactly as designed. Full
+  details in `docs/DECISIONS.md`'s FX-57D entry. **No ADR 0005
+  amendment** -- every live finding reconfirmed, rather than
+  contradicted, its existing text. **Stop after FX-57D -- do not start
+  FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/
+  Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

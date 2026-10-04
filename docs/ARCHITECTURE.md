@@ -2106,6 +2106,154 @@ scripts live against the real multi-channel feeds (both idempotent,
 zero collisions, since real identities remain genuinely
 channel-disjoint for both sources).
 
+## GOV.UK / HM Treasury news ingestion (FX-57D)
+
+The first adopted source whose own evidence is NOT the feed FTA
+discovers it through. GOV.UK's Content API is a lookup-by-path
+endpoint, not an item-enumeration endpoint -- it cannot, on its own,
+tell FTA which paths currently exist. Two genuinely separate stages
+follow from that constraint:
+
+- **Discovery** (`infrastructure/news_sources/govuk_discovery.py`):
+  fetches the official HM Treasury Atom feed ONCE per poll and
+  extracts every currently-listed `www.gov.uk` content path. This
+  stage is diagnostics-only -- its own `updated`/`title`/entry-id
+  fields are NEVER promoted to any stored observation field, because
+  the Atom feed exposes only `updated`, never `published`, and no
+  identity/body/correction-history richness at all (ADR 0005).
+- **Hydration** (`infrastructure/news_sources/govuk_content_api.py`):
+  `GovUkHmtSource.fetch_content_item` performs `GET /api/content/
+  <path>` for ONE discovered path and returns ONE `NewsSourceFetch
+  Outcome` carrying, at most, ONE observation -- there is no batching,
+  and no single end-of-run timestamp is ever fabricated across
+  multiple Content API responses. The Content API response is the
+  SOLE authoritative evidence/provenance source; the Atom entry for
+  the same path is never consulted again once its path is known.
+
+**One poll therefore configures ONE fetcher per discovered path**,
+all sharing a single `source_channel = "hmt_news_and_communications"`
+(channel = HOW/WHERE discovered; `document_type`, preserved broadly
+and never whitelisted, remains the separate WHAT-kind-of-content
+axis -- same separation ECB first proved necessary, FX-57B). All of
+these fetchers are passed into the SAME `IngestNewsSourceOnce` call
+together, exactly like Fed/ECB/BoE's own multi-channel runs.
+
+**FX-57CH's existing cross-channel collision guard did not cover one
+new shape this design introduces**: two DIFFERENT discovery paths
+could, in principle, both hydrate to the SAME `content_id` -- a case
+the original per-response-only dedupe never checked, since each of
+those two responses' own `observations` tuple is trivially "deduped"
+on its own (length 1). `IngestNewsSourceOnce.__call__` gained a
+narrow **Phase 1c**: after the existing Phase 1b cross-channel check
+passes, every response's own already-deduped observations are
+flattened into one whole-run list and deduped AGAIN, at the whole-run
+level, using the SAME `_dedupe_observations` function Phase 1 already
+used per-response. An identical duplicate (a benign alias: same
+content, reached two ways) collapses silently; a genuinely conflicting
+one raises the EXISTING `ConflictingDuplicateExternalIdError` and
+aborts the whole run, exactly like a cross-channel collision. This is
+a provable no-op for Fed/ECB/BoE, none of which can ever produce more
+than one response per channel in a single run -- confirmed by
+re-running their full regression suite (94 tests) unchanged after
+this extension.
+
+**External identity**: `external_item_id = Content API content_id`
+(a stable UUID, live-verified decoupled from the URL slug) -- never
+the Atom entry ID, the discovery URL, `base_path`, title, or any
+timestamp. `canonical_url` is always built from the Content API's own
+`base_path` (`https://www.gov.uk<base_path>`), never from the
+discovery-stage link, precisely because two different discovery paths
+may resolve to the same canonical `base_path` (a benign alias).
+
+**Three source timestamps, kept strictly separate, never collapsed**
+(mirrors FX-55H/FX-56's own invariant, now proven against a THIRD
+distinct provider shape): `first_published_at` maps to `source_
+published_at` (+ raw provenance); `public_updated_at` maps to
+`source_updated_at` (+ raw provenance); `updated_at` is preserved as
+its OWN raw provenance entry ONLY -- it is never mapped to `source_
+updated_at` or anything else, since GOV.UK's own semantics let it
+change independently (e.g. on a dependent-link change) without the
+content's own `public_updated_at` changing. A present `publishing_
+scheduled_at` is likewise preserved as provenance only; live research
+found a small number of items carrying it, none in the future
+relative to retrieval, so no quarantine/STOP path was exercised live
+-- the `live_source` test still actively re-checks this every run.
+
+**`availability` remains FTA's own Content API retrieval instant for
+every observation**, never any of the three source timestamps above,
+exactly as FX-55H's invariant requires -- the GOV.UK PIT worked
+example (`tests/integration/test_govuk_hmt_news_ingestion.py`) pins
+this exactly as the Fed/ECB/BoE worked examples do.
+
+**`details.change_history` maps to one `NewsSourceRevisionFact` per
+entry, kind `UPDATE` for every entry** -- GOV.UK's own change-history
+notes are free text, never a structured correction/update
+discriminator, so `CORRECTION` is never inferred from note wording.
+Deterministic order is preserved exactly as the API returns it
+(newest first, live-confirmed). Critically, a FIRST poll that already
+has a multi-entry `change_history` (live-confirmed to occur, see ADR
+0005) produces exactly ONE FTA revision (sequence 0) carrying ALL of
+that pre-existing history as provenance -- FX-56's own "correction
+history does not reconstruct unseen history" invariant extended
+cleanly to a provider whose own history can pre-date FTA's first
+observation of an item altogether.
+
+**`withdrawn_notice` maps to `source_status`/an additional revision
+fact, never to availability.** An empty dict (GOV.UK's own "not
+withdrawn" shape -- live-confirmed `{}`, never `null`) means `ACTIVE`;
+a non-empty dict means `WITHDRAWN` plus one extra `NewsSourceRevision
+Fact(kind=WITHDRAWAL, ...)`. Withdrawal remains ordinary
+`EVIDENCE_ELIGIBLE` evidence (FX-56's own invariant), and becomes
+visible at FTA's own observation time of the withdrawal, never at the
+source's own claimed `withdrawn_at` -- pinned by a dedicated PIT test
+using a `withdrawn_at` deliberately earlier than FTA's first poll, to
+prove the source's own claim is irrelevant to visibility. A 404/410
+from the Content API is an ordinary fetch failure (`NewsSource
+UnavailableError`, recorded in `errors`), never inferred as withdrawal
+-- only a Content API item's own explicit `withdrawn_notice` ever
+sets `WITHDRAWN`.
+
+**Rate pacing**: the documented Content API limit is 10 requests/
+second/client (live-reconfirmed). `GovUkHmtSource` paces every
+request it makes (discovery included) to at most one per 0.15s,
+tracked via an injectable monotonic clock and async sleep so
+deterministic unit tests can prove the pacing math without ever
+waiting wall-clock time. This is not a general scheduler -- it only
+bounds how fast ONE `GovUkHmtSource` instance issues its own requests
+within a single run.
+
+**Dedicated JSON parser, not a reuse of the RSS parser.**
+`govuk_content_api.py` owns Content API JSON parsing/validation only;
+`govuk_discovery.py` owns Atom discovery only; neither touches
+`rss_item_parsing.py` (which remains RSS-only, hardened against Atom
+by FX-57BH). HM Treasury membership is verified via structured
+`links.organisations` base-path identity, never title-keyword
+matching -- a co-published item with HMT as one of several listed
+organisations remains valid; an item with no HM Treasury organisation
+at all is an ordinary item-level invalid (counted, never ingested).
+
+**No daemon, no scheduler**: `scripts/ingest_govuk_hmt_news.py` is a
+plain, manually-invoked one-shot script (discover, then hydrate every
+discovered path, then one `IngestNewsSourceOnce` call), matching the
+Fed/ECB/BoE precedent exactly. Live-verified twice against the real
+feed + dev Postgres: 20 discovered paths, 20 created on the first
+run, 0 created / 20 unchanged on the second (idempotent).
+
+**Explicitly NOT built in FX-57D**: the GOV.UK Search API (remains
+DEFER, ADR 0005 -- own terms/rate limits unverified); any historical
+enumeration or backfill; linked-attachment/PDF/public-HTML-page
+fetching; FX-57E (StatCan)/FX-57F (BoC); any scheduler/daemon;
+cross-source deduplication (FX-58); relevance/topic/sentiment
+classification (FX-59); a news evidence snapshot (FX-60); any Market
+Context dashboard change (FX-61); source-reputation scoring
+(FX-EPIC-09); any Decision/Risk Engine integration.
+
+No schema or migration change -- FX-56's model was deliberately built
+with GOV.UK-like evidence in mind (timestamp provenance, revision
+metadata, source status, body text, source content type), and that
+held exactly as designed; the existing 45 Fed + 15 ECB + 150 BoE rows
+are untouched.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

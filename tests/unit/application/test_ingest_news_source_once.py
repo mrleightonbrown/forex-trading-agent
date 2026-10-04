@@ -22,6 +22,7 @@ from forex_agent.application.ports.news_source import (
     NormalizedNewsObservation,
 )
 from forex_agent.application.use_cases.ingest_news_source_once import (
+    ConflictingDuplicateExternalIdError,
     CrossChannelIdentityCollisionError,
     IngestNewsSourceOnce,
     SourceKeyMismatchError,
@@ -638,3 +639,82 @@ async def test_f_same_identity_across_separate_ingestion_runs_remains_a_sequenti
     assert item is not None
     vintages = await repo.list_vintages(item.news_item_key)
     assert len(vintages) == 2
+
+
+# --- FX-57D Section 14/55: cross-response, same-channel duplicate -- ------
+# ---  the GOV.UK one-fetcher-per-discovered-path shape exposes a gap ------
+# ---  the per-response-only dedupe never checked. --------------------------
+
+
+@pytest.mark.asyncio
+async def test_g_identical_identity_from_two_responses_same_channel_dedupes() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+
+    outcome_a = NewsSourceFetchOutcome(
+        source_channel="hmt_news_and_communications",
+        retrieved_at=_ts(),
+        observations=(
+            _observation(
+                external_item_id="content-id-x",
+                headline="Same headline",
+                source_channel="hmt_news_and_communications",
+            ),
+        ),
+        items_invalid=0,
+    )
+    outcome_b = NewsSourceFetchOutcome(
+        source_channel="hmt_news_and_communications",
+        retrieved_at=_ts(),
+        observations=(
+            _observation(
+                external_item_id="content-id-x",
+                headline="Same headline",
+                source_channel="hmt_news_and_communications",
+            ),
+        ),
+        items_invalid=0,
+    )
+
+    result = await ingest((_fetcher_returning(outcome_a), _fetcher_returning(outcome_b)))
+
+    assert result.created == 1
+    assert result.items_processed == 1
+    assert result.errors == ()
+
+
+@pytest.mark.asyncio
+async def test_h_conflicting_identity_from_two_responses_same_channel_fails_closed() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+
+    outcome_a = NewsSourceFetchOutcome(
+        source_channel="hmt_news_and_communications",
+        retrieved_at=_ts(),
+        observations=(
+            _observation(
+                external_item_id="content-id-y",
+                headline="Headline A",
+                source_channel="hmt_news_and_communications",
+            ),
+        ),
+        items_invalid=0,
+    )
+    outcome_b = NewsSourceFetchOutcome(
+        source_channel="hmt_news_and_communications",
+        retrieved_at=_ts(),
+        observations=(
+            _observation(
+                external_item_id="content-id-y",
+                headline="Headline B",
+                source_channel="hmt_news_and_communications",
+            ),
+        ),
+        items_invalid=0,
+    )
+
+    with pytest.raises(ConflictingDuplicateExternalIdError):
+        await ingest((_fetcher_returning(outcome_a), _fetcher_returning(outcome_b)))
+
+    identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="content-id-y")
+    assert await repo.get_item_by_source_identity(identity) is None
