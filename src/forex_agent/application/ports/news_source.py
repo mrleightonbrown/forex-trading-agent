@@ -136,14 +136,28 @@ class NewsSourceFetchOutcome:
     any source adapter hands to `IngestNewsSourceOnce` (FX-57A). One
     `retrieved_at` per response, shared by every observation in
     `observations` (FX-57A Section 4) -- never a per-item clock call.
+    `source_channel` is REQUIRED (FX-57BH): now that `source_channel`
+    is itself a required field on every `NormalizedNewsObservation`, a
+    successfully-configured fetcher must always identify its own
+    channel -- there is no such thing as an anonymous response. A
+    valid empty feed still has a known channel (`source_channel=
+    "ecb_press", observations=()` is valid).
 
-    **FX-57AH Section 1**: this is now an ENFORCED invariant, not just
-    documentation -- `__post_init__` requires `observation.observed_at
-    == retrieved_at` for every observation in `observations`, raising
-    `NewsSourceFetchContractError` (never silently rewriting the
-    mismatched timestamp) if any observation disagrees. A source's own
-    `source_published_at` is irrelevant to this check -- only FTA's own
-    retrieval instant is compared.
+    **FX-57AH Section 1 / FX-57BH Section 1**: this is now an ENFORCED
+    invariant, not just documentation -- `__post_init__` requires, for
+    EVERY observation in `observations`:
+
+    - `observation.observed_at == retrieved_at` (FX-57AH) -- a
+      source's own `source_published_at` is irrelevant to this check,
+      only FTA's own retrieval instant is compared.
+    - `observation.source_channel == source_channel` (FX-57BH) -- a
+      source adapter must never say "this response's own channel is
+      A" while persisting an observation whose own `source_channel`
+      is B.
+
+    Both raise `NewsSourceFetchContractError` and never silently
+    rewrite the mismatched value -- the adapter that built this
+    outcome has a bug and must be fixed, not worked around here.
 
     `items_invalid`/`invalid_reasons` describe ITEM-level parse
     failures within an otherwise structurally-valid response (FX-57A
@@ -151,13 +165,17 @@ class NewsSourceFetchOutcome:
     `observations`, and never escalates to `NewsSourceUnavailableError`
     on its own."""
 
-    source_channel: str | None
+    source_channel: str
     retrieved_at: UtcTimestamp
     observations: tuple[NormalizedNewsObservation, ...]
     items_invalid: int
     invalid_reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source_channel, str) or not self.source_channel.strip():
+            raise ValueError(
+                f"source_channel must be a non-empty string, got {self.source_channel!r}"
+            )
         for observation in self.observations:
             if observation.observed_at != self.retrieved_at:
                 raise NewsSourceFetchContractError(
@@ -168,6 +186,15 @@ class NewsSourceFetchOutcome:
                     "produced from the SAME response must share the exact same FTA "
                     "retrieval instant; the adapter that built this outcome has a bug "
                     "and must be fixed, not worked around here"
+                )
+            if observation.source_channel != self.source_channel:
+                raise NewsSourceFetchContractError(
+                    f"observation external_item_id={observation.external_item_id!r} has "
+                    f"source_channel={observation.source_channel!r}, which differs from "
+                    f"this response's own source_channel={self.source_channel!r} -- every "
+                    "observation produced from the SAME response must share the SAME "
+                    "channel; the adapter that built this outcome has a bug and must be "
+                    "fixed, not worked around here"
                 )
 
 

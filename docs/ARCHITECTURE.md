@@ -1903,6 +1903,52 @@ deduplication (FX-58); relevance/topic/sentiment classification
 dashboard change (FX-61); source-reputation scoring (FX-EPIC-09); any
 Decision/Risk Engine integration.
 
+**FX-57BH hardened the common fetch contract one step further,
+before FX-57C was authorized.** The common fetch contract now
+guarantees THREE aligned response-level facts for every observation
+a source adapter produces, each enforced at a different layer so
+every future adapter (FX-57C-F) inherits the protection automatically
+rather than needing to remember it:
+
+1. `observation.observed_at == outcome.retrieved_at` (FX-57AH) --
+   enforced in `NewsSourceFetchOutcome.__post_init__`.
+2. `observation.source_key == <this ingestion run's own source key>`
+   (FX-57AH) -- enforced in `IngestNewsSourceOnce.__call__`
+   (`SourceKeyMismatchError`).
+3. `observation.source_channel == outcome.source_channel` (FX-57BH,
+   new) -- enforced in `NewsSourceFetchOutcome.__post_init__`,
+   alongside (1).
+
+`NewsSourceFetchOutcome.source_channel` is now itself REQUIRED
+(`str`, never `str | None`) and validated non-empty/non-whitespace:
+now that `source_channel` is a required field on every `Normalized
+NewsObservation`/`NewsItemVintage` (FX-57B), a successfully-configured
+fetcher must always identify its own channel -- there is no such
+thing as an anonymous response, and a valid empty feed still has a
+known channel (`source_channel="ecb_press", observations=()` is
+valid). All three checks raise `NewsSourceFetchContractError` (or,
+for source-key, `SourceKeyMismatchError`) and never silently rewrite
+the offending value -- the adapter itself has a bug and must be
+fixed. `IngestNewsSourceOnce` no longer needs an `is not None` guard
+before collecting `outcome.source_channel` into `NewsIngestionResult.
+source_channels`, since the type system and the constructor-time
+check both now guarantee it is always a real string.
+
+The ECB `live_source` test was also tightened (FX-57BH Section 6): it
+now asserts `items_invalid == 0` (including the actual invalid
+reasons in the failure message) rather than merely printing them, so
+a genuinely new ECB content class, an identity-schema change, or any
+other source-contract drift surfaces as a live-test FAILURE needing
+review, not a quietly-green pass. This does not relax the production
+adapter's own fail-closed behavior in any way -- an unrecognized
+content class still fails closed as an invalid item. The `gc ->
+press_release` admission decision from FX-57B is unchanged and not
+reopened by this hardening pass.
+
+No schema or migration change -- migration `a95058f88727`, its
+`NOT NULL` `source_channel` persistence, and the existing 45 Fed +
+15 ECB rows are all exactly as FX-57B left them.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

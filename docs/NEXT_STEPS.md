@@ -2948,3 +2948,113 @@ FX-57C (Bank of England)/FX-57D (GOV.UK)/FX-57E (Statistics Canada)/
 FX-57F (Bank of Canada), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any
 Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
 BLOCKED. Return FX-57B for review.
+
+## FX-57BH: source-channel contract & ECB live-drift hardening (complete)
+
+A narrowly-scoped hardening pass on FX-57B, before FX-57C is
+authorized. The common fetch contract now guarantees THREE aligned
+response-level facts for every observation a source adapter produces,
+not two:
+
+1. `observation.observed_at == outcome.retrieved_at` (FX-57AH).
+2. `observation.source_key == <this ingestion run's own source key>`
+   (FX-57AH).
+3. `observation.source_channel == outcome.source_channel` (FX-57BH,
+   new).
+
+**1/2. `NewsSourceFetchOutcome.source_channel` is now REQUIRED** --
+changed from `str | None` to `str`, validated non-empty/non-
+whitespace in `__post_init__`, alongside a NEW check that every
+observation's own `source_channel` matches the response's own. Both
+raise `NewsSourceFetchContractError` and never silently rewrite the
+offending value. A valid empty feed still requires and accepts a
+real channel (`source_channel="ecb_press", observations=()` is
+valid) -- there is no such thing as an anonymous response, now that
+`source_channel` is itself a required field on every `Normalized
+NewsObservation`/`NewsItemVintage` (FX-57B). `IngestNewsSourceOnce`'s
+own `if outcome.source_channel is not None:` guard was removed as no
+longer needed -- `outcome.source_channel` is unconditionally
+collected into `NewsIngestionResult.source_channels`.
+
+**3. Location**: both checks live in `NewsSourceFetchOutcome.__post_
+init__`, alongside the existing retrieved-at invariant -- so every
+future adapter (FX-57C-F) inherits the protection automatically,
+without needing to remember it or implement it per-adapter.
+
+**4. Ingestion result consistency**: `NewsIngestionResult.source_
+channels` now necessarily describes exactly the channels that were
+actually persisted, since a mismatched observation can never
+construct a valid `NewsSourceFetchOutcome` in the first place. No
+channel rewriting or normalization was introduced anywhere in
+orchestration.
+
+**5. Tests** (7 new, verified via `git diff`, not estimated): in
+`tests/unit/application/test_news_source_fetch_outcome.py` --
+matching channel succeeds; mismatched channel fails at outcome
+construction; blank response `source_channel` fails; whitespace-only
+response `source_channel` fails; a valid empty response still
+requires and accepts a real channel; multiple observations must ALL
+match the same response channel; the pre-existing retrieved-at tests
+continue to pass unchanged. In `tests/unit/application/test_
+ingest_news_source_once.py` -- a response/observation channel
+mismatch never reaches `RecordNewsObservation` (the repository stays
+empty; the error propagates uncaught out of `IngestNewsSourceOnce.
+__call__`, exactly like `SourceKeyMismatchError`/`NewsObservationOut
+OfOrderError`).
+
+**6. ECB live test tightened**: `tests/integration/test_ecb_rss_
+source_live.py` now asserts `items_invalid == 0`, with the actual
+invalid reasons included in the failure message, rather than merely
+printing them. A live ECB item going invalid can mean a newly
+introduced content class, an identity-schema change, a missing
+headline/guid, or another source-contract change -- any of which
+needs human review, not a quietly-green live test. This does NOT
+relax the production adapter's own fail-closed behavior in any way;
+re-run live against the real feed to confirm it still passes
+(`items_invalid=0` on the current real feed, 15 items, all three
+known content types observed).
+
+**7. The `gc -> press_release` decision was NOT reopened** -- it was
+discovered live, explicitly reasoned, whitelisted, documented in ADR
+0005, and rights-reviewed within the existing ECB adopted feed
+boundary during FX-57B; this hardening patch leaves
+`_CONTENT_CLASS_TO_TYPE` completely untouched. Any code beyond
+`pr`/`sp`/`in`/`gc` continues to fail closed until separately
+reviewed.
+
+**8. No schema or migration change** -- migration `a95058f88727`,
+its `NOT NULL` `source_channel` persistence, the existing 45 Fed
+rows, and the existing 15 ECB rows are all exactly as FX-57B left
+them; untouched by this story.
+
+**9. Fed regression**: re-ran the full Fed suite since Fed also
+constructs `NewsSourceFetchOutcome` -- Fed already supplied matching
+channel values (`feed.channel`, set in FX-57B), so behavior is
+unchanged; no Fed source semantics were modified to satisfy the new
+contract. 22 Fed tests (17 unit + 5 integration) and 21 ECB tests (16
+unit + 5 integration) all pass unchanged.
+
+**10. Verification, reported separately**: focused suites (common
+contract + orchestration + ECB unit + ECB Postgres + Fed unit + Fed
+Postgres): all green. Deterministic default suite (`pytest`): `7
+failed, 1824 passed, 6 deselected` -- the same seven pre-existing,
+documented, unrelated OANDA-practice-candle failures, confirmed
+unchanged. `live_source` suite (`pytest -m live_source`): `1 failed,
+5 passed` -- the same pre-existing, documented BLS 403, confirmed
+unchanged; both Fed's and ECB's own live tests (the latter now
+stricter per Section 6) pass. `ruff check .`, `ruff format --check .`,
+`mypy .` (423 source files), and `pre-commit run --all-files` all
+pass clean.
+
+**11. Documentation**: this entry; `docs/ARCHITECTURE.md`'s ECB
+section amended in place with the hardening; `docs/CURRENT_STATE.md`
+carries its own FX-57BH entry; `docs/DECISIONS.md` carries the full
+FX-57BH entry. No ADR change -- nothing discovered here was a new
+source-feasibility/rights/PIT fact; the `gc` decision and sub-hour-
+precision finding from FX-57B remain exactly as recorded.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57C (Bank of England)/FX-57D (GOV.UK)/FX-57E (Statistics Canada)/
+FX-57F (Bank of Canada), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any
+Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
+BLOCKED. Return FX-57BH for review.

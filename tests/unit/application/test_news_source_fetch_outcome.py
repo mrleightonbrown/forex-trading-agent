@@ -1,7 +1,8 @@
-"""FX-57AH Section 1: `NewsSourceFetchOutcome` now ENFORCES, not just
-documents, that every observation in `observations` shares the exact
-same `retrieved_at` as the outcome itself -- a violating adapter must
-be fixed, never silently corrected here."""
+"""FX-57AH Section 1 / FX-57BH Section 1: `NewsSourceFetchOutcome` now
+ENFORCES, not just documents, that every observation in `observations`
+shares BOTH the exact same `retrieved_at` AND the exact same
+`source_channel` as the outcome itself -- a violating adapter must be
+fixed, never silently corrected here."""
 
 from datetime import UTC, datetime
 
@@ -25,6 +26,7 @@ def _observation(
     external_item_id: str = "item-1",
     observed_at: UtcTimestamp = _RETRIEVED_AT,
     source_published_at: UtcTimestamp | None = None,
+    source_channel: str = "press_monetary",
 ) -> NormalizedNewsObservation:
     return NormalizedNewsObservation(
         source_key="FED",
@@ -32,7 +34,7 @@ def _observation(
         observed_at=observed_at,
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="A headline",
-        source_channel="press_monetary",
+        source_channel=source_channel,
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_published_at=source_published_at,
@@ -73,7 +75,14 @@ def test_source_published_at_is_irrelevant_to_this_check() -> None:
     outcome = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=_RETRIEVED_AT,
-        observations=(_observation("item-1", _RETRIEVED_AT, source_published_at=_OTHER_TIME),),
+        observations=(
+            _observation(
+                "item-1",
+                _RETRIEVED_AT,
+                source_published_at=_OTHER_TIME,
+                source_channel="speeches",
+            ),
+        ),
         items_invalid=0,
     )
     assert outcome.observations[0].source_published_at == _OTHER_TIME
@@ -83,7 +92,14 @@ def test_source_published_at_is_irrelevant_to_this_check() -> None:
         NewsSourceFetchOutcome(
             source_channel="speeches",
             retrieved_at=_RETRIEVED_AT,
-            observations=(_observation("item-1", _OTHER_TIME, source_published_at=_RETRIEVED_AT),),
+            observations=(
+                _observation(
+                    "item-1",
+                    _OTHER_TIME,
+                    source_published_at=_RETRIEVED_AT,
+                    source_channel="speeches",
+                ),
+            ),
             items_invalid=0,
         )
 
@@ -92,7 +108,77 @@ def test_multiple_observations_all_use_the_exact_same_retrieved_at() -> None:
     outcome = NewsSourceFetchOutcome(
         source_channel="testimony",
         retrieved_at=_RETRIEVED_AT,
-        observations=tuple(_observation(f"item-{i}", _RETRIEVED_AT) for i in range(5)),
+        observations=tuple(
+            _observation(f"item-{i}", _RETRIEVED_AT, source_channel="testimony") for i in range(5)
+        ),
         items_invalid=0,
     )
     assert all(o.observed_at == outcome.retrieved_at for o in outcome.observations)
+
+
+# --- FX-57BH Section 5: response/observation channel consistency ----------
+
+
+def test_matching_channel_succeeds() -> None:
+    outcome = NewsSourceFetchOutcome(
+        source_channel="ecb_press",
+        retrieved_at=_RETRIEVED_AT,
+        observations=(_observation("item-1", _RETRIEVED_AT, source_channel="ecb_press"),),
+        items_invalid=0,
+    )
+    assert outcome.observations[0].source_channel == "ecb_press"
+
+
+def test_mismatched_channel_fails_at_outcome_construction() -> None:
+    with pytest.raises(NewsSourceFetchContractError):
+        NewsSourceFetchOutcome(
+            source_channel="ecb_press",
+            retrieved_at=_RETRIEVED_AT,
+            observations=(_observation("item-1", _RETRIEVED_AT, source_channel="wrong_channel"),),
+            items_invalid=0,
+        )
+
+
+def test_blank_response_source_channel_fails() -> None:
+    with pytest.raises(ValueError, match="source_channel"):
+        NewsSourceFetchOutcome(
+            source_channel="",
+            retrieved_at=_RETRIEVED_AT,
+            observations=(),
+            items_invalid=0,
+        )
+
+
+def test_whitespace_only_response_source_channel_fails() -> None:
+    with pytest.raises(ValueError, match="source_channel"):
+        NewsSourceFetchOutcome(
+            source_channel="   ",
+            retrieved_at=_RETRIEVED_AT,
+            observations=(),
+            items_invalid=0,
+        )
+
+
+def test_valid_empty_response_still_requires_and_accepts_a_real_channel() -> None:
+    outcome = NewsSourceFetchOutcome(
+        source_channel="ecb_press",
+        retrieved_at=_RETRIEVED_AT,
+        observations=(),
+        items_invalid=0,
+    )
+    assert outcome.source_channel == "ecb_press"
+    assert outcome.observations == ()
+
+
+def test_multiple_observations_must_all_match_the_same_response_channel() -> None:
+    with pytest.raises(NewsSourceFetchContractError):
+        NewsSourceFetchOutcome(
+            source_channel="ecb_press",
+            retrieved_at=_RETRIEVED_AT,
+            observations=(
+                _observation("item-1", _RETRIEVED_AT, source_channel="ecb_press"),
+                _observation("item-2", _RETRIEVED_AT, source_channel="ecb_press"),
+                _observation("item-3", _RETRIEVED_AT, source_channel="something_else"),
+            ),
+            items_invalid=0,
+        )

@@ -1972,6 +1972,40 @@ _Last updated: 2026-09-27 (FX-54V)_
   FX-57B -- do not start FX-57C (BoE)/FX-57D (GOV.UK)/FX-57E
   (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision
   Engine/Risk Engine.**
+- **FX-57BH: source-channel contract & ECB live-drift hardening
+  (complete)**. A narrow hardening pass on FX-57B, before FX-57C. The
+  common fetch contract now guarantees THREE aligned response-level
+  facts for every observation, not two: `observed_at == retrieved_at`
+  (FX-57AH), `source_key == <run's own source key>` (FX-57AH), and
+  now also `source_channel == <response's own source_channel>`
+  (FX-57BH, new) -- all enforced at construction/orchestration time,
+  never silently corrected. `NewsSourceFetchOutcome.source_channel`
+  is now itself REQUIRED (`str`, not `str | None`) and validated
+  non-empty -- a valid empty feed still has a known channel.
+  `IngestNewsSourceOnce`'s own `is not None` guard around collecting
+  `source_channels` was removed as no longer needed. The ECB
+  `live_source` test now asserts `items_invalid == 0` (reasons
+  included in the failure message) instead of merely printing them,
+  so live drift surfaces as a failure needing review rather than a
+  quiet pass -- the production adapter's own fail-closed behavior for
+  unrecognized content classes is unchanged, and the `gc ->
+  press_release` decision is not reopened. No schema/migration
+  change; the existing 45 Fed + 15 ECB rows, and migration
+  `a95058f88727`, are untouched. 7 new tests (verified via `git diff`,
+  not estimated): 6 in `test_news_source_fetch_outcome.py` (matching
+  channel succeeds, mismatched channel fails at construction, blank/
+  whitespace-only response channel fails, valid-empty-feed still
+  requires and accepts a real channel, multiple observations must all
+  match) + 1 in `test_ingest_news_source_once.py` (a channel mismatch
+  never reaches `RecordNewsObservation`). Fed and ECB regression
+  suites both fully green and unchanged (22 + 21 tests). Deterministic
+  suite: `7 failed, 1824 passed, 6 deselected` (same seven pre-
+  existing, unrelated OANDA failures). `live_source` suite: `1
+  failed, 5 passed` (same pre-existing BLS 403). `ruff`/`mypy`/
+  `pre-commit` all clean. Full details in `docs/DECISIONS.md`'s
+  FX-57BH entry. **Stop after FX-57BH -- do not start FX-57C (BoE)/
+  FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/
+  FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

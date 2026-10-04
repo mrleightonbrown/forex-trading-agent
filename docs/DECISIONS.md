@@ -11461,3 +11461,177 @@ Per this story's own explicit stop instruction: do not start FX-57C
 FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work.
 FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED.
 Return FX-57B for review.
+
+## 2026-10-03 — FX-57BH: source-channel contract & ECB live-drift hardening
+
+A narrowly-scoped hardening pass on FX-57B, before FX-57C is
+authorized. FX-57B introduced `source_channel` as a required
+provenance field on `NormalizedNewsObservation`/`NewsItemVintage`,
+while `NewsSourceFetchOutcome` already independently carried its own
+`source_channel: str | None` -- the two were never cross-checked
+against each other, and the outcome's own field was still optional
+even though no current adapter ever left it `None`. This story closes
+both gaps.
+
+**1/2. `NewsSourceFetchOutcome.source_channel` changed from `str |
+None` to `str` (required), validated non-empty/non-whitespace in
+`__post_init__` exactly like the pre-existing `retrieved_at`
+invariant.** Reasoning: now that `source_channel` is itself a
+required field on every `NormalizedNewsObservation` (FX-57B), a
+successfully-configured fetcher has no legitimate reason to report an
+anonymous channel -- there is no such thing as "fetched successfully,
+but from an unknown channel." A valid empty feed still has a known
+channel: `NewsSourceFetchOutcome(source_channel="ecb_press",
+observations=(), ...)` remains valid and unchanged in meaning.
+`__post_init__` now additionally enforces, for every observation in
+`observations`: `observation.source_channel == self.source_channel`
+-- raising the EXISTING `NewsSourceFetchContractError` (no new
+exception type needed; the same class already exists for the
+retrieved-at invariant and the message format generalizes cleanly),
+never silently rewriting either the response's own or the
+observation's own value. A source adapter must never be able to
+construct a response that claims "my own channel is A" while handing
+over an observation whose own `source_channel` is B.
+
+**3. Enforcement location, deliberately NOT adapter-specific.** Both
+checks (retrieved-at and now source-channel) live together in
+`NewsSourceFetchOutcome.__post_init__` -- the one shared construction
+point every adapter's own `fetch_feed` passes through -- rather than
+being implemented inside `EcbRssSource`/`FedRssSource` individually.
+This is the same reasoning FX-57AH already established for the
+retrieved-at check: a future adapter (FX-57C-F) gets this protection
+automatically, by construction, without needing to remember to add it
+itself.
+
+**4. `IngestNewsSourceOnce` simplified, no new channel logic added.**
+The old `if outcome.source_channel is not None: channels.append(...)`
+guard in `__call__` is no longer reachable-as-a-no-op branch now that
+`source_channel` is a required, always-populated `str` -- simplified
+to an unconditional `channels.append(outcome.source_channel)`. No
+channel rewriting, normalization, or inference was introduced
+anywhere in the orchestration layer; `NewsIngestionResult.source_
+channels` now necessarily describes exactly the channels that were
+actually persisted, since a response whose own observations disagree
+with its own claimed channel can never successfully construct in the
+first place -- the mismatch is caught before `IngestNewsSourceOnce`
+even receives the outcome from the fetcher.
+
+**5. Required tests, all added, all matching this story's own lettered
+list exactly**: in `tests/unit/application/test_news_source_fetch_
+outcome.py` -- (A) `test_matching_channel_succeeds`; (B) `test_
+mismatched_channel_fails_at_outcome_construction`; (D) `test_blank_
+response_source_channel_fails`; (E) `test_whitespace_only_response_
+source_channel_fails`; (F) `test_valid_empty_response_still_requires_
+and_accepts_a_real_channel`; (G) `test_multiple_observations_must_
+all_match_the_same_response_channel`; (H) the three pre-existing
+retrieved-at tests (`test_one_mismatched_observation_is_rejected`,
+`test_source_published_at_is_irrelevant_to_this_check`, `test_
+multiple_observations_all_use_the_exact_same_retrieved_at`) continue
+to pass unchanged, now updated only to supply a matching `source_
+channel` on each observation where the surrounding outcome's own
+channel is not the fixture default. In `tests/unit/application/
+test_ingest_news_source_once.py` -- (C) `test_response_observation_
+channel_mismatch_never_reaches_record_news_observation`: a fetcher
+that tries to build a mismatched outcome raises `NewsSourceFetch
+ContractError` before it can even return, so `IngestNewsSourceOnce`
+never has anything to catch, and the repository's own `FakeNewsRepo
+sitory` is confirmed to hold nothing afterward. **7 new tests total**
+(verified directly via `git diff 4323e07 -- tests/ | grep '^\+.*def
+test_'`, not estimated -- 6 in `test_news_source_fetch_outcome.py`,
+1 in `test_ingest_news_source_once.py`).
+
+**Pre-existing test fixtures required updating, not new tests**:
+three test cases in `test_ingest_news_source_once.py`
+(`test_same_guid_changed_headline_adds_a_revision`, `test_one_
+channel_failure_does_not_abort_other_channels`, `test_conflicting_
+duplicate_guid_within_response_fails_closed_for_that_response`)
+constructed a `NewsSourceFetchOutcome` with one `source_channel`
+(e.g. `"speeches"`) while their own observations used the test
+helper's unrelated default (`"press_monetary"`) -- harmless before
+this story's own new consistency check existed, but now correctly
+rejected by it. Fixed by passing the matching `source_channel`
+explicitly to each affected `_observation(...)` call; no production
+behavior changed, only test fixtures that had never been exercising
+a real adapter's own actual channel-consistency guarantee.
+
+**6. ECB `live_source` test tightened to fail on ANY invalid item.**
+`tests/integration/test_ecb_rss_source_live.py` previously printed
+`outcome.invalid_reasons` but still passed so long as `len(outcome.
+observations) > 0` -- a live ECB item going invalid (a newly
+introduced content class, an identity-schema change, a missing
+headline/guid, or any other source-contract drift) could pass
+through this test completely silently, weakening it as a drift
+detector. Now asserts `outcome.items_invalid == 0` directly, with the
+actual `invalid_reasons` included in the assertion's own failure
+message, so a real drift becomes a visible, specific test FAILURE
+rather than a few lines in `stdout` nobody reads on a green run.
+**This change is deliberately test-only** -- `EcbRssSource`'s own
+production fail-closed behavior for an unrecognized content class is
+completely unchanged; this story only makes the EXISTING live-drift
+signal louder. Re-run live against the real ECB feed to confirm it
+still passes under the new, stricter assertion: `items=15 invalid=0`,
+all three known content types observed (`interview`/`press_release`/
+`speech`), zero regressions.
+
+**7. The `gc -> press_release` decision is explicitly NOT reopened.**
+It was discovered live, explicitly reasoned (no individual author's
+name, served through the single already-adopted feed), whitelisted
+in `_CONTENT_CLASS_TO_TYPE`, documented in both this file and an ADR
+0005 addendum, and rights-reviewed within the existing ECB adopted
+feed boundary -- all during FX-57B. This hardening patch does not
+touch `_CONTENT_CLASS_TO_TYPE` at all; any code beyond `pr`/`sp`/
+`in`/`gc` continues to fail closed exactly as before, pending its own
+separate review if one is ever observed live.
+
+**8. No schema or migration change.** Migration `a95058f88727`, its
+`source_channel NOT NULL` persistence, the existing 45 Fed rows, and
+the existing 15 ECB rows are completely untouched -- this story is
+entirely an application-layer (DTO/orchestration) and test-layer
+change; no `alembic` revision was authored, and no already-pushed
+migration history was rewritten.
+
+**9. Fed regression, confirmed unaffected.** Fed's own adapter
+(`fed_rss_source.py`) already supplies a matching `source_channel`
+for every observation in a response (`feed.channel`, set since
+FX-57B) -- the new consistency check fires zero times against real
+Fed behavior. No Fed source semantics were modified to satisfy the
+new contract. Re-ran the full Fed suite: all 17 `test_fed_rss_
+source.py` unit tests, all 5 Postgres end-to-end integration tests,
+and the separately-marked `live_source` Fed test pass exactly as
+before (22 tests total). The full ECB suite (16 unit + 5 integration
+= 21 tests) likewise passes unchanged beyond the fixture corrections
+noted above.
+
+**10. Verification, reported separately, as genuinely different
+commands with genuinely different results**: focused suites --
+`tests/unit/application/test_news_source_fetch_outcome.py` +
+`test_ingest_news_source_once.py` (contract + orchestration): 24
+passed; ECB unit + Postgres: 21 passed; Fed unit + Postgres: 22
+passed. Deterministic default suite (`pytest`, `-m "not live_
+source"`): `7 failed, 1824 passed, 6 deselected` -- the same seven
+pre-existing, documented, unrelated OANDA-practice-candle failures by
+name, confirmed unchanged (1824 = FX-57B's own 1817 plus this story's
+7 new tests). Separately, `live_source` subset (`pytest -m live_
+source`): `1 failed, 5 passed` -- the same pre-existing, documented
+BLS 403, confirmed unchanged; the 5 passes include both Fed's own
+live test (regression-confirmed unchanged) and ECB's own live test
+(now running under its own stricter Section 6 assertion and still
+passing against today's real feed). `ruff check .`, `ruff format
+--check .`, `mypy .` (423 source files), and `pre-commit run
+--all-files` all pass clean across the whole repository.
+
+**11. Documentation**: this entry; `docs/ARCHITECTURE.md`'s ECB
+section amended in place with the three-aligned-facts description of
+the hardened contract; `docs/CURRENT_STATE.md` carries its own
+FX-57BH entry; `docs/NEXT_STEPS.md` carries the full story writeup.
+**No ADR change** -- nothing discovered during this hardening pass
+was a new source-feasibility/rights/PIT fact; the `gc` content-class
+admission and the sub-hour pubDate-precision finding both remain
+exactly as FX-57B recorded them in ADR 0005's own addendum.
+
+Per this story's own explicit stop instruction: do not start FX-57C
+(Bank of England)/FX-57D (GOV.UK)/FX-57E (Statistics Canada)/FX-57F
+(Bank of Canada, with its own known timestamp-remediation need),
+FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work.
+FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED.
+Return FX-57BH for review.

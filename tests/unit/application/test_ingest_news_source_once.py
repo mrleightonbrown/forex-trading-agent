@@ -16,6 +16,7 @@ from forex_agent.application.ports.news_repository import (
 )
 from forex_agent.application.ports.news_source import (
     NewsSourceChannelFetcher,
+    NewsSourceFetchContractError,
     NewsSourceFetchOutcome,
     NewsSourceUnavailableError,
     NormalizedNewsObservation,
@@ -202,7 +203,7 @@ async def test_same_guid_changed_headline_adds_a_revision() -> None:
     first_outcome = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=_ts(12),
-        observations=(_observation(headline="A", observed_at=_ts(12)),),
+        observations=(_observation(headline="A", observed_at=_ts(12), source_channel="speeches"),),
         items_invalid=0,
     )
     await ingest((_fetcher_returning(first_outcome),))
@@ -210,7 +211,7 @@ async def test_same_guid_changed_headline_adds_a_revision() -> None:
     second_outcome = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=_ts(13),
-        observations=(_observation(headline="B", observed_at=_ts(13)),),
+        observations=(_observation(headline="B", observed_at=_ts(13), source_channel="speeches"),),
         items_invalid=0,
     )
     second = await ingest((_fetcher_returning(second_outcome),))
@@ -226,7 +227,7 @@ async def test_one_channel_failure_does_not_abort_other_channels() -> None:
     good_outcome = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=_ts(),
-        observations=(_observation(external_item_id="good-guid"),),
+        observations=(_observation(external_item_id="good-guid", source_channel="speeches"),),
         items_invalid=0,
     )
     result = await ingest(
@@ -323,7 +324,11 @@ async def test_conflicting_duplicate_guid_within_response_fails_closed_for_that_
     other_outcome = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=observed_at,
-        observations=(_observation(external_item_id="unrelated", observed_at=observed_at),),
+        observations=(
+            _observation(
+                external_item_id="unrelated", observed_at=observed_at, source_channel="speeches"
+            ),
+        ),
         items_invalid=0,
     )
     result = await ingest(
@@ -420,3 +425,30 @@ async def test_result_source_key_never_disagrees_with_persisted_source_identity(
     identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-1")
     item = await repo.get_item_by_source_identity(identity)
     assert item is not None
+
+
+@pytest.mark.asyncio
+async def test_response_observation_channel_mismatch_never_reaches_record_news_observation() -> (
+    None
+):
+    # FX-57BH Section 5.C: a fetcher that tries to build a response
+    # whose own observation disagrees with the response's own
+    # source_channel fails AT CONSTRUCTION TIME, before the fetcher
+    # even returns -- so IngestNewsSourceOnce never sees a value to
+    # catch, and the mismatch can never reach RecordNewsObservation.
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+
+    async def bad_fetcher() -> NewsSourceFetchOutcome:
+        return NewsSourceFetchOutcome(
+            source_channel="ecb_press",
+            retrieved_at=_ts(),
+            observations=(_observation(source_channel="wrong_channel"),),
+            items_invalid=0,
+        )
+
+    with pytest.raises(NewsSourceFetchContractError):
+        await ingest((bad_fetcher,))
+
+    identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-1")
+    assert await repo.get_item_by_source_identity(identity) is None

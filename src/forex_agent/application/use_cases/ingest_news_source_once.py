@@ -1,9 +1,21 @@
 """FX-57A: the provider-neutral one-shot ingestion orchestration every
-concrete news-source adapter (Fed now; ECB/BoE/... later) reuses
+concrete news-source adapter (Fed/ECB now; BoE/... later) reuses
 unchanged. Hardened by FX-57AH: source-key isolation is now an
 enforced, fail-closed contract (Section 2), and the result's own
 item counters (Section 4) now distinguish fetched/normalized/
 processed explicitly rather than relying on one ambiguous count.
+
+**FX-57BH**: `NewsSourceFetchOutcome.source_channel` is now required
+(never `None`) and its own `__post_init__` additionally enforces that
+every observation's `source_channel` matches the response's own --
+see that type's own docstring. The common fetch contract now
+guarantees THREE aligned response-level facts for every observation:
+`observed_at == retrieved_at`, `source_key == <this run's own source
+key>` (enforced here, in `__call__`), and `source_channel ==
+<the response's own source_channel>` (enforced in `NewsSourceFetch
+Outcome` itself). This module therefore no longer needs to guard
+against an anonymous channel -- `outcome.source_channel` is appended
+to `channels` unconditionally.
 
 Deliberately the SMALLEST shared orchestration piece (FX-57A Section
 8/9): given a tuple of already-configured channel fetchers (each one
@@ -159,8 +171,7 @@ class IngestNewsSourceOnce:
                 errors.append(str(exc))
                 continue
 
-            if outcome.source_channel is not None:
-                channels.append(outcome.source_channel)
+            channels.append(outcome.source_channel)
             retrieved_ats.append(outcome.retrieved_at)
             items_invalid += outcome.items_invalid
             items_fetched += len(outcome.observations) + outcome.items_invalid

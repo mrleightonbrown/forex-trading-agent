@@ -10,14 +10,22 @@ Marked `live_source` -- excluded from ordinary `pytest`/CI runs (see
 `pytest -m live_source` and report that result on its own, never
 folded into the deterministic suite's own pass/fail count.
 
-Deliberately non-fragile: asserts shape (guid/headline presence,
-correct channel, known or newly-reported content classes, no
-exception) and reports field-presence facts, never an exact title,
-item count, or pubDate value, which can change at any time on the
-ECB's own site. Detects -- without failing -- an unrecognized content
-class so a genuinely new ECB document class is visible in the test
-output rather than silently invalidated with no trace (FX-57B Section
-17's own "document it" instruction).
+Deliberately non-fragile about CONTENT: asserts shape (guid/headline
+presence, correct channel, no exception) and reports field-presence
+facts, never an exact title, item count, or pubDate value, which can
+change at any time on the ECB's own site.
+
+**FX-57BH Section 6**: deliberately FRAGILE about `items_invalid`,
+unlike the deterministic unit suite -- this live test now asserts
+`items_invalid == 0`, including the actual invalid reasons in the
+failure message. A live ECB item going invalid can mean a newly
+introduced content class, an identity-schema change, a missing
+headline/guid, or some other source-contract drift -- any of which
+needs a human to look, not a quietly-green live test. This does NOT
+relax the production adapter's own fail-closed behavior in any way
+(an unrecognized content class still fails closed as an invalid item,
+never silently admitted) -- it only makes THIS live-drift detector
+surface that fact loudly instead of swallowing it.
 """
 
 import pytest
@@ -40,6 +48,12 @@ async def test_ecb_press_feed_is_reachable_and_yields_valid_items() -> None:
         )
         if outcome.items_invalid:
             print(f"[live] invalid_reasons={outcome.invalid_reasons!r}")
+        assert outcome.items_invalid == 0, (
+            f"{outcome.items_invalid} live ECB item(s) were invalid -- this may be a "
+            "newly introduced content class, an identity-schema change, a missing "
+            f"headline/guid, or another source-contract change needing review, not an "
+            f"adapter bug to paper over: {outcome.invalid_reasons!r}"
+        )
 
         assert len(outcome.observations) > 0, "expected at least one live ECB item"
 
