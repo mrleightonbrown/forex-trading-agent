@@ -2049,6 +2049,63 @@ integration.
 No schema or migration change -- the existing 45 Fed + 15 ECB rows,
 and migration `a95058f88727`, are all exactly as FX-57BH left them.
 
+## Cross-channel identity collision fail-closed hardening (FX-57CH)
+
+FX-57C correctly identified simultaneous cross-channel GUID overlap as
+a hard architectural gate, checked it live for BoE (found none), but
+the implementation it originally shipped still PINNED an unsafe
+fallback: the same `(source_key, external_item_id)` observed under
+two different `source_channel`s within one `IngestNewsSourceOnce`
+call was modeled as `revision 0 channel=A, revision 1 channel=B` --
+a FALSE temporal transition if the source actually presented the item
+under both channels simultaneously, since nothing in a single run can
+tell which channel should be treated as "first." This story closes
+that gap with a new, common, provider-neutral rule.
+
+**New rule, enforced in `IngestNewsSourceOnce` itself (not in any
+adapter)**: within ONE `__call__` invocation, if the same identity
+appears under more than one DISTINCT `source_channel` among the
+run's own successfully-fetched, non-conflicting responses, the WHOLE
+run fails closed with `CrossChannelIdentityCollisionError` -- before
+ANY observation from ANY channel in that run is persisted, not just
+the colliding ones. The rule is explicitly RUN-SCOPED (Section 3): the
+SAME identity observed under channel A in one run and under channel
+B in a LATER, separate run remains an ordinary sequential provenance-
+change vintage, completely unaffected -- only SIMULTANEOUS membership
+within one run is rejected.
+
+**Two-phase orchestration, collect-then-persist.** `IngestNewsSource
+Once.__call__` now fetches, validates (source-key isolation), and
+dedupes every configured channel's response FIRST (Phase 1), and only
+begins persisting (Phase 2) once Phase 1 confirms no cross-channel
+collision exists anywhere in the run. The original single-pass design
+persisted each response immediately after validating it, which meant
+an earlier channel's evidence could already be durably written before
+a later channel's response revealed a collision with it -- impossible
+now, since nothing is persisted until every channel has been checked.
+Existing, unrelated semantics are explicitly preserved: one channel's
+own fetch failure (`NewsSourceUnavailableError`) still does not abort
+healthy channels in the same run; within-one-response duplicate-guid
+handling (`ConflictingDuplicateExternalIdError`, idempotent-identical-
+vs-fail-closed-conflicting) is unchanged, since the new guard operates
+on a DIFFERENT axis (same identity, different CHANNEL, not within one
+response).
+
+**BoE's own `live_source` test now actively re-checks the zero-
+overlap finding on every run** (not merely once during research):
+after fetching all three feeds, every pairwise intersection of their
+own GUID sets is computed and asserted empty, naming any offending
+GUID and the channels it was found in. BoE's own module docstring was
+corrected to match -- it no longer claims overlap would be
+represented as a provenance-change vintage; it now states the
+collision is explicitly rejected.
+
+No schema or migration change; the existing 45 Fed + 15 ECB + 150 BoE
+rows are untouched, verified by re-running the Fed and BoE manual
+scripts live against the real multi-channel feeds (both idempotent,
+zero collisions, since real identities remain genuinely
+channel-disjoint for both sources).
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

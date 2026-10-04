@@ -27,7 +27,10 @@ from forex_agent.application.ports.news_source import (
     NewsSourceChannelFetcher,
     NewsSourceFetchOutcome,
 )
-from forex_agent.application.use_cases.ingest_news_source_once import IngestNewsSourceOnce
+from forex_agent.application.use_cases.ingest_news_source_once import (
+    CrossChannelIdentityCollisionError,
+    IngestNewsSourceOnce,
+)
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
 from forex_agent.domain.news_source_identity import NewsSourceIdentity
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -280,53 +283,80 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_same_guid_across_two_boe_channels_resolves_to_one_item(
+async def test_same_guid_in_two_boe_channels_within_one_run_fails_closed(
     session: AsyncSession,
 ) -> None:
-    # FX-57C Section 9/40/56: live validation found ZERO cross-channel
-    # GUID overlap across all 150 sampled BoE items (50 per feed x 3
-    # feeds) -- this test pins the FALLBACK model behavior in case
-    # that ever changes, it does not claim BoE actually does this
-    # today. source_key+guid is identity, so the SAME guid observed
-    # through two different BoE channels must resolve to exactly ONE
-    # NewsItem -- never two; since source_channel participates in
-    # modeled-fact equality, the second channel's observation is a
-    # genuine, deliberate provenance change (a new vintage), not a
-    # silently-discarded duplicate and not a fabricated second item.
+    # FX-57CH: live validation found ZERO cross-channel GUID overlap
+    # across all 150 sampled BoE items (50 per feed x 3 feeds), but
+    # the MODEL must not silently paper over it if it ever happens --
+    # the SAME guid observed through two DIFFERENT BoE channels
+    # WITHIN ONE INGESTION RUN means the source presented it as
+    # belonging to both simultaneously; representing that as
+    # `revision 0 channel=A, revision 1 channel=B` would invent a
+    # false temporal transition that never occurred. The whole run
+    # must fail closed, before ANY observation from it is persisted --
+    # including an UNRELATED, perfectly good observation from a
+    # THIRD, non-colliding channel in the SAME run.
     repository = SqlAlchemyNewsRepository(session)
     ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
 
     news_feed = next(f for f in BOE_FEEDS if f.channel == "boe_news")
     speeches_feed = next(f for f in BOE_FEEDS if f.channel == "boe_speeches")
-    shared_guid_suffix = "shared-across-channels"
+    publications_feed = next(f for f in BOE_FEEDS if f.channel == "boe_publications")
+    shared_guid_suffix = "colliding-across-channels"
+    unrelated_guid_suffix = "unrelated-good-item"
     retrieved_at = _ts(16)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        text = _feed_xml(_item_xml(shared_guid_suffix, "Cross-channel item"))
+    def news_handler(request: httpx.Request) -> httpx.Response:
+        text = _feed_xml(_item_xml(shared_guid_suffix, "Cross-channel item (news)"))
         return httpx.Response(200, text=text, headers={"content-type": "text/xml"})
 
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(handler), base_url="https://www.bankofengland.co.uk"
-    )
-    source = BoeRssSource(client=client, clock=lambda: retrieved_at)
+    def speeches_handler(request: httpx.Request) -> httpx.Response:
+        text = _feed_xml(_item_xml(shared_guid_suffix, "Cross-channel item (speeches)"))
+        return httpx.Response(200, text=text, headers={"content-type": "text/xml"})
 
-    result = await ingest(
-        (
-            functools.partial(source.fetch_feed, news_feed),
-            functools.partial(source.fetch_feed, speeches_feed),
-        )
+    def publications_handler(request: httpx.Request) -> httpx.Response:
+        text = _feed_xml(_item_xml(unrelated_guid_suffix, "An unrelated, perfectly good item"))
+        return httpx.Response(200, text=text, headers={"content-type": "text/xml"})
+
+    news_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(news_handler), base_url="https://www.bankofengland.co.uk"
     )
-    await source.aclose()
+    speeches_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(speeches_handler),
+        base_url="https://www.bankofengland.co.uk",
+    )
+    publications_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(publications_handler),
+        base_url="https://www.bankofengland.co.uk",
+    )
+    news_source = BoeRssSource(client=news_client, clock=lambda: retrieved_at)
+    speeches_source = BoeRssSource(client=speeches_client, clock=lambda: retrieved_at)
+    publications_source = BoeRssSource(client=publications_client, clock=lambda: retrieved_at)
+
+    with pytest.raises(CrossChannelIdentityCollisionError) as exc_info:
+        await ingest(
+            (
+                functools.partial(news_source.fetch_feed, news_feed),
+                functools.partial(speeches_source.fetch_feed, speeches_feed),
+                functools.partial(publications_source.fetch_feed, publications_feed),
+            )
+        )
+    await news_source.aclose()
+    await speeches_source.aclose()
+    await publications_source.aclose()
     await session.commit()
 
-    assert result.created == 1
-    assert result.revisions_added == 1
+    assert exc_info.value.external_item_id == _guid_for(shared_guid_suffix)
+    assert exc_info.value.channels == frozenset({"boe_news", "boe_speeches"})
 
-    identity = NewsSourceIdentity(SOURCE_KEY, _guid_for(shared_guid_suffix))
-    item = await repository.get_item_by_source_identity(identity)
-    assert item is not None
-    vintages = await repository.list_vintages(item.news_item_key)
-    assert len(vintages) == 2
+    colliding_identity = NewsSourceIdentity(SOURCE_KEY, _guid_for(shared_guid_suffix))
+    assert await repository.get_item_by_source_identity(colliding_identity) is None
+
+    # The unrelated, non-colliding observation from the THIRD channel
+    # in this same run must not have been partially persisted either.
+    unrelated_identity = NewsSourceIdentity(SOURCE_KEY, _guid_for(unrelated_guid_suffix))
+    assert await repository.get_item_by_source_identity(unrelated_identity) is None
 
 
 @pytest.mark.asyncio

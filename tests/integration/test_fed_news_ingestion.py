@@ -27,7 +27,10 @@ from forex_agent.application.ports.news_source import (
     NewsSourceChannelFetcher,
     NewsSourceFetchOutcome,
 )
-from forex_agent.application.use_cases.ingest_news_source_once import IngestNewsSourceOnce
+from forex_agent.application.use_cases.ingest_news_source_once import (
+    CrossChannelIdentityCollisionError,
+    IngestNewsSourceOnce,
+)
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
 from forex_agent.domain.news_source_identity import NewsSourceIdentity
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -231,9 +234,18 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_duplicate_guid_across_two_channels_resolves_to_one_item(
+async def test_duplicate_guid_across_two_channels_fails_closed(
     session: AsyncSession,
 ) -> None:
+    # FX-57CH correction: source_key+guid is identity, so the SAME
+    # guid observed through two DIFFERENT Fed channels WITHIN ONE
+    # ingestion run is ambiguous simultaneous membership, not a
+    # sequential provenance change -- `IngestNewsSourceOnce` must fail
+    # the whole run closed (`CrossChannelIdentityCollisionError`)
+    # rather than inventing a false "revision 0 channel=speeches,
+    # revision 1 channel=testimony" history. (The original version of
+    # this test pinned exactly that unsafe fallback -- corrected here,
+    # mirroring the same correction made to BoE's own equivalent test.)
     repository = SqlAlchemyNewsRepository(session)
     ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
 
@@ -251,29 +263,18 @@ async def test_duplicate_guid_across_two_channels_resolves_to_one_item(
     )
     source = FedRssSource(client=client, clock=lambda: retrieved_at)
 
-    result = await ingest(
-        (
-            functools.partial(source.fetch_feed, speeches_feed),
-            functools.partial(source.fetch_feed, testimony_feed),
+    with pytest.raises(CrossChannelIdentityCollisionError) as exc_info:
+        await ingest(
+            (
+                functools.partial(source.fetch_feed, speeches_feed),
+                functools.partial(source.fetch_feed, testimony_feed),
+            )
         )
-    )
     await source.aclose()
     await session.commit()
 
-    # Section 35's hard requirement: source_key+guid is identity, so
-    # the SAME guid observed through two different Fed channels must
-    # resolve to exactly ONE NewsItem -- never two. Because channel
-    # identity is carried via `source_content_type` (this story's own
-    # decision, see fed_rss_source.py's module docstring), and that
-    # differs between "speeches" and "testimony", the second channel's
-    # observation is a genuine, deliberate provenance change (Section
-    # 36) rather than an unchanged repeat -- it adds a second vintage
-    # of the SAME item, not a second item.
-    assert result.created == 1
-    assert result.revisions_added == 1
+    assert exc_info.value.external_item_id == shared_guid
+    assert exc_info.value.channels == frozenset({"speeches", "testimony"})
 
     identity = NewsSourceIdentity(SOURCE_KEY, shared_guid)
-    item = await repository.get_item_by_source_identity(identity)
-    assert item is not None
-    vintages = await repository.list_vintages(item.news_item_key)
-    assert len(vintages) == 2
+    assert await repository.get_item_by_source_identity(identity) is None

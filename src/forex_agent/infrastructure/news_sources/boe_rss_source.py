@@ -28,15 +28,24 @@ coincide per-feed even though they remain genuinely separate fields.
 9) -- NONE found.** All 150 sampled GUIDs (50 per feed x 3 feeds)
 were confirmed pairwise distinct across all three feeds, as well as
 unique within each feed. This clears the architectural concern the
-story's own Section 9 raised (a GUID legitimately belonging to more
-than one BoE channel at once would have made `source_channel`
-unsafe to model as ordinary vintaged provenance) -- the standard
-FX-56/FX-57 model applies without modification. If a future poll
-ever DOES observe the same GUID across two BoE channels, `Record
-NewsObservation`'s existing modeled-fact-equality mechanism would
-treat the channel difference as a genuine provenance change (a new
-vintage, never a new item) -- this has simply never been observed
-live for BoE.
+story's own Section 9 raised -- the standard FX-56/FX-57 model
+applies without modification for BoE's own current feed design.
+
+**FX-57CH correction**: if the SAME GUID is ever observed under TWO
+DIFFERENT BoE channels WITHIN ONE ingestion run, that is now
+explicitly REJECTED, not silently represented as a provenance-change
+vintage. A single-valued `source_channel` per vintage cannot
+represent simultaneous multi-channel membership without inventing a
+false temporal transition -- `IngestNewsSourceOnce` fails the WHOLE
+run closed with `CrossChannelIdentityCollisionError` before
+persisting anything from it, rather than guessing which channel is
+"current" (see that exception's own docstring). This is checked live
+on every run of `tests/integration/test_boe_rss_source_live.py`, not
+assumed from this one-time research finding. A genuinely SEQUENTIAL
+channel change -- the same GUID observed under channel A in one
+ingestion run, then under channel B in a LATER, separate run --
+remains representable as an ordinary new vintage; the guard above is
+scoped to one run, never across runs.
 
 **Mixed pubDate timezone format, confirmed exactly as ADR 0005
 predicted -- requires NO new code.** The speeches feed mixes RFC-822

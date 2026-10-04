@@ -32,6 +32,17 @@ but this assertion exists so a genuine change in BoE's own publishing
 behaviour (e.g. a scheduled/upcoming item newly appearing in one of
 these feeds) is caught immediately rather than silently ingested as
 ordinary current evidence.
+
+**FX-57CH Section 7: actively re-checks cross-channel GUID overlap
+every run, not just once during research.** After all three feeds
+have been fetched, every pairwise intersection of their own GUID sets
+is computed and asserted empty, naming any offending GUID and the
+channels it was found in. `IngestNewsSourceOnce` itself now fails an
+ingestion run closed if this ever happens (`CrossChannelIdentity
+CollisionError`) -- this live test exists so a genuine change in
+BoE's own feed design (the source shape this story's whole design
+rests on) is caught here, visibly, rather than only being discovered
+the next time the real manual ingestion run unexpectedly raises.
 """
 
 import pytest
@@ -43,6 +54,7 @@ from forex_agent.infrastructure.news_sources.boe_rss_source import BOE_FEEDS, Bo
 @pytest.mark.asyncio
 async def test_all_three_boe_feeds_are_reachable_and_yield_valid_items() -> None:
     source = BoeRssSource()
+    guids_by_channel: dict[str, set[str]] = {}
     try:
         for feed in BOE_FEEDS:
             outcome = await source.fetch_feed(feed)
@@ -62,6 +74,8 @@ async def test_all_three_boe_feeds_are_reachable_and_yield_valid_items() -> None
             )
 
             assert len(outcome.observations) > 0, f"expected at least one live {feed.channel} item"
+
+            guids_by_channel[feed.channel] = {o.external_item_id for o in outcome.observations}
 
             pub_date_shapes_seen: set[str] = set()
             for observation in outcome.observations:
@@ -93,3 +107,15 @@ async def test_all_three_boe_feeds_are_reachable_and_yield_valid_items() -> None
             print(f"[live] {feed.channel} pubDate shapes seen: {sorted(pub_date_shapes_seen)}")
     finally:
         await source.aclose()
+
+    channels = list(guids_by_channel)
+    for i, channel_a in enumerate(channels):
+        for channel_b in channels[i + 1 :]:
+            overlap = guids_by_channel[channel_a] & guids_by_channel[channel_b]
+            assert not overlap, (
+                f"cross-channel GUID overlap found between {channel_a!r} and "
+                f"{channel_b!r}: {sorted(overlap)!r} -- this contradicts this story's own "
+                "live-validation finding of zero cross-channel overlap; IngestNewsSourceOnce "
+                "would now fail this ingestion run closed (CrossChannelIdentityCollisionError) "
+                "rather than silently forcing it through the single-channel-per-vintage model"
+            )

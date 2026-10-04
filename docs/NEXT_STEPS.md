@@ -3259,3 +3259,163 @@ FX-57D (GOV.UK)/FX-57E (Statistics Canada)/FX-57F (Bank of Canada,
 with its own known timestamp-remediation need), FX-58/FX-59/FX-60/
 FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
 remain DEFER; FX-53 remains BLOCKED. Return FX-57C for review.
+
+## FX-57CH: cross-channel identity collision fail-closed hardening (complete)
+
+A narrowly-scoped hardening pass on FX-57C, found by review, before
+FX-57D is authorized.
+
+**Principal defect**: FX-57C correctly identified simultaneous cross-
+channel GUID overlap as a hard architectural gate, live-checked it
+for BoE (found none), but its own implementation still PINNED an
+unsafe fallback -- the SAME `(source_key, external_item_id)` observed
+under two DIFFERENT `source_channel`s within ONE `IngestNewsSource
+Once` call was modeled as `revision 0 channel=A, revision 1
+channel=B`. If the source genuinely presented that item under both
+channels SIMULTANEOUSLY, that history is FALSE: nothing in a single
+run can establish which channel should be treated as "first," and
+`test_same_guid_across_two_boe_channels_resolves_to_one_item` pinned
+exactly this wrong contingency behavior.
+
+**New common fail-closed rule, enforced in `IngestNewsSourceOnce`
+itself, not any adapter**: within ONE `__call__` invocation, if the
+same identity appears under more than one DISTINCT `source_channel`
+among the run's own successfully-fetched, non-conflicting responses,
+the WHOLE run fails closed with a new `CrossChannelIdentityCollision
+Error` -- before ANY observation from ANY channel in that run is
+persisted, not just the colliding ones. Never: pick the first or last
+channel, mint a second `NewsItem`, append a fabricated channel-change
+vintage, concatenate channel names, or silently drop one side.
+
+**The rule is explicitly RUN-SCOPED (Section 3)**: this guard does
+NOT prohibit a genuine sequential channel change across SEPARATE
+polling runs. The same GUID observed only under channel A in run 1,
+then only under channel B in run 2, remains an ordinary new vintage --
+that is still consistent with a real sequential provenance change.
+Only SIMULTANEOUS membership -- the same identity under two different
+channels within the SAME run -- is ambiguous and rejected. Pinned
+explicitly by test F in the new matrix below.
+
+**Prefetch before persistence -- `IngestNewsSourceOnce` refactored to
+two phases**: Phase 1 fetches every configured channel, enforces
+source-key isolation, and dedupes within each response, collecting
+everything WITHOUT persisting anything; Phase 1b then checks every
+collected identity for a cross-channel collision across the WHOLE
+run; only once that check passes does Phase 2 begin persisting. The
+original single-pass design validated-then-persisted one response at
+a time, which meant an EARLIER channel's evidence could already be
+durably written in Postgres before a LATER channel's response
+revealed a collision with it -- impossible now, since Phase 2 is
+never reached until every channel in the run has been checked. No new
+transaction framework was introduced.
+
+**Existing, unrelated semantics explicitly preserved**: one channel's
+own fetch failure (`NewsSourceUnavailableError`) still does not abort
+other healthy channels in the same run -- it is recorded in `errors`
+and that channel is simply absent from the collision check, same as
+before. Within-one-response duplicate-guid handling
+(`ConflictingDuplicateExternalIdError` -- idempotent for identical
+facts, fail-closed for conflicting facts) is completely unchanged,
+since the new guard operates on a different axis entirely (same
+identity, different CHANNEL, never within one response).
+
+**Required test matrix (Section 9), all six added to `tests/unit/
+application/test_ingest_news_source_once.py`**: (A) a single identity
+in one channel succeeds; (B) disjoint identities across two channels
+both succeed; (C) the same identity in two channels within one run
+fails closed BEFORE persistence, with the raised error naming the
+identity and both channels; (D) one channel's fetch failure plus two
+disjoint successful channels still ingest those two; (E) one
+channel's fetch failure plus a collision between the two REMAINING
+successful channels fails closed and persists NOTHING, confirmed by
+checking the repository directly; (F) the same identity across two
+SEPARATE `ingest(...)` calls remains an ordinary sequential vintage,
+completely unaffected by the new guard.
+
+**The SAME unsafe pattern was found and fixed in Fed's own test
+suite too, not just BoE's** -- `test_duplicate_guid_across_two_
+channels_resolves_to_one_item` in `tests/integration/test_fed_news_
+ingestion.py` pinned the identical wrong fallback (a Fed GUID shared
+across the `speeches` and `testimony` channels within one run,
+expected to produce a second vintage). Renamed to `test_duplicate_
+guid_across_two_channels_fails_closed` and corrected to expect
+`CrossChannelIdentityCollisionError` with nothing persisted -- this
+was not mentioned explicitly in the hardening brief, but the new
+common rule applies to every adapter equally, and leaving Fed's own
+test pinning the old, now-wrong behavior would have been a latent,
+undetected regression the very next time anyone touched that test
+file.
+
+**BoE's own replacement test** (`tests/integration/test_boe_news_
+ingestion.py`, renamed `test_same_guid_in_two_boe_channels_within_
+one_run_fails_closed`) proves: the collision raises with the correct
+identity and channel names; the repository holds NO `NewsItem`,
+mapping, or vintage for the colliding identity; AND an UNRELATED,
+perfectly good observation from a THIRD, non-colliding channel in the
+SAME run was also not partially persisted -- directly exercising
+Section 8's own explicit requirement.
+
+**BoE `live_source` test strengthened (Section 7)**: after fetching
+all three feeds, every pairwise intersection of their own GUID sets
+is now computed and asserted empty, naming any offending GUID and
+the channels it was found in -- the test now FAILS if BoE's own feed
+shape ever stops being cross-channel-disjoint, rather than merely
+printing the finding. Re-run live: zero overlap confirmed again today
+across all three feeds.
+
+**Documentation correction (Section 10)**: `boe_rss_source.py`'s own
+module docstring previously claimed that a future cross-channel
+overlap would be deliberately represented as a provenance-change
+vintage -- removed. Corrected wording: current live validation found
+zero overlap; simultaneous overlap within one ingestion run is now
+explicitly rejected, because a single-valued `source_channel` per
+vintage cannot represent simultaneous membership without inventing a
+false temporal transition. A genuinely sequential channel change
+across separate runs remains representable as a new vintage.
+
+**Everything else about BoE is explicitly unchanged**: source key,
+all three endpoints and channels, content types, opaque GUID
+identity, canonical URL semantics, description mapping, `body_text=
+None`, `authors=()`, `language="en"`, `+0100`/`Z` timestamp parsing,
+raw pubDate provenance, `source_updated_at=None`, `ACTIVE` status,
+`PROSPECTIVE` mode, the future-date live drift check, no historical
+ingestion, no article/PDF fetching -- none of this was touched.
+
+**No schema or migration change** -- the existing 45 Fed + 15 ECB +
+150 BoE rows are untouched; verified by re-running `scripts/ingest_
+fed_news.py` and `scripts/ingest_boe_news.py` live against the real
+feeds and Postgres after all changes: both ran idempotently
+(`created=0, unchanged=45` for Fed; `created=0, unchanged=150` for
+BoE) with zero collisions, since real Fed and BoE identities remain
+genuinely channel-disjoint today -- confirming the new guard does not
+interfere with normal operation against real multi-channel data.
+
+**8 new/replaced test functions** (verified via `git diff 3f37aac --
+tests/`, not estimated): 6 brand-new common-orchestration tests (the
+A-F matrix above) plus 2 corrected tests replacing their own unsafe
+prior versions 1-for-1 (Fed's and BoE's own cross-channel tests) --
+net +6 to the suite's total test count.
+
+**Verification, reported separately**: focused suite (common
+ingestion + Fed + ECB + BoE, unit and Postgres together): `97
+passed`. Deterministic default suite (`pytest`): `7 failed, 1854
+passed, 7 deselected` -- the same seven pre-existing, documented,
+unrelated OANDA failures, confirmed unchanged. `live_source` suite
+(`pytest -m live_source`): `1 failed, 6 passed` -- the same pre-
+existing, documented BLS 403, confirmed unchanged; Fed's, ECB's, and
+BoE's own live tests (the latter now running the strengthened
+pairwise-overlap check) all pass. `ruff check .`, `ruff format
+--check .`, `mypy .` (428 source files), and `pre-commit run
+--all-files` all pass clean.
+
+Full details in `docs/DECISIONS.md`'s FX-57CH entry; `docs/
+ARCHITECTURE.md` carries a new section describing the hardened
+contract; `docs/CURRENT_STATE.md` carries its own FX-57CH entry. **No
+ADR 0005 update** -- the live `live_source` re-run reconfirmed the
+existing zero-overlap finding; no new source fact was discovered.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57D (GOV.UK)/FX-57E (Statistics Canada)/FX-57F (Bank of Canada,
+with its own known timestamp-remediation need), FX-58/FX-59/FX-60/
+FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
+remain DEFER; FX-53 remains BLOCKED. Return FX-57CH for review.

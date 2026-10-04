@@ -17,6 +17,21 @@ Outcome` itself). This module therefore no longer needs to guard
 against an anonymous channel -- `outcome.source_channel` is appended
 to `channels` unconditionally.
 
+**FX-57CH: two-phase run, collect-then-persist.** `__call__` now
+fetches, validates, and dedupes EVERY configured channel's response
+FIRST (Phase 1), and only persists anything (Phase 2) once Phase 1
+has confirmed no `(source_key, external_item_id)` was observed under
+more than one DISTINCT `source_channel` anywhere in this SAME run
+(`CrossChannelIdentityCollisionError`, raised before Phase 2 starts
+-- see that exception's own docstring for why this must fail the
+WHOLE run closed, never just the colliding channels). The original
+single-pass design persisted each response's own observations
+immediately after validating it, which meant an EARLIER channel's
+evidence could already be durably written before a LATER channel's
+response revealed a collision with it -- this refactor closes that
+gap by construction: nothing is persisted until every channel in the
+run has been fetched and checked.
+
 Deliberately the SMALLEST shared orchestration piece (FX-57A Section
 8/9): given a tuple of already-configured channel fetchers (each one
 a zero-argument `NewsSourceChannelFetcher`, e.g. `functools.partial
@@ -37,7 +52,8 @@ that channel is skipped -- it must never abort the other configured
 channels. A single response's own internal identity conflict
 (`ConflictingDuplicateExternalIdError`) is likewise recorded and that
 RESPONSE is skipped, never the whole operation. Anything else --
-notably a `NewsObservationOutOfOrderError` or any repository/database
+notably a `NewsObservationOutOfOrderError`, `SourceKeyMismatchError`,
+`CrossChannelIdentityCollisionError`, or any repository/database
 failure from `RecordNewsObservation` -- is an unexpected system
 failure and propagates unchanged, aborting the call; it is never
 swallowed into `errors`.
@@ -105,6 +121,43 @@ class SourceKeyMismatchError(Exception):
         )
 
 
+class CrossChannelIdentityCollisionError(Exception):
+    """Raised when the SAME `(source_key, external_item_id)` is
+    observed under more than one DISTINCT `source_channel` WITHIN THE
+    SAME `IngestNewsSourceOnce` call (FX-57CH) -- fails the WHOLE run
+    closed, before ANY observation from ANY channel in this run is
+    persisted, never just the colliding channels' own observations.
+
+    A single-valued `source_channel` per vintage can represent a
+    genuinely SEQUENTIAL provenance change (the same item observed
+    under channel A in one run, then under channel B in a LATER run)
+    -- that remains an ordinary new vintage, unaffected by this check,
+    since this guard is scoped to one `__call__` invocation's own
+    collected responses, never across separate calls. But the SAME
+    identity appearing under two DIFFERENT channels within ONE run
+    means the source presented it as belonging to both SIMULTANEOUSLY
+    -- there is no way to tell, from that single run alone, which
+    channel FTA "should" treat as current, and modeling it as
+    `revision 0 channel=A, revision 1 channel=B` would invent a false
+    temporal transition that never actually happened. Rather than
+    guess (first channel wins, last channel wins, concatenate the
+    channel names, or silently drop one), this fails the entire run
+    closed and returns nothing -- the adapter or the source itself
+    needs review, not a fabricated history."""
+
+    def __init__(self, source_key: str, external_item_id: str, channels: frozenset[str]) -> None:
+        self.source_key = source_key
+        self.external_item_id = external_item_id
+        self.channels = channels
+        super().__init__(
+            f"source_key={source_key!r} external_item_id={external_item_id!r} was observed "
+            f"under multiple distinct channels within the same ingestion run: "
+            f"{sorted(channels)!r} -- a single source_channel per vintage cannot represent "
+            "simultaneous multi-channel membership without inventing a false temporal "
+            "transition; refusing to persist any observation from this run"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class NewsIngestionResult:
     """A purely factual summary of one `IngestNewsSourceOnce` call
@@ -156,13 +209,16 @@ class IngestNewsSourceOnce:
         retrieved_ats: list[UtcTimestamp] = []
         items_fetched = 0
         items_normalized = 0
-        items_processed = 0
         items_invalid = 0
-        created = 0
-        revisions_added = 0
-        unchanged = 0
-        quarantined = 0
         errors: list[str] = []
+
+        # Phase 1: fetch every channel, enforce source-key isolation,
+        # and dedupe within each response -- collect everything
+        # BEFORE persisting anything, so a cross-channel identity
+        # collision can be detected and fail the WHOLE run closed
+        # before any response's evidence is written (FX-57CH).
+        ready_batches: list[tuple[str, tuple[NormalizedNewsObservation, ...]]] = []
+        identity_channels: dict[str, set[str]] = {}
 
         for fetcher in fetchers:
             try:
@@ -188,6 +244,29 @@ class IngestNewsSourceOnce:
                 errors.append(str(exc))
                 continue
 
+            for observation in deduped:
+                identity_channels.setdefault(observation.external_item_id, set()).add(
+                    observation.source_channel
+                )
+            ready_batches.append((outcome.source_channel, deduped))
+
+        # Phase 1b: cross-channel identity collision check, across
+        # EVERY successfully-fetched, non-conflicting response in
+        # this run -- before any persistence.
+        for external_item_id, observed_channels in identity_channels.items():
+            if len(observed_channels) > 1:
+                raise CrossChannelIdentityCollisionError(
+                    self._source_key, external_item_id, frozenset(observed_channels)
+                )
+
+        # Phase 2: persist -- only reached once every response in
+        # this run is confirmed free of cross-channel collisions.
+        items_processed = 0
+        created = 0
+        revisions_added = 0
+        unchanged = 0
+        quarantined = 0
+        for _channel, deduped in ready_batches:
             for observation in deduped:
                 items_processed += 1
                 record_result = await self._record_observation(observation)

@@ -2057,6 +2057,48 @@ _Last updated: 2026-09-27 (FX-54V)_
   details in `docs/DECISIONS.md`'s FX-57C entry. **Stop after FX-57C
   -- do not start FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/
   FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57CH: cross-channel identity collision fail-closed hardening
+  (complete)**. A narrow hardening pass closing an unsafe fallback
+  FX-57C's own implementation still pinned: the SAME `(source_key,
+  external_item_id)` observed under two DIFFERENT `source_channel`s
+  WITHIN ONE `IngestNewsSourceOnce` run was modeled as a false
+  sequential provenance-change vintage, even though nothing in one
+  run can prove the source didn't present the item under both
+  channels SIMULTANEOUSLY. New common rule, enforced in
+  `IngestNewsSourceOnce` itself (not per-adapter): a cross-channel
+  collision within one run now raises `CrossChannelIdentityCollision
+  Error` and fails the WHOLE run closed BEFORE persisting anything
+  from it -- never first-channel-wins, never a fabricated second
+  vintage. The rule is explicitly scoped to one run: the same identity
+  appearing under different channels across SEPARATE runs remains an
+  ordinary sequential vintage, unaffected. Refactored to a two-phase
+  "collect every channel's response, validate, THEN persist" design
+  so an earlier channel's evidence can never already be durably
+  written before a later channel reveals a collision with it.
+  Existing channel-fetch-failure and within-response-duplicate-guid
+  semantics are explicitly unchanged. Found and fixed the SAME unsafe
+  pattern already present in Fed's own integration test suite (not
+  just BoE's) -- both corrected to expect the fail-closed behavior.
+  BoE's own `live_source` test now actively re-checks pairwise GUID
+  overlap across all three channels on every run, and `boe_rss_
+  source.py`'s own docstring was corrected to no longer claim overlap
+  would be silently modeled as a vintage. 8 new/replaced test
+  functions (verified via `git diff`: 6 new common-orchestration
+  matrix tests A-F + 2 corrected Fed/BoE cross-channel tests,
+  replacing their own unsafe prior versions 1-for-1) -- net +6 to the
+  suite's total count. No schema/migration change; the existing 45
+  Fed + 15 ECB + 150 BoE rows are untouched, confirmed by re-running
+  the Fed and BoE manual scripts live (both idempotent, zero
+  collisions, since real identities remain genuinely channel-disjoint
+  for both sources today). Deterministic suite: `7 failed, 1854
+  passed, 7 deselected` (same seven pre-existing, unrelated OANDA
+  failures). `live_source` suite: `1 failed, 6 passed` (same pre-
+  existing BLS 403; Fed's, ECB's, and BoE's own live tests all pass,
+  BoE's now with the strengthened overlap check). `ruff`/`mypy`/
+  `pre-commit` all clean. Full details in `docs/DECISIONS.md`'s
+  FX-57CH entry. **Stop after FX-57CH -- do not start FX-57D
+  (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/
+  FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
