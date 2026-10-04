@@ -2006,6 +2006,57 @@ _Last updated: 2026-09-27 (FX-54V)_
   FX-57BH entry. **Stop after FX-57BH -- do not start FX-57C (BoE)/
   FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/
   FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57C: Bank of England news/speeches/publications RSS ingestion
+  (complete)**. FX-57's third incremental sub-story. Implements
+  exactly the three adopted BoE feeds (`/rss/news` incl. MPC minutes/
+  FPC records, `/rss/speeches`, `/rss/publications`), reusing the
+  common transport and RSS parser completely unchanged -- live-
+  reconfirmed compatible (RSS 2.0, 50 items each, matching ADR 0005
+  exactly). Each feed maps 1:1 to one content type (`news`/`speech`/
+  `publication`), like Fed's own shape. **Cross-channel GUID overlap
+  was explicitly checked live before finalizing the design (the
+  story's own hard architectural gate)** -- all 150 sampled GUIDs (50
+  per feed) were confirmed pairwise distinct across all three
+  channels: zero overlap found, clearing the standard model
+  unmodified; a synthetic test still pins the fallback behavior in
+  case this ever changes. `external_item_id` is the RSS guid,
+  live-confirmed genuinely OPAQUE (`{B641CC4F-...}`-shaped,
+  `isPermaLink="false"`) and fully decoupled from the link -- the
+  strongest identity design among the RSS sources adopted so far.
+  **Mixed pubDate timezone format, confirmed exactly as ADR 0005
+  predicted, resolved with ZERO new code**: the speeches feed mixes
+  `+0100` (BST) and bare `Z` (GMT) within the same document, both
+  verified to already parse correctly through the existing, unmodified
+  shared RFC-822 parser -- the `Z`/`+0100` split tracks the real
+  GMT/BST seasonal boundary exactly, confirming it's a CMS formatting
+  quirk, not a data defect. No future-dated items found across all
+  150 sampled items (documented negative finding; the live test
+  actively re-checks this every run, not just once). No description
+  field is fabricated — summary is a genuine per-item text; authors
+  always `()`; language always `"en"`; `source_updated_at` always
+  `None`; no article/PDF fetch. Rights boundary live-reconfirmed
+  unchanged from ADR 0005 (`bankofengland.co.uk/legal` re-fetched
+  directly). Manual runner: `scripts/ingest_boe_news.py` -- run live
+  against the real feeds and Postgres: created 150 items across all
+  three channels on the first run, then `created=0, unchanged=150` on
+  an immediate second run, confirming idempotency end-to-end. 25 new
+  tests, verified via direct count (17 BoE-adapter unit + 7 Postgres
+  end-to-end integration including an explicit PIT worked-example test
+  + 1 separately-marked `live_source` test covering all three
+  channels). Fed (22 tests) and ECB (21 tests) regression suites both
+  fully green, unchanged. No schema or migration change -- the
+  existing 45 Fed + 15 ECB rows, and migration `a95058f88727`, are
+  untouched; the dev DB now also holds 150 real BoE rows (210 total
+  real news rows across three sources). Deterministic suite: `7
+  failed, 1848 passed, 7 deselected` (same seven pre-existing,
+  unrelated OANDA failures). `live_source` suite: `1 failed, 6
+  passed` (same pre-existing BLS 403; Fed's, ECB's, and BoE's own live
+  tests all pass). `ruff`/`mypy`/`pre-commit` all clean. No cross-
+  source dedup, classification, sentiment, source reputation, news
+  snapshot, dashboard change, or Decision/Risk integration. Full
+  details in `docs/DECISIONS.md`'s FX-57C entry. **Stop after FX-57C
+  -- do not start FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC)/
+  FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

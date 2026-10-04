@@ -1949,6 +1949,106 @@ No schema or migration change -- migration `a95058f88727`, its
 `NOT NULL` `source_channel` persistence, and the existing 45 Fed +
 15 ECB rows are all exactly as FX-57B left them.
 
+## Bank of England news/speeches/publications RSS ingestion (FX-57C)
+
+FX-57's third incremental sub-story. Implements exactly the three
+adopted BoE feeds -- `/rss/news` (includes MPC minutes and FPC
+records), `/rss/speeches`, `/rss/publications` -- under the already-
+registered `source_key="BOE"`, reusing the common transport and RSS
+parser completely unchanged (live-reconfirmed compatible: RSS 2.0,
+`<channel>`, 50 items each, exactly matching ADR 0005's own finding).
+
+**Each BoE feed maps 1:1 to one content type** (`news`/`speech`/
+`publication`), exactly like Fed's own shape (FX-57A) rather than
+ECB's single-combined-feed shape (FX-57B) -- `BoeFeedDefinition`
+therefore carries its own `content_type`, and `source_channel`/
+`source_content_type` happen to coincide per feed even though they
+remain genuinely separate fields.
+
+**Cross-channel GUID overlap was explicitly checked live before
+finalizing the adapter design (FX-57C Section 9)** -- the story's own
+hard architectural gate: if the SAME GUID could legitimately belong
+to more than one BoE channel at once, naively ingesting it through
+both would misrepresent simultaneous multi-channel membership as a
+false sequential revision history. All 150 live-sampled GUIDs (50 per
+feed x 3 feeds) were confirmed pairwise distinct across all three
+feeds as well as unique within each -- **zero overlap found**,
+clearing the gate to proceed with the standard FX-56/FX-57 model
+unmodified. A synthetic integration test
+(`test_same_guid_across_two_boe_channels_resolves_to_one_item`) still
+pins the FALLBACK behavior the model would apply if this ever changed
+(the channel difference becomes a genuine provenance-change vintage
+of the SAME item, never a fabricated second item) -- this is a
+documented contingency, not a claim that BoE currently does this.
+
+**Opaque GUID identity -- the strongest identity design among the RSS
+sources adopted so far.** `external_item_id` is the RSS `<guid>`,
+live-confirmed to be a genuinely opaque CMS identifier
+(`{B641CC4F-0AD7-46E2-9965-B44629C6E93E}`-shaped, `isPermaLink=
+"false"` on every sampled item) -- completely decoupled from the
+canonical URL, unlike Fed and ECB where `guid == link`. A slug rename
+of the linked article cannot break this identity.
+
+**Mixed pubDate timezone format, confirmed exactly as ADR 0005
+predicted -- resolved with ZERO new code.** The `/rss/speeches` feed
+mixes RFC-822 numeric offsets (`+0100`, British Summer Time) with the
+bare military-zone form (`Z`, i.e. literal UTC+0/GMT) within the SAME
+document; `news`/`publications` were `+0100`-only in the live sample.
+Both forms were independently verified to parse correctly through the
+EXISTING, unmodified shared `email.utils.parsedate_to_datetime` (the
+same function Fed/ECB already use) -- confirmed the `Z`-tagged items
+cluster exactly in GMT-season months and the `+0100`-tagged items
+cluster exactly in BST-season months, consistent with BoE's CMS
+simply rendering the zulu-letter form instead of a literal `+0000`
+offset during GMT season (a cosmetic quirk, not a data defect). No
+BoE-specific timestamp normalization code exists anywhere in this
+adapter.
+
+**No future-dated items found (Section 20)** -- all 150 live-sampled
+items across all three feeds had `source_published_at` strictly
+before the live retrieval instant; documented as a negative finding,
+no speculative quarantine threshold was invented. The BoE
+`live_source` test actively re-checks this on every run (comparing
+every observation's own `source_published_at` against its response's
+own `retrieved_at`), rather than relying on a one-time research
+finding alone.
+
+**Content mapping**: `title->headline` (required; parser-level
+invalid if missing/blank); `link->canonical_url` (never used as
+identity, never followed); `description->summary` (confirmed live to
+be a genuine, substantive per-item summary, not boilerplate);
+`body_text=None` always (no article/PDF fetch); `authors=()` always
+(zero `<author>` elements observed -- a speaker's name inside a
+speech title is never parsed into a structured author field);
+`language="en"` always (the feed's own declared, static channel-level
+value); `source_updated_at=None` always (no verified BoE update
+field); `source_status=ACTIVE` always (feed disappearance is never
+withdrawal); `observation_mode=PROSPECTIVE` always (no historical
+ingestion of any kind).
+
+**Rights boundary, live-reconfirmed, unchanged from ADR 0005**:
+`bankofengland.co.uk/legal` was re-fetched directly and still states
+site Resources may be used "for personal use or internal use within
+an individual organisation for non-commercial purposes" -- exactly
+FTA's current research/paper-trading use. No rights reinterpretation
+or expansion was made; this adapter ingests only the feed-supplied
+metadata fields, never the linked article/PDF.
+
+**No daemon, no scheduler**: `scripts/ingest_boe_news.py` is a plain,
+manually-invoked one-shot script, matching the Fed/ECB precedent
+exactly.
+
+**Explicitly NOT built in FX-57C**: FX-57D (GOV.UK)/FX-57E (StatCan)/
+FX-57F (BoC); any scheduler/daemon; BoE historical ingestion of any
+kind; BoE article/PDF fetching; cross-source deduplication (FX-58);
+relevance/topic/sentiment classification (FX-59); a news evidence
+snapshot (FX-60); any Market Context dashboard change (FX-61);
+source-reputation scoring (FX-EPIC-09); any Decision/Risk Engine
+integration.
+
+No schema or migration change -- the existing 45 Fed + 15 ECB rows,
+and migration `a95058f88727`, are all exactly as FX-57BH left them.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

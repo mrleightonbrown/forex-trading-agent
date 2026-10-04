@@ -3058,3 +3058,204 @@ FX-57C (Bank of England)/FX-57D (GOV.UK)/FX-57E (Statistics Canada)/
 FX-57F (Bank of Canada), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any
 Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
 BLOCKED. Return FX-57BH for review.
+
+## FX-57C: Bank of England news/speeches/publications RSS ingestion (complete)
+
+FX-57's third incremental sub-story, explicitly authorized.
+
+Inspected first, per this story's own mandate: CLAUDE.md, ADR 0005,
+and the full current news infrastructure (`NormalizedNewsObservation`,
+`NewsSourceFetchOutcome`/`NewsSourceFetchContractError`,
+`NewsSourceChannelFetcher`, `IngestNewsSourceOnce`/
+`SourceKeyMismatchError`, `RecordNewsObservation`, `NewsItem`/
+`NewsItemVintage`, `source_channel` persistence, `SqlAlchemyNews
+Repository`, `http_fetch.fetch_text`, `rss_item_parsing.
+parse_news_rss_items`, `FedRssSource`, `EcbRssSource`, the Fed/ECB
+manual runners, and the full deterministic/Postgres/live_source test
+suites) -- confirming none of the FX-57AH/FX-57BH common contracts
+needed any weakening before writing BoE code.
+
+**Live re-verification of all three official endpoints** (direct
+Python/httpx): `https://www.bankofengland.co.uk/rss/news`, `/rss/
+speeches`, `/rss/publications` -- all HTTP 200, `content-type: text/
+xml`, RSS 2.0 with `<channel>`, exactly 50 items each, matching ADR
+0005's own finding precisely. Item tag set consistent across all
+three: `description`/`guid`/`link`/`pubDate`/`title` -- zero missing
+fields across all 150 sampled items, zero `<author>` elements
+anywhere, channel-level `<language>en</language>` on all three.
+
+**Cross-channel GUID overlap check (this story's own hard
+architectural gate, Section 9) -- result: ZERO overlap.** Before
+finalizing the adapter design, all 150 live GUIDs (50 per feed) were
+compared pairwise across all three feeds. None repeated across
+channels, and none repeated within a single feed either. This clears
+the gate the story itself raised: if the same GUID could legitimately
+belong to more than one BoE channel simultaneously, forcing it through
+the standard single-`source_channel`-per-vintage model would have
+misrepresented simultaneous multi-channel membership as a false
+sequential revision history, and the story would have had to STOP for
+architectural review instead of proceeding. Since no overlap exists,
+the standard FX-56/FX-57 model applies unmodified. A synthetic
+integration test (`test_same_guid_across_two_boe_channels_resolves_
+to_one_item`) still pins what the model WOULD do if this ever
+changed (the channel difference becomes a genuine provenance-change
+vintage of the same item, never a fabricated second item) -- a
+documented contingency, not a claim about BoE's current behavior.
+
+**External identity -- the strongest among all RSS sources adopted so
+far.** `external_item_id` is the RSS `<guid>`, live-confirmed to be a
+genuinely OPAQUE CMS identifier (e.g. `{B641CC4F-0AD7-46E2-9965-
+B44629C6E93E}`), with `isPermaLink="false"` on every sampled item,
+and completely decoupled from the canonical `<link>` -- unlike Fed
+and ECB, where `guid == link`. A slug rename of the linked article
+cannot break this identity.
+
+**Material live finding, exactly as ADR 0005 predicted, resolved with
+ZERO new code: mixed pubDate timezone format.** The `/rss/speeches`
+feed mixes RFC-822 numeric offsets (`+0100`, British Summer Time)
+with the bare military-zone form (`Z`, i.e. literal UTC+0/GMT) WITHIN
+THE SAME document (35 `+0100` items, 15 `Z` items in the live
+sample); `/rss/news` and `/rss/publications` were `+0100`-only in
+this sample. Both forms were independently verified, directly in
+Python, to parse correctly through the EXISTING, completely
+unmodified shared `email.utils.parsedate_to_datetime` (the same
+function Fed/ECB already use) -- `"...16:00:00 Z"` parses to a real
+UTC instant, `"...09:00:00 +0100"` parses to the correctly-shifted
+UTC instant. Checked WHY the split exists: every `Z`-tagged item's
+date falls in GMT-season months (Jan-Mar) and every `+0100`-tagged
+item's date falls in BST-season months (Apr-Oct) in the live sample
+-- confirming this is BoE's CMS simply rendering the zulu-letter form
+during GMT season instead of a literal `+0000` offset, a cosmetic
+formatting quirk, not a timestamp defect requiring any BoE-specific
+normalization code. Both deterministic fixture tests
+(`test_bst_plus_0100_pubdate_normalizes_to_utc`, `test_gmt_z_pubdate_
+normalizes_to_utc`) pin both observed forms exactly.
+
+**Future-dated/upcoming item check (Section 20) -- result: NONE
+found.** For every one of the 150 live-sampled items across all three
+feeds, `source_published_at` was computed and compared against the
+live retrieval instant; all 150 were strictly in the past. Documented
+as a negative finding -- no speculative future-date tolerance or
+quarantine threshold was invented. The `live_source` test actively
+re-checks this comparison on every run (not relying on this one-time
+research finding alone), so a genuine future-dating anomaly appearing
+later would fail the live test immediately rather than silently
+ingesting as ordinary eligible evidence.
+
+**Content mapping**: `title->headline` (required; parser-level
+invalid if missing/blank, never a placeholder); `link->canonical_url`
+(never identity, never followed, never fetched); `description->
+summary` (confirmed live to be a genuine, substantive per-item
+summary on every sampled item, not boilerplate -- preserved
+faithfully, never AI-summarized); `body_text=None` always (no
+article/PDF/slides/appendix/chart fetch anywhere in this adapter);
+`authors=()` always (zero `<author>` elements observed on any sampled
+item -- a speaker's name inside a speech title, e.g. "Sasha Mills:
+speech at...", is never parsed into a structured author field);
+`language="en"` always (the feed's own declared, static channel-
+level value); `source_updated_at=None` always (no verified BoE
+correction/update field exists); `source_status=ACTIVE` always (feed
+disappearance is never withdrawal -- no explicit retraction field was
+found, and none was assumed); `observation_mode=PROSPECTIVE` always
+(no historical ingestion of any kind -- no yearly archive, no
+sitemap, no search-based backfill).
+
+**Rights boundary, live-reconfirmed, unchanged from ADR 0005**:
+`https://www.bankofengland.co.uk/legal` was re-fetched directly
+during this story and still states, word for word, that site
+Resources may be used "for personal use or internal use within an
+individual organisation for non-commercial purposes" -- exactly FTA's
+current research/paper-trading use; redistribution and commercial use
+still require separate permission. No rights reinterpretation or
+expansion was made or is implied; this adapter ingests only the
+feed-supplied metadata fields above, never the linked article or any
+PDF/report/slides/chart.
+
+**Manual one-shot runner**: `scripts/ingest_boe_news.py` (plain
+script, no scheduler, no startup hook, same precedent as the Fed/ECB
+runners). Run live against the real BoE feeds and Postgres during
+this story: the first run created exactly 150 items across all three
+channels (`items_fetched=150, items_invalid=0, errors=()`); an
+immediate second run reported `created=0, revisions_added=0,
+unchanged=150`, confirming idempotency end-to-end against real
+production-shaped data. These 150 real rows were intentionally left
+in the dev database, the same treatment given to Fed's 45 and ECB's
+15 -- the database now holds 210 real news rows across three
+distinct `source_key`s, confirmed via a direct SQL query grouping by
+`source_key`/`source_channel` after this story's own work concluded.
+
+**25 new tests** (verified by directly counting `def test_`/`async
+def test_` lines in each new file, not estimated): 17 deterministic
+BoE-adapter unit tests
+(`tests/unit/infrastructure/news_sources/test_boe_rss_source.py` --
+guid/headline/link/description mapping, opaque-guid-distinct-from-
+link, content-type-and-channel per feed, both observed pubDate
+timezone forms normalizing correctly, malformed pubDate, missing
+guid, missing description, missing title, authors-empty/language-en/
+source-updated-at-None, disposition/status/mode always eligible/
+active/prospective, valid-empty feed, HTML-200 and HTTP-500 both fail
+closed, feed paths/source key match the registry exactly); 7 Postgres
+end-to-end integration tests
+(`tests/integration/test_boe_news_ingestion.py` -- single-poll
+persistence with full field verification including the opaque-guid-
+independent-of-link check, repeated-poll idempotency, same-guid-
+changed-content produces a second vintage, two different guids with
+the same headline remain two separate items, one malformed response
+writes zero evidence, the same-guid-across-two-channels fallback
+pin, and an explicit PIT worked-example test pinning that a query
+strictly between the source pubDate and FTA's own retrieval instant
+sees nothing while a query at-or-after retrieval sees the evidence);
+1 separately-marked `live_source` test
+(`tests/integration/test_boe_rss_source_live.py`, run via `pytest -m
+live_source`, covering all three channels in one test -- strict
+`items_invalid == 0` per channel following ECB's own FX-57BH
+precedent, plus an active future-dated-item re-check on every run).
+
+**Verification, reported separately, as genuinely different commands
+with genuinely different results**: Fed regression
+(`tests/unit/infrastructure/news_sources/test_fed_rss_source.py` +
+`tests/integration/test_fed_news_ingestion.py`): `22 passed`,
+unchanged. ECB regression (`test_ecb_rss_source.py` + `test_ecb_
+news_ingestion.py`): `21 passed`, unchanged. Deterministic default
+suite (`pytest`): `7 failed, 1848 passed, 7 deselected` -- the same
+seven pre-existing, documented, unrelated OANDA-practice-candle
+failures, confirmed unchanged by name. `live_source` suite (`pytest
+-m live_source`): `1 failed, 6 passed` -- the same pre-existing,
+documented BLS 403, confirmed unchanged; Fed's, ECB's, and this
+story's own new BoE live test are all among the 6 passes. `ruff check
+.`, `ruff format --check .`, `mypy .` (428 source files), and
+`pre-commit run --all-files` all pass clean across the whole
+repository.
+
+**Confirmed, explicitly, as this story's own required negative
+checklist**: no historical BoE ingestion of any kind; no BoE article/
+PDF scraping; no FX-57D (GOV.UK)/FX-57E (StatCan)/FX-57F (BoC) work
+started; no cross-source deduplication (still FX-58's own future
+job); no relevance/topic/currency classification or sentiment of any
+kind (still FX-59's own future job); no source-reputation/
+credibility scoring (still FX-EPIC-09's own future job); no news
+evidence snapshot (still FX-60's own future job); `/market-context`
+and every existing route/template unchanged (still FX-61's own future
+job); no Decision/Risk Engine integration, trade signal, or BUY/SELL
+logic anywhere; FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED.
+
+**No schema or migration change** -- migration `a95058f88727`, its
+`NOT NULL` `source_channel` persistence, and the existing 45 Fed + 15
+ECB rows are all exactly as FX-57BH left them; no `alembic` revision
+was authored by this story.
+
+Full details in `docs/DECISIONS.md`'s FX-57C entry; `docs/
+ARCHITECTURE.md` carries a new BoE section; `docs/CURRENT_STATE.md`
+carries its own FX-57C entry. **No ADR update** -- every live finding
+either confirmed ADR 0005's own prior characterization exactly
+(opaque GUID, mixed timezone format, non-commercial rights boundary,
+~50-item depth) or resolved a question the ADR had left open without
+contradicting it (zero cross-channel overlap, zero future-dated
+items) -- none of these are a NEW source-feasibility/rights/PIT fact
+requiring the ADR's own text to change.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57D (GOV.UK)/FX-57E (Statistics Canada)/FX-57F (Bank of Canada,
+with its own known timestamp-remediation need), FX-58/FX-59/FX-60/
+FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
+remain DEFER; FX-53 remains BLOCKED. Return FX-57C for review.
