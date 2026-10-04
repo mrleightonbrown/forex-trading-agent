@@ -49,6 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -155,7 +156,7 @@ def parse_content_api_item(text: str) -> ContentApiItem:
         )
 
     content_id = _required_str(data, "content_id")
-    base_path = _required_str(data, "base_path")
+    base_path = _validate_base_path(_required_str(data, "base_path"))
     title = _required_str(data, "title")
     document_type = _required_str(data, "document_type")
     locale = _required_str(data, "locale")
@@ -213,13 +214,44 @@ def _optional_str(value: object) -> str | None:
     return value.strip()
 
 
+def _validate_base_path(value: str) -> str:
+    """FX-57DH Section 4: a malformed provider `base_path` must never
+    be allowed to produce a bogus `canonical_url` -- rejects an
+    absolute URL (has its own scheme), a scheme-relative URL (`//
+    ...`), and anything not starting with a single leading `/`."""
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        raise MalformedContentApiResponseError(
+            f"base_path must be a bare GOV.UK-relative content path, not an "
+            f"absolute or scheme-relative URL, got {value!r}"
+        )
+    if not value.startswith("/") or value.startswith("//"):
+        raise MalformedContentApiResponseError(
+            f"base_path must start with exactly one leading '/', got {value!r}"
+        )
+    return value
+
+
 def _parse_change_history(value: object) -> tuple[_ChangeHistoryEntry, ...]:
-    if not isinstance(value, list):
+    """FX-57DH Section 5: malformed `change_history` must fail the
+    whole item closed, never silently collapse to "no history" --
+    the original behavior (non-list -> `()`, non-dict entry ->
+    skipped) turned schema drift into a false "nothing happened"
+    signal. Absent/`None` (the key missing entirely) remains a valid
+    empty history; anything PRESENT but not a list, or any PRESENT
+    list entry that is not an object, now raises."""
+    if value is None:
         return ()
+    if not isinstance(value, list):
+        raise MalformedContentApiResponseError(
+            f"details.change_history must be a list when present, got {type(value).__name__}"
+        )
     entries: list[_ChangeHistoryEntry] = []
-    for entry in value:
+    for index, entry in enumerate(value):
         if not isinstance(entry, dict):
-            continue
+            raise MalformedContentApiResponseError(
+                f"details.change_history[{index}] must be an object, got {type(entry).__name__}"
+            )
         entries.append(
             _ChangeHistoryEntry(
                 note=_optional_str(entry.get("note")),
@@ -230,13 +262,31 @@ def _parse_change_history(value: object) -> tuple[_ChangeHistoryEntry, ...]:
 
 
 def _parse_withdrawn_notice(value: object) -> tuple[bool, str | None, str | None]:
-    if not isinstance(value, dict) or not value:
+    """FX-57DH Section 6: `withdrawn_notice` changes `source_status`
+    and must therefore be STRUCTURALLY positive evidence, not merely
+    "any non-empty dict." A wrong type (not a dict at all) fails
+    closed rather than silently defaulting to ACTIVE. The only
+    accepted active shape is an empty dict (live-confirmed, never
+    `null`); a non-empty dict must carry its own non-empty,
+    genuinely-parseable `withdrawn_at` timestamp to be trusted as a
+    real withdrawal claim -- a populated notice with no verifiable
+    timestamp of its own fails closed rather than being accepted on
+    faith."""
+    if not isinstance(value, dict):
+        raise MalformedContentApiResponseError(
+            f"withdrawn_notice must be an object, got {type(value).__name__}"
+        )
+    if not value:
         return False, None, None
-    return (
-        True,
-        _optional_str(value.get("explanation")),
-        _optional_str(value.get("withdrawn_at")),
-    )
+    withdrawn_at_raw = _optional_str(value.get("withdrawn_at"))
+    if withdrawn_at_raw is None or _parse_utc_timestamp(withdrawn_at_raw) is None:
+        raise MalformedContentApiResponseError(
+            "withdrawn_notice is non-empty but its own withdrawn_at value "
+            f"({value.get('withdrawn_at')!r}) is missing or does not parse as a "
+            "genuine timezone-aware timestamp -- a positive withdrawal claim must "
+            "carry its own verifiable timestamp to be trusted"
+        )
+    return True, _optional_str(value.get("explanation")), withdrawn_at_raw
 
 
 class GovUkHmtSource:
@@ -295,7 +345,17 @@ class GovUkHmtSource:
         returns every currently-usable, deduped `gov.uk` content path
         -- raises `NewsSourceUnavailableError` if the discovery
         response itself is unavailable or malformed (a source-level
-        failure, not a per-path one)."""
+        failure, not a per-path one).
+
+        **FX-57DH Section 1**: a discovery response containing even
+        ONE invalid entry (missing id/title, off-domain/malformed
+        link) now fails this call closed, rather than silently
+        returning only the remaining valid paths. FTA cannot know
+        WHICH content item it failed to discover from an invalid
+        entry -- silently ingesting the other N-1 valid entries would
+        let a genuine source-schema drift disappear a currently-
+        published HMT item from ingestion with no operational
+        signal at all."""
         await self._pace()
         fetched = await fetch_text(self._client, _DISCOVERY_PATH, clock=self._clock)
         try:
@@ -304,6 +364,13 @@ class GovUkHmtSource:
             raise NewsSourceUnavailableError(
                 f"GOV.UK HMT discovery feed did not parse as Atom: {exc}"
             ) from exc
+        if parsed.invalid_count:
+            raise NewsSourceUnavailableError(
+                f"GOV.UK HMT discovery feed contained {parsed.invalid_count} invalid "
+                "entry(ies) -- refusing to silently discover only the remaining "
+                f"valid entries while an unknown item may be missing: "
+                f"{parsed.invalid_reasons!r}"
+            )
         return tuple(entry.path for entry in parsed.entries)
 
     async def fetch_content_item(self, path: str) -> NewsSourceFetchOutcome:
@@ -332,6 +399,32 @@ class GovUkHmtSource:
                 invalid_reasons=(
                     f"content_id={item.content_id!r} at path={path!r} is not HM-Treasury-"
                     f"associated (organisations={item.organisation_base_paths!r})",
+                ),
+            )
+
+        # FX-57DH Section 3: this adapter's bare content_id identity
+        # was only live-validated against English-locale HMT content
+        # (FX-57D's own live research found locale == "en" on every
+        # sampled item). A non-English item under the same identity
+        # model might need identity to become content_id+locale --
+        # that is an architecture decision this adapter must never
+        # make silently, so a non-"en" item fails closed as an
+        # ordinary item-level invalid, never ingested, never
+        # auto-switched to a different identity scheme, never
+        # translated.
+        if item.locale != "en":
+            return NewsSourceFetchOutcome(
+                source_channel=CHANNEL,
+                retrieved_at=fetched.retrieved_at,
+                observations=(),
+                items_invalid=1,
+                invalid_reasons=(
+                    f"content_id={item.content_id!r} at path={path!r} has "
+                    f"locale={item.locale!r}, not 'en' -- this adapter's bare "
+                    "content_id identity was only validated against English-locale "
+                    "content; refusing to normalize without an explicit "
+                    "architecture review of whether identity must become "
+                    "content_id+locale",
                 ),
             )
 

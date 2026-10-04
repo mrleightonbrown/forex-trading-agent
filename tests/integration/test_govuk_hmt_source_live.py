@@ -46,7 +46,27 @@ ExternalIdError`. Also re-checks that no item's `source_published_at`
 is after this response's own `retrieved_at`, and that a present
 `publishing_scheduled_at` is never silently treated as ordinary
 evidence if it is still in the future relative to retrieval.
+
+**FX-57DH Section 1**: `discover_current_paths` itself now fails this
+test closed (via `NewsSourceUnavailableError`) if the live discovery
+feed contains even one invalid entry -- there is no separate
+assertion needed here for that, since the adapter's own fail-closed
+policy already makes a drifted discovery response visible as a hard
+test failure rather than a silently-shrunk path list.
+
+**FX-57DH Section 8/9 (strengthened live checks)**: this story's own
+live research established that every sampled HMT Content API item
+carries `first_published_at`/`public_updated_at`/`updated_at`, all
+normalizing to valid timezone-aware timestamps, and that `content_id`
+is UUID-shaped. Both are now actively re-checked on every run -- a
+future item missing one of these three provenance fields, or one
+whose `content_id` is no longer UUID-shaped, now fails this test
+loudly rather than passing silently, so a genuine future change in
+GOV.UK's own Content API schema is caught here rather than only
+being discovered later.
 """
+
+import uuid
 
 import pytest
 
@@ -102,6 +122,35 @@ async def test_hmt_discovery_and_content_api_hydration_yield_valid_items() -> No
                 "design conversation, not a silent adapter patch"
             )
             locales_seen.add(observation.language)
+
+            try:
+                uuid.UUID(observation.external_item_id)
+            except ValueError as exc:
+                raise AssertionError(
+                    f"live HMT content_id={observation.external_item_id!r} (path={path!r}) "
+                    "is no longer UUID-shaped -- this contradicts this story's own "
+                    "live-validation finding that content_id is a stable UUID; this is a "
+                    "live provider-shape check only, not a change to the general, opaque "
+                    f"external_item_id identity model: {exc}"
+                ) from exc
+
+            provenance_by_field = {p.field_name: p for p in observation.source_timestamp_provenance}
+            for required_field in ("first_published_at", "public_updated_at", "updated_at"):
+                provenance = provenance_by_field.get(required_field)
+                assert provenance is not None, (
+                    f"live HMT content_id={observation.external_item_id!r} (path={path!r}) "
+                    f"is missing {required_field!r} provenance entirely -- this contradicts "
+                    "this story's own live-validation finding that every sampled item "
+                    f"carries {required_field!r}; if a GOV.UK document type genuinely omits "
+                    "this field, STOP and document that fact before weakening this check"
+                )
+                assert provenance.normalized_at is not None, (
+                    f"live HMT content_id={observation.external_item_id!r} (path={path!r}) "
+                    f"carries {required_field!r}={provenance.raw_value!r}, which failed to "
+                    "normalize to a valid timezone-aware timestamp -- this contradicts this "
+                    "story's own live-validation finding that this field always normalizes "
+                    "for every sampled item"
+                )
 
             existing_path = content_ids_by_path.get(observation.external_item_id)
             assert existing_path is None, (

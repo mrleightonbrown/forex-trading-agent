@@ -2172,6 +2172,57 @@ _Last updated: 2026-09-27 (FX-54V)_
   contradicted, its existing text. **Stop after FX-57D -- do not start
   FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/
   Decision Engine/Risk Engine.**
+- **FX-57DH: GOV.UK source-drift & identity-guard hardening
+  (complete)**. A narrowly-scoped hardening pass on FX-57D, found by
+  review, before FX-57E was authorized -- five independent gaps, all
+  in the direction of a malformed/drifted source response being too
+  easily absorbed as if nothing had happened: (1) `discover_current_
+  paths` now fails closed (`NewsSourceUnavailableError`, carrying the
+  invalid reasons) if the discovery feed contains even ONE invalid
+  entry, instead of silently returning only the remaining valid
+  paths -- FTA cannot know which item it failed to discover; (2) the
+  English-locale identity gate FX-57D's own live research
+  established is now ENFORCED in `fetch_content_item` itself (a
+  non-"en" item becomes an ordinary item-level invalid, never
+  ingested under the existing bare `content_id` identity, never
+  auto-switched, never translated), not merely asserted in the live
+  test; (3) `base_path` is now structurally validated (rejects an
+  absolute URL, a scheme-relative `//...` path, or a non-leading-
+  slash value) before `canonical_url` is ever built from it; (4)
+  `change_history` schema drift now fails the item closed
+  (`MalformedContentApiResponseError`) instead of silently collapsing
+  to "no history" -- a present-but-wrong-type value or a non-object
+  list entry both now raise; absence/`None` remains valid empty
+  history; (5) `withdrawn_notice` must now be STRUCTURALLY positive
+  evidence to set `WITHDRAWN` -- a wrong type fails closed rather
+  than defaulting to `ACTIVE`, and a non-empty notice must carry its
+  own non-empty, genuinely-parseable `withdrawn_at` to be trusted.
+  The already-correct withdrawal PIT rule (visible at FTA's own
+  observation time, never the source's claimed `withdrawn_at`;
+  remains `EVIDENCE_ELIGIBLE`) is unchanged. The `live_source` test
+  now also actively re-checks that `content_id` remains UUID-shaped
+  and that `first_published_at`/`public_updated_at`/`updated_at`
+  provenance remain present and normalize, every run. Phase 1c and
+  the rest of the GOV.UK architecture are explicitly unchanged. 17
+  new test functions (verified via `git diff` against the FX-57D
+  commit, all in modified, already-tracked files this time). Focused
+  suites: GOV.UK discovery `13 passed`; GOV.UK Content API `56
+  passed`; GOV.UK Postgres integration `11 passed`; common
+  orchestration `22 passed`; Fed `22 passed`; ECB `21 passed`; BoE
+  `24 passed`; GOV.UK `live_source` `1 passed`. Deterministic default
+  suite: `7 failed, 1936 passed, 8 deselected` (same seven
+  pre-existing, unrelated OANDA failures; deselected count unchanged
+  at 8, since no new `live_source` test was added, only the existing
+  one strengthened). `live_source` suite: `1 failed, 7 passed` (same
+  pre-existing, unrelated BLS 403). `ruff`/`mypy`/`pre-commit` all
+  clean. Manual runner re-run live once: `created=0, unchanged=20` --
+  no behavioral drift against real data. The existing 45 Fed + 15
+  ECB + 150 BoE + 20 GOV.UK rows (230 total) confirmed untouched. No
+  schema/migration change. Full details in `docs/DECISIONS.md`'s
+  FX-57DH entry. **No ADR 0005 amendment** -- a pure application-
+  layer hardening pass, no new source fact. **Stop after FX-57DH --
+  do not start FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/
+  FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

@@ -2254,6 +2254,82 @@ metadata, source status, body text, source content type), and that
 held exactly as designed; the existing 45 Fed + 15 ECB + 150 BoE rows
 are untouched.
 
+## GOV.UK source-drift & identity-guard hardening (FX-57DH)
+
+A narrowly-scoped hardening pass on FX-57D, found by review, before
+FX-57E was authorized -- five independent gaps, all in the direction
+of "a malformed or drifted source response was too easily absorbed
+as if nothing had happened," none in the two-stage discovery/
+hydration architecture itself.
+
+**Discovery invalid entries can no longer disappear silently.**
+`parse_govuk_discovery_atom` already reported `invalid_count`/
+`invalid_reasons` accurately, but `GovUkHmtSource.discover_current_
+paths` discarded both and returned only the valid paths. A single
+malformed entry in an otherwise-healthy discovery response could
+therefore silently drop one currently-published HMT item from
+ingestion while every signal (the manual runner, the `live_source`
+test) stayed green. `discover_current_paths` now raises `NewsSource
+UnavailableError`, carrying the invalid reasons, if `invalid_count`
+is ever non-zero -- FTA cannot know WHICH item it failed to
+discover, so it refuses to proceed on the remaining N-1 valid ones
+rather than guess.
+
+**English-locale identity gate is now enforced in production, not
+only asserted in the live test.** FX-57D's own live research
+established every sampled HMT item has `locale == "en"`, and
+explicitly deferred the question of whether a non-English item would
+need `content_id`+`locale` identity to a future architecture
+decision. `fetch_content_item` now checks `locale == "en"` itself:
+a non-English item becomes an ordinary item-level invalid (counted,
+never ingested, never auto-switched to a different identity scheme,
+never translated) rather than silently flowing through under the
+existing bare `content_id` identity.
+
+**`base_path` is now structurally validated before building
+`canonical_url`.** A malformed provider `base_path` (an absolute URL
+with its own scheme, a scheme-relative `//...` path, or anything not
+starting with exactly one leading `/`) now fails that item's parse
+closed (`MalformedContentApiResponseError`) rather than silently
+producing a bogus `canonical_url`.
+
+**`change_history` schema drift now fails closed instead of
+collapsing to "no history."** The original parser treated a non-list
+`change_history` as `()` and silently skipped any non-object list
+entry -- both turned a structural anomaly into a false "nothing
+happened" signal. The key being absent/`None` remains a valid empty
+history (GOV.UK's own documented optionality); anything PRESENT but
+not a list, or any list entry that is not an object, now raises.
+
+**`withdrawn_notice` must now be structurally positive evidence to
+set `WITHDRAWN`.** The original parser treated "any non-empty dict"
+as a withdrawal; a wrong type (not a dict at all) silently defaulted
+to `ACTIVE`. The contract is now strict: a non-dict value fails
+closed; the only accepted active shape remains an empty dict
+(live-confirmed, never `null`); a non-empty dict must carry its own
+non-empty, genuinely-parseable `withdrawn_at` timestamp to be trusted
+-- a populated notice with no verifiable timestamp of its own fails
+closed rather than being accepted on faith. The already-correct PIT
+rule (withdrawal becomes visible at FTA's own observation time, never
+the source's claimed `withdrawn_at`; withdrawal remains ordinary
+`EVIDENCE_ELIGIBLE` evidence) is unchanged.
+
+**The `live_source` test now actively re-checks two structural facts
+every run, not just prints them**: every sampled item's `content_id`
+must still parse as a UUID (a live provider-shape check, not a
+change to the general, opaque `external_item_id` identity model
+elsewhere in the codebase), and every sampled item's `first_published_
+at`/`public_updated_at`/`updated_at` provenance must still be present
+and normalize to a valid timezone-aware timestamp.
+
+Phase 1c (FX-57D's own whole-run, cross-response, same-channel
+dedupe/collision guard) and the rest of the GOV.UK architecture
+(two-stage discovery/hydration, `source_key`/`source_channel`, every
+other field mapping, rate pacing, rights boundary) are explicitly
+unchanged. No schema or migration change; Fed/ECB/BoE regressions
+confirmed unaffected; the existing 45 Fed + 15 ECB + 150 BoE + 20
+GOV.UK rows (230 total) are untouched.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

@@ -472,6 +472,178 @@ async def test_malformed_discovery_feed_raises_unavailable() -> None:
     await source.aclose()
 
 
+# --- Discovery invalid-entry fail-closed policy (FX-57DH Section 1) ---------
+
+
+@pytest.mark.asyncio
+async def test_a_discovery_with_one_invalid_entry_fails_closed() -> None:
+    atom = (
+        "<feed xmlns='http://www.w3.org/2005/Atom'><title>t</title>"
+        "<entry><id>tag:good</id><updated>2026-10-01T09:00:00+01:00</updated>"
+        "<link rel='alternate' href='https://www.gov.uk/government/news/good'/>"
+        "<title>Good entry</title></entry>"
+        "<entry><id>tag:bad</id><updated>2026-10-01T09:00:00+01:00</updated>"
+        "<link rel='alternate' href='https://www.gov.uk/government/news/bad'/>"
+        "</entry>"
+        "</feed>"
+    )
+    source = _source_returning(200, atom)
+    with pytest.raises(NewsSourceUnavailableError):
+        await source.discover_current_paths()
+    await source.aclose()
+
+
+@pytest.mark.asyncio
+async def test_b_discovery_invalid_reason_is_preserved_in_the_error() -> None:
+    atom = (
+        "<feed xmlns='http://www.w3.org/2005/Atom'><title>t</title>"
+        "<entry><id>tag:good</id><updated>2026-10-01T09:00:00+01:00</updated>"
+        "<link rel='alternate' href='https://www.gov.uk/government/news/good'/>"
+        "<title>Good entry</title></entry>"
+        "<entry><id>tag:bad</id><updated>2026-10-01T09:00:00+01:00</updated>"
+        "<link rel='alternate' href='https://www.gov.uk/government/news/bad'/>"
+        "</entry>"
+        "</feed>"
+    )
+    source = _source_returning(200, atom)
+    with pytest.raises(NewsSourceUnavailableError, match="missing or blank title"):
+        await source.discover_current_paths()
+    await source.aclose()
+
+
+@pytest.mark.asyncio
+async def test_c_valid_empty_discovery_feed_remains_valid() -> None:
+    atom = "<feed xmlns='http://www.w3.org/2005/Atom'><title>t</title></feed>"
+    source = _source_returning(200, atom)
+    paths = await source.discover_current_paths()
+    await source.aclose()
+    assert paths == ()
+
+
+# --- English-locale identity gate (FX-57DH Section 3) -----------------------
+
+
+@pytest.mark.asyncio
+async def test_d_non_english_locale_is_rejected_by_the_adapter() -> None:
+    source = _source_returning(200, _content_json(locale="fr"))
+    outcome = await source.fetch_content_item("/government/news/x")
+    await source.aclose()
+
+    assert outcome.observations == ()
+    assert outcome.items_invalid == 1
+    assert "locale" in outcome.invalid_reasons[0]
+
+
+@pytest.mark.asyncio
+async def test_e_english_locale_is_accepted_by_the_adapter() -> None:
+    source = _source_returning(200, _content_json(locale="en"))
+    outcome = await source.fetch_content_item("/government/news/x")
+    await source.aclose()
+
+    assert len(outcome.observations) == 1
+    assert outcome.items_invalid == 0
+    assert outcome.observations[0].language == "en"
+
+
+# --- base_path structural validation (FX-57DH Section 4) --------------------
+
+
+@pytest.mark.asyncio
+async def test_f_absolute_url_base_path_fails_closed() -> None:
+    source = _source_returning(200, _content_json(base_path="https://evil.example.com/x"))
+    with pytest.raises(NewsSourceUnavailableError, match="base_path"):
+        await source.fetch_content_item("/government/news/x")
+    await source.aclose()
+
+
+def test_f_scheme_relative_base_path_raises() -> None:
+    with pytest.raises(MalformedContentApiResponseError, match="base_path"):
+        parse_content_api_item(_content_json(base_path="//evil.example.com/x"))
+
+
+def test_f_non_leading_slash_base_path_raises() -> None:
+    with pytest.raises(MalformedContentApiResponseError, match="base_path"):
+        parse_content_api_item(_content_json(base_path="government/news/x"))
+
+
+def test_g_valid_relative_base_path_succeeds() -> None:
+    item = parse_content_api_item(_content_json(base_path="/government/news/valid-example"))
+    assert item.base_path == "/government/news/valid-example"
+
+
+# --- change_history schema-drift fail-closed (FX-57DH Section 5) -----------
+
+
+def test_h_change_history_wrong_top_level_type_raises() -> None:
+    data = json.loads(_content_json())
+    data["details"]["change_history"] = {"note": "not a list"}
+    with pytest.raises(MalformedContentApiResponseError, match="change_history"):
+        parse_content_api_item(json.dumps(data))
+
+
+def test_i_change_history_non_object_entry_raises() -> None:
+    data = json.loads(_content_json())
+    data["details"]["change_history"] = ["not an object"]
+    with pytest.raises(MalformedContentApiResponseError, match="change_history"):
+        parse_content_api_item(json.dumps(data))
+
+
+def test_j_change_history_absent_key_is_valid_empty_history() -> None:
+    data = json.loads(_content_json())
+    del data["details"]["change_history"]
+    item = parse_content_api_item(json.dumps(data))
+    assert item.change_history == ()
+
+
+# --- withdrawn_notice positive-evidence fail-closed (FX-57DH Section 6) ----
+
+
+def test_k_withdrawn_notice_wrong_type_raises() -> None:
+    data = json.loads(_content_json())
+    data["withdrawn_notice"] = "withdrawn"
+    with pytest.raises(MalformedContentApiResponseError, match="withdrawn_notice"):
+        parse_content_api_item(json.dumps(data))
+
+
+def test_k_withdrawn_notice_list_type_raises() -> None:
+    data = json.loads(_content_json())
+    data["withdrawn_notice"] = ["withdrawn"]
+    with pytest.raises(MalformedContentApiResponseError, match="withdrawn_notice"):
+        parse_content_api_item(json.dumps(data))
+
+
+def test_l_withdrawn_notice_missing_withdrawn_at_raises() -> None:
+    with pytest.raises(MalformedContentApiResponseError, match="withdrawn_at"):
+        parse_content_api_item(
+            _content_json(withdrawn_notice={"explanation": "No longer current."})
+        )
+
+
+def test_l_withdrawn_notice_malformed_withdrawn_at_raises() -> None:
+    with pytest.raises(MalformedContentApiResponseError, match="withdrawn_at"):
+        parse_content_api_item(
+            _content_json(
+                withdrawn_notice={
+                    "explanation": "No longer current.",
+                    "withdrawn_at": "not-a-timestamp",
+                }
+            )
+        )
+
+
+def test_m_valid_populated_withdrawn_notice_still_maps_to_withdrawn() -> None:
+    item = parse_content_api_item(
+        _content_json(
+            withdrawn_notice={
+                "explanation": "No longer current.",
+                "withdrawn_at": "2026-10-02T10:00:00+01:00",
+            }
+        )
+    )
+    assert item.withdrawn is True
+    assert item.withdrawn_at_raw == "2026-10-02T10:00:00+01:00"
+
+
 # --- Rate pacing (Section 19/79) --------------------------------------------
 
 

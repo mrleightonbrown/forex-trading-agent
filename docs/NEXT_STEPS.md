@@ -3547,3 +3547,145 @@ FX-57E (Statistics Canada)/FX-57F (Bank of Canada, with its own known
 timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or
 any Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
 BLOCKED. Return FX-57D for review.
+
+## FX-57DH: GOV.UK source-drift & identity-guard hardening (complete)
+
+A narrowly-scoped hardening pass on FX-57D, found by review, before
+FX-57E was authorized. Git HEAD at story start: `545f82c`.
+
+**Five independent gaps, each in the same direction**: a malformed or
+drifted source response was too easily absorbed by the existing FX-57D
+code as if nothing unusual had happened, rather than surfacing loudly.
+None of the five touches the two-stage discovery/hydration
+architecture, Phase 1c, or any other FX-57D design decision itself --
+every fix is a narrowing of what the parser/adapter accepts as valid,
+never a redesign.
+
+**1. Discovery invalid entries can no longer disappear silently.**
+`parse_govuk_discovery_atom` (unchanged) already computed `invalid_
+count`/`invalid_reasons` correctly, but `GovUkHmtSource.discover_
+current_paths` discarded both and returned only the valid paths. A
+single malformed entry in an otherwise-healthy 20-entry discovery
+response could therefore silently drop exactly one currently-published
+HMT item from every subsequent poll, while the manual runner and the
+`live_source` test both stayed green -- an operational blind spot with
+no signal at all. Fixed: `discover_current_paths` now raises `NewsSource
+UnavailableError`, with the invalid reasons embedded in the message,
+whenever `invalid_count` is non-zero. FTA cannot know WHICH content
+item an invalid entry was supposed to identify, so it refuses to
+proceed on the remaining N-1 valid entries rather than guess which one
+is safe to drop.
+
+**2. English-locale identity gate, now enforced in production code,
+not only asserted in the live test.** FX-57D's own live research
+established `locale == "en"` on every one of the 20 live-sampled HMT
+items, and the story's own spec explicitly required that a non-
+English item under the same bare `content_id` identity model needed
+an architecture conversation before deciding whether identity must
+become `content_id`+`locale` -- but the production adapter never
+actually checked this; only the live test did. `fetch_content_item`
+now checks `item.locale != "en"` itself and returns an ordinary
+item-level invalid (counted via `items_invalid`, never ingested) --
+never silently normalizing a non-English item under the existing bare
+identity, never auto-switching identity schemes, never translating
+content.
+
+**3. `base_path` structural validation, before `canonical_url` is
+ever built from it.** The parser previously required only a non-empty
+string. A malformed provider `base_path` -- an absolute URL carrying
+its own scheme, a scheme-relative `//...` path, or any value not
+starting with exactly one leading `/` -- could previously flow
+straight into `f"{_BASE_URL}{base_path}"` and produce a bogus
+`canonical_url` pointing somewhere other than `gov.uk`. `_validate_
+base_path` now rejects all three shapes at parse time
+(`MalformedContentApiResponseError`), before any `canonical_url` is
+constructed.
+
+**4. `change_history` schema drift now fails the item closed, instead
+of silently becoming "no history."** The original `_parse_change_
+history` mapped a non-list value to `()` and silently skipped any
+non-dict list entry -- both turned a genuine structural anomaly (the
+API returning something FX-57D's own live research never actually
+observed) into a false "this item has no revision history" signal,
+exactly the kind of drift this hardening pass exists to catch. New
+policy: the key being absent entirely (`None`) remains a valid empty
+history (GOV.UK's own documented optionality, unchanged); a PRESENT
+value that is not a list now raises; any list entry that is not an
+object now raises. `kind=UPDATE` for every entry, and `CORRECTION`
+never inferred from note text, remain exactly as FX-57D decided --
+this pass only tightens what counts as a parseable entry, never the
+semantic mapping.
+
+**5. `withdrawn_notice` must now be STRUCTURALLY positive evidence to
+set `WITHDRAWN`.** The original `_parse_withdrawn_notice` treated "any
+non-empty dict" as a withdrawal and silently defaulted anything else
+(including a wrong TYPE -- a string, a list, `null`) to `ACTIVE`. That
+is too permissive for a field that changes a vintage's own lifecycle
+status: a wrong-type value is now a parse failure
+(`MalformedContentApiResponseError`), never a silent `ACTIVE`; the
+only accepted ACTIVE shape remains the live-confirmed empty dict
+`{}`; and a non-empty dict must now carry its own non-empty,
+genuinely-parseable `withdrawn_at` timestamp (checked via the same
+`_parse_utc_timestamp` the adapter already uses for normalization) to
+be trusted as a real withdrawal claim -- a populated notice with a
+missing or malformed `withdrawn_at` fails closed rather than being
+accepted on faith. The already-correct PIT invariant from FX-57D is
+explicitly UNCHANGED and reverified green: withdrawal becomes visible
+at FTA's own observation time of it, never the source's own claimed
+`withdrawn_at`; withdrawal remains ordinary `EVIDENCE_ELIGIBLE`
+evidence, never auto-quarantined.
+
+**`live_source` test strengthened, two new structural checks on every
+run** (Section 8/9): every sampled item's `content_id` must still
+parse as a Python `uuid.UUID` (a live PROVIDER-SHAPE check only --
+`external_item_id` remains a generically opaque string everywhere
+else in the domain, this is not a new global identity rule); every
+sampled item's `first_published_at`/`public_updated_at`/`updated_at`
+provenance must still be present and normalize to a valid
+timezone-aware timestamp, matching exactly what FX-57D's own live
+research found on all 20 sampled items. Both re-ran clean against the
+real feed: 20/20 valid UUIDs, all three timestamp fields present and
+normalized on every item.
+
+**Verification, reported separately**: focused suites -- GOV.UK
+discovery unit (`13 passed`), GOV.UK Content API unit (`56 passed`,
+up from 39 -- the 17 new tests below), GOV.UK Postgres integration
+(`11 passed`, unchanged), common orchestration (`22 passed`,
+unchanged -- Phase 1c untouched by this pass), Fed regression (`22
+passed`), ECB regression (`21 passed`), BoE regression (`24 passed`),
+GOV.UK `live_source` (`1 passed`). Deterministic default suite
+(`pytest`): `7 failed, 1936 passed, 8 deselected` -- the same seven
+pre-existing, documented, unrelated OANDA failures, confirmed
+unchanged; deselected count unchanged at 8 (no new `live_source` test
+was added, only the existing one strengthened). `live_source` suite
+(`pytest -m live_source`): `1 failed, 7 passed` -- the same
+pre-existing, documented BLS 403, confirmed unchanged. `ruff check .`,
+`ruff format --check .`, `mypy .` (435 source files), and `pre-commit
+run --all-files` all pass clean. 17 new test functions, verified via
+`git diff <FX-57D commit> -- tests/ | grep '^\+.*def test_'` -- unlike
+FX-57D's own count, every touched test file this time was already
+tracked, so a plain `git diff` was sufficient on its own.
+
+`scripts/ingest_govuk_hmt_news.py` re-run live once, after the
+hardening, against the real feed and dev Postgres: `created=0,
+unchanged=20` -- confirms this pass introduced no behavioral drift
+against real, already-ingested data. Database spot-check confirmed
+the existing 45 Fed + 15 ECB + 150 BoE + 20 GOV.UK rows (230 total,
+unchanged from FX-57D) remain exactly untouched.
+
+No schema or migration change.
+
+**No ADR 0005 update.** Every change in this pass is a pure
+application-layer parsing/validation hardening -- no new source fact
+was discovered that would justify touching the ADR.
+
+Full details in `docs/DECISIONS.md`'s FX-57DH entry; `docs/
+ARCHITECTURE.md` carries a new "GOV.UK source-drift & identity-guard
+hardening" section; `docs/CURRENT_STATE.md` carries its own FX-57DH
+entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57E (Statistics Canada)/FX-57F (Bank of Canada, with its own known
+timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or
+any Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
+BLOCKED. Return FX-57DH for review.
