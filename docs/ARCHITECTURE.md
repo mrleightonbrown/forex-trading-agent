@@ -2517,6 +2517,63 @@ existing 45 Fed + 15 ECB + 150 BoE + 20 GOV.UK rows (230 total) are
 untouched; 111 genuine new STATCAN items (121 vintage rows) are now
 present.
 
+## StatCan live-drift & known-exclusion hardening (FX-57EH)
+
+A narrowly-scoped hardening pass on FX-57E, found by review, before
+FX-57F was authorized -- three independent gaps, all in the direction
+of "a validation that was correct for the live data sampled so far
+was too easy to fool by a plausible-but-untested variant."
+
+**The catalogue-reference exclusion is now its own exact recognizer,
+never a broad catch-all.** The original parser treated "any id that
+fails the Daily-release URL contract" as presumptively the known
+recurring catalogue-reference noise -- which meant a genuinely NEW,
+unrecognized non-Daily shape (real future source-schema drift) would
+receive the SAME diagnostic as the already-understood case, and the
+`live_source` test's own string-matching on that diagnostic could
+never tell the two apart. `statcan_atom_parsing.is_known_catalogue_
+reference_id` is now an exact, narrow, live-verified shape check
+(`https://www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=<value>`),
+exported so the `live_source` test can independently re-verify the
+SAME contract the parser itself enforces against the raw offending
+id, never against this parser's own prose. An id that is neither a
+Daily-release article nor this exact shape now gets a genuinely
+different diagnostic ("unexpected non-Daily StatCan entry id shape"),
+so a truly novel shape fails the live test loudly.
+
+**The live overlap-benignity check now uses the EXACT production
+compatibility rule, not a hand-picked subset of fields.** The
+original `live_source` test only compared TITLES for a shared
+cross-channel identity -- weaker than `IngestNewsSourceOnce`'s own
+`_same_non_channel_facts`, which compares every non-channel field
+(summary, canonical_url, language, source_content_type, every source
+timestamp and its provenance, source status/disposition, revision
+metadata). The live test now imports that exact function directly
+(package-internal reuse, not a re-implementation, not a new public
+domain concept) -- a dedicated Postgres integration test
+(`test_same_headline_but_differing_summary_across_channels_still_
+conflicts`) pins that headline equality alone is insufficient:
+same id, same headline, differing summary across two channels still
+raises `ConflictingDuplicateExternalIdError` and fails the whole run
+closed.
+
+**Live timestamp-normalization drift is now actively re-checked, not
+only timestamp-ordering.** Every accepted live Daily-release
+observation must now have a non-`None`, normalized `source_published_
+at`, and exactly one `"updated"` provenance entry with a non-empty raw
+value and a non-`None` `normalized_at` -- a live DRIFT assertion only;
+the parser's own fail-soft behavior for a malformed OPTIONAL source
+timestamp (preserve raw, `normalized_at=None`, never raise) is
+unchanged.
+
+No change to the four adopted feeds, `source_key`, the multi-channel
+model (ADR 0006), `source_content_type="daily_release"`, timestamp
+mapping, PIT semantics, crawl-delay architecture, or any existing
+persisted row. No schema or migration change. The existing 111
+StatCan items (121 vintages) and every other source's own rows (230
+total) are untouched; a re-run of the manual script against unchanged
+live data remained fully idempotent.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

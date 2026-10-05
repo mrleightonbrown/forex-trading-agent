@@ -38,6 +38,28 @@ common identity/dedup contract. This also directly satisfies this
 story's own Section 26 instruction to validate the canonical link
 against "the expected Daily content path shape."
 
+**FX-57EH: the known catalogue-reference exclusion is now its OWN
+narrow, exact recognizer, never a loose catch-all.** The ORIGINAL
+FX-57E parser treated "any id that fails the Daily-release URL
+contract" as presumptively this catalogue-reference noise, which
+meant a genuinely NEW, unrecognized non-Daily shape (real source-
+schema drift) would silently receive the SAME "likely a recurring
+catalogue reference" diagnostic as the live-verified known case --
+precisely the kind of drift a `live_source` test exists to catch, but
+could not, if it only pattern-matched the word "catalogue" in that
+diagnostic string. `is_known_catalogue_reference_id` below is the
+EXACT, narrow, live-verified shape check
+(`https://www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=<value>`,
+confirmed live across every sampled recurrence) -- exported so a
+`live_source` test can independently re-verify the SAME contract
+this parser itself enforces, never by matching against this parser's
+own prose. An id that is neither a Daily-release article NOR this
+exact catalogue-reference shape now gets a genuinely DIFFERENT
+diagnostic ("unexpected non-Daily StatCan entry id shape"), so a
+truly novel non-Daily shape fails any `live_source` assertion built
+on this function, loudly, rather than being silently absorbed
+alongside the already-understood noise.
+
 **No internal duplicate-identity handling here (by design)**: unlike
 `govuk_discovery.py` (which is itself the dedupe/conflict authority
 for discovery-only diagnostics), this parser returns every valid
@@ -59,6 +81,8 @@ from xml.etree import ElementTree
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
 _STATCAN_HOST = "www.statcan.gc.ca"
 _DAILY_RELEASE_PATH_RE = re.compile(r"^/daily-quotidien/\d{6}/dq\d{6}[a-z]+-eng\.htm$")
+_CATALOGUE_REFERENCE_PATH = "/cgi-bin/IPS/display"
+_CATALOGUE_REFERENCE_QUERY_RE = re.compile(r"^cat_num=[A-Za-z0-9-]+$")
 
 
 class MalformedStatCanAtomFeedError(ValueError):
@@ -91,6 +115,17 @@ class StatCanAtomEntry:
 
 @dataclass(frozen=True, slots=True)
 class StatCanAtomParseResult:
+    """`invalid_count`/`invalid_reasons` carry the SAME common
+    item-level-invalid meaning every other FX-57 adapter uses --
+    but, unlike every other adapter, for StatCan this count also
+    includes the KNOWN, understood, adapter-local out-of-scope
+    catalogue-reference shape (see `is_known_catalogue_reference_id`
+    below), not only genuine malformed/drifted data (FX-57EH Section
+    8). No separate `items_excluded` counter was introduced for this
+    distinction -- a future observability cleanup could split them if
+    that becomes useful; for now, `invalid_reasons` itself always
+    distinguishes the two cases by wording."""
+
     entries: tuple[StatCanAtomEntry, ...]
     invalid_count: int
     invalid_reasons: tuple[str, ...]
@@ -131,6 +166,25 @@ def parse_statcan_daily_atom(text: str) -> StatCanAtomParseResult:
     )
 
 
+def is_known_catalogue_reference_id(entry_id: str) -> bool:
+    """Whether `entry_id` matches StatCan's own recurring, live-
+    verified "Product/Study" catalogue-reference shape (`https://
+    www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=<value>`) -- a
+    structurally distinct, genuinely valid StatCan URL that is simply
+    OUTSIDE this story's own adopted Daily-release evidence shape,
+    never source drift (FX-57EH Section 2). Exported so a `live_
+    source` test can independently re-verify this EXACT contract
+    against the raw id itself, rather than matching against this
+    module's own diagnostic wording."""
+    parsed = urlparse(entry_id)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == _STATCAN_HOST
+        and parsed.path == _CATALOGUE_REFERENCE_PATH
+        and bool(_CATALOGUE_REFERENCE_QUERY_RE.match(parsed.query))
+    )
+
+
 def _parse_one_entry(
     entry_element: ElementTree.Element,
 ) -> tuple[StatCanAtomEntry | None, str | None]:
@@ -139,10 +193,18 @@ def _parse_one_entry(
         return None, "missing or blank id"
 
     if _validate_daily_release_url(entry_id_raw) is None:
+        if is_known_catalogue_reference_id(entry_id_raw):
+            return None, (
+                "id matches the known recurring StatCan Product/Study "
+                "catalogue-reference shape (cgi-bin/IPS/display?cat_num=...), not "
+                "a dated Daily-release article -- out of this story's own adopted "
+                f"evidence scope, not source drift: {entry_id_raw!r}"
+            )
         return None, (
-            f"id is not a dated Daily-release article URL (likely a recurring "
-            f"product/catalogue reference, not evidence this story adopts): "
-            f"{entry_id_raw!r}"
+            "unexpected non-Daily StatCan entry id shape -- neither a dated "
+            "Daily-release article URL nor the known recurring catalogue-"
+            "reference pattern; this may be genuine source-schema drift needing "
+            f"review: {entry_id_raw!r}"
         )
 
     link_el = entry_element.find(f"{_ATOM_NS}link")

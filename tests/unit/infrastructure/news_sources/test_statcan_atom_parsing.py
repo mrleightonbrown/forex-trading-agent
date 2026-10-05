@@ -6,6 +6,7 @@ import pytest
 
 from forex_agent.infrastructure.news_sources.statcan_atom_parsing import (
     MalformedStatCanAtomFeedError,
+    is_known_catalogue_reference_id,
     parse_statcan_daily_atom,
 )
 
@@ -172,8 +173,74 @@ def test_catalogue_reference_id_is_invalid_not_a_daily_release() -> None:
         _feed(_entry(path=_CATALOGUE_PATH, title="Product/Study: Something"))
     )
     assert result.invalid_count == 1
-    assert "recurring product/catalogue reference" in result.invalid_reasons[0]
+    assert (
+        "known recurring StatCan Product/Study catalogue-reference shape"
+        in result.invalid_reasons[0]
+    )
     assert result.entries == ()
+
+
+# --- FX-57EH: exact catalogue-reference recognizer, not a catch-all -------
+
+
+def test_a_known_catalogue_shape_is_recognized() -> None:
+    assert is_known_catalogue_reference_id(
+        "https://www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=18-001-X"
+    )
+    assert is_known_catalogue_reference_id(
+        "https://www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=14200001"
+    )
+
+
+def test_b_unexpected_same_host_non_daily_url_is_not_the_catalogue_shape() -> None:
+    assert not is_known_catalogue_reference_id(
+        "https://www.statcan.gc.ca/some/other/path?cat_num=18-001-X"
+    )
+    assert not is_known_catalogue_reference_id("https://www.statcan.gc.ca/n1/daily-quotidien/")
+
+
+def test_c_off_host_id_is_not_the_catalogue_shape() -> None:
+    assert not is_known_catalogue_reference_id(
+        "https://evil.example.com/cgi-bin/IPS/display?cat_num=18-001-X"
+    )
+
+
+def test_d_malformed_id_is_not_the_catalogue_shape() -> None:
+    assert not is_known_catalogue_reference_id("not-a-url")
+    assert not is_known_catalogue_reference_id("")
+
+
+def test_known_catalogue_entry_gets_the_known_diagnostic() -> None:
+    result = parse_statcan_daily_atom(_feed(_entry(path=_CATALOGUE_PATH)))
+    assert result.invalid_count == 1
+    assert (
+        "known recurring StatCan Product/Study catalogue-reference shape"
+        in (result.invalid_reasons[0])
+    )
+
+
+def test_unexpected_non_daily_shape_gets_a_different_diagnostic_not_catalogue() -> None:
+    # An id that is neither a Daily-release article NOR the known
+    # catalogue-reference shape must get a GENUINELY DIFFERENT
+    # diagnostic -- never silently absorbed as "likely catalogue
+    # noise" the way the original FX-57E parser's broad catch-all did.
+    result = parse_statcan_daily_atom(
+        _feed(_entry(path="/some/unexpected/future/path", title="Mystery entry"))
+    )
+    assert result.invalid_count == 1
+    reason = result.invalid_reasons[0]
+    assert "known recurring StatCan Product/Study catalogue-reference shape" not in reason
+    assert "unexpected non-Daily StatCan entry id shape" in reason
+
+
+def test_off_host_id_also_gets_the_unexpected_diagnostic_not_catalogue() -> None:
+    result = parse_statcan_daily_atom(
+        _feed(_entry(entry_id="https://evil.example.com/cgi-bin/IPS/display?cat_num=18-001-X"))
+    )
+    assert result.invalid_count == 1
+    reason = result.invalid_reasons[0]
+    assert "known recurring StatCan Product/Study catalogue-reference shape" not in reason
+    assert "unexpected non-Daily StatCan entry id shape" in reason
 
 
 def test_id_missing_scheme_is_invalid() -> None:

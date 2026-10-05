@@ -4073,3 +4073,148 @@ FX-57F (Bank of Canada, with its own known timestamp-remediation
 need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine
 work. FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED. Return FX-57E
 for review.
+
+## FX-57EH: StatCan live-drift & known-exclusion hardening (complete)
+
+A narrowly-scoped hardening pass on FX-57E, found by review, before
+FX-57F was authorized. Git HEAD at this pass's own start: `ca2e19a`
+(the FX-57E commit).
+
+**1. The catalogue-reference exclusion was too broad a catch-all.**
+The original FX-57E parser treated "any id that fails the Daily-
+release URL contract" as presumptively the already-understood
+recurring "Product/Study" catalogue-reference noise, producing a
+diagnostic that merely SAID "likely a recurring product/catalogue
+reference." The `live_source` test, in turn, only checked that this
+diagnostic STRING contained that phrase -- meaning a genuinely NEW,
+unrecognized non-Daily id shape (real future source-schema drift)
+would receive the exact same diagnostic and pass the live test
+silently, exactly the failure mode a drift test exists to prevent.
+Fixed: `statcan_atom_parsing.is_known_catalogue_reference_id` is now
+an exact, narrow, EXPORTED predicate matching the live-verified shape
+only (`https://www.statcan.gc.ca/cgi-bin/IPS/display?cat_num=
+<value>` -- scheme, host, exact path, and query-string shape all
+checked); the parser itself now branches on this predicate to choose
+between two genuinely DIFFERENT diagnostics ("id matches the known
+recurring StatCan Product/Study catalogue-reference shape... out of
+this story's own adopted evidence scope, not source drift" vs.
+"unexpected non-Daily StatCan entry id shape... may be genuine
+source-schema drift needing review"). The `live_source` test now
+extracts the ACTUAL offending id from each invalid reason (via `ast.
+literal_eval` on the trailing `repr()`, never a substring/regex match
+on the surrounding prose) and re-checks it against the SAME exported
+predicate -- so a truly novel shape now fails the live test loudly,
+by construction, not by wording coincidence.
+
+**2. The live overlap-benignity check was weaker than production.**
+The original `live_source` test's own cross-channel benignity check
+compared ONLY the headline/title for a shared identity -- strictly
+weaker than `IngestNewsSourceOnce`'s own `_same_non_channel_facts`,
+which compares EVERY non-channel field (summary, canonical_url,
+language, source_content_type, both source timestamps and their
+provenance, source status/disposition, revision metadata). Per the
+spec's own explicit instruction, this was fixed by REUSE, not
+re-implementation: the live test now imports `_same_non_channel_
+facts` directly from `ingest_news_source_once.py` (a package-internal
+private-helper import, the same precedent this session already
+established for `test_migration_observed_source_channels_backfill.
+py`'s own direct import of a migration's private `_compute_
+cumulative_channels` helper) -- no new public domain concept was
+created solely for the test. A new Postgres integration test,
+`test_same_headline_but_differing_summary_across_channels_still_
+conflicts`, proves headline equality alone is insufficient: the SAME
+external id, the SAME headline, but a genuinely DIFFERENT summary
+across two StatCan channels still raises `ConflictingDuplicate
+ExternalIdError` and fails the whole run closed before persistence.
+
+**3. Live timestamp-normalization drift was not actively re-checked.**
+The original live test checked `source_published_at <= retrieved_at`
+only when `source_published_at` happened to be non-`None` -- it never
+asserted that every accepted Daily-release observation SHOULD have
+one, even though this story's own live research established exactly
+that for every sampled item. The live test now asserts, for every
+accepted observation: `source_published_at is not None`; exactly one
+`"updated"` provenance entry exists; its `raw_value` is non-empty;
+and its `normalized_at` is not `None`. This is a live DRIFT assertion
+only -- the parser's own fail-soft behavior for a malformed OPTIONAL
+source timestamp (preserve the raw value, leave `normalized_at=
+None`, never raise) is explicitly unchanged; Section 7's own
+instruction was followed precisely on this point.
+
+**Explicitly unchanged, confirmed by full regression**: the four
+adopted feeds, `source_key="STATCAN"`, the multi-channel cumulative-
+provenance model (ADR 0006), `source_content_type="daily_release"`
+held constant across channels, the `<updated>` -> `source_published_
+at`-only timestamp mapping, PIT semantics, the 2-second crawl-delay
+pacing architecture (including its own retry-path coverage), and
+every one of the 111 pre-existing genuine StatCan items (121
+vintages). No schema or migration change. Per the spec's own
+explicit, deliberate choice (Section 8): the known catalogue-
+reference entries remain counted in the EXISTING `items_invalid`
+counter (no new `items_excluded` cross-cutting counter was
+introduced) -- this doc, and the parser's own module docstring, now
+explicitly call out that this counter's own meaning for StatCan
+includes this known, understood, adapter-local out-of-scope shape,
+not only genuine malformed/drifted data.
+
+**Verification, reported separately**: focused suites -- StatCan
+Atom parser unit (`29 passed`, up from 22), StatCan adapter unit
+(`27 passed`, unchanged count, one assertion's own wording corrected
+to match the new diagnostic), StatCan Postgres integration (`11
+passed`, up from 10, the new non-title-conflict regression), common
+application unit (`38 passed`, unchanged -- Phase 1c/`RecordNews
+Observation` untouched), `http_fetch.py`'s own transport tests (`10
+passed`, unchanged), Fed regression (`22 passed`), ECB regression
+(`21 passed`), BoE regression (`24 passed`), GOV.UK regression (`80
+passed`). StatCan's own `live_source` test, run separately, TWICE
+(once right after the parser/live-test changes, once again after the
+full regression pass): `1 passed` both times -- live-reconfirmed 10
+cross-subject overlapping ids this run, matching the original
+research exactly, every one proven benign by the EXACT production
+compatibility rule, and zero invalid entries whose own id failed to
+match the exact known catalogue-reference predicate. Deterministic
+default suite (`pytest`): final verification run was `2032 passed, 9
+deselected`, zero failures -- an OANDA live-practice-API test
+flickered failed on an earlier pass this same session (FX-EPIC-06,
+environment/network-dependent, unrelated to news intelligence) and
+then passed cleanly on re-run; reported per the actual final run.
+Full `live_source` suite (`pytest -m live_source`): `1 failed, 8
+passed` -- the same pre-existing, documented BLS 403 (FX-EPIC-07,
+unrelated), confirmed unchanged; deselected count unchanged at 9 (no
+new `live_source` test was added, only the existing one strengthened).
+`ruff check .`, `ruff format --check .`, `mypy .` (444 source files),
+and `pre-commit run --all-files` all pass clean.
+
+**Test counts, verified via per-file BEFORE/AFTER `grep -cE '^(async
+)?def test_'` net totals** (both touched test files that gained new
+tests were already-tracked, modified files, so a plain count
+sufficed): **8 new test functions** -- 7 in `test_statcan_atom_
+parsing.py` (22 -> 29: the exact-recognizer unit tests A-D plus the
+two-diagnostics-are-genuinely-different tests), 1 in `test_statcan_
+news_ingestion.py` (10 -> 11: the non-title-conflict regression).
+
+`scripts/ingest_statcan_news.py` re-run live once, after the
+hardening, against the real four feeds and dev Postgres:
+`created=0, revisions_added=0, unchanged=121, channel_memberships_
+added=0, items_invalid=43` -- reported as the ACTUAL result observed
+(matching the expected "no behavioral drift" outcome exactly, since
+live StatCan data had not changed in the intervening minutes).
+Database spot-check confirmed the existing 341 rows across all five
+sources (45 Fed + 15 ECB + 150 BoE + 20 GOV.UK + 111 STATCAN) remain
+exactly untouched.
+
+**No ADR 0005 or ADR 0006 update** -- every change in this pass is a
+pure application-layer parsing/validation hardening inside `statcan_
+atom_parsing.py` and its own `live_source` test coverage; no new
+source fact was discovered.
+
+Full details in `docs/DECISIONS.md`'s FX-57EH entry; `docs/
+ARCHITECTURE.md` carries a new "StatCan live-drift & known-exclusion
+hardening" section; `docs/CURRENT_STATE.md` carries its own FX-57EH
+entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57F (Bank of Canada, with its own known timestamp-remediation
+need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine
+work. FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED. Return FX-57EH
+for review.

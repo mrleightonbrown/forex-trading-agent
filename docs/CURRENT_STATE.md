@@ -2343,6 +2343,53 @@ _Last updated: 2026-09-27 (FX-54V)_
   itself was already recorded in ADR 0006, not duplicated here.
   **Stop after FX-57E -- do not start FX-57F (BoC)/FX-58/FX-59/FX-60/
   FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57EH: StatCan live-drift & known-exclusion hardening
+  (complete)**. A narrowly-scoped hardening pass on FX-57E, found by
+  review, before FX-57F was authorized -- three independent gaps: (1)
+  the catalogue-reference exclusion was a broad catch-all ("any id
+  that fails the Daily-release URL contract"), which could have
+  silently absorbed a genuinely NEW non-Daily shape (real source-
+  schema drift) under the same diagnostic as the already-understood
+  catalogue-reference noise -- `statcan_atom_parsing.is_known_
+  catalogue_reference_id` is now an exact, narrow, exported shape
+  check (`cgi-bin/IPS/display?cat_num=...`), used by both the parser
+  itself and the `live_source` test (which now re-verifies the ACTUAL
+  offending id against this predicate, never against the diagnostic's
+  own wording); anything else gets a genuinely different "unexpected
+  non-Daily StatCan entry id shape" diagnostic; (2) the `live_source`
+  test's own cross-channel overlap-benignity check only compared
+  TITLES -- weaker than `IngestNewsSourceOnce`'s own `_same_non_
+  channel_facts` (which compares every non-channel field); the live
+  test now imports and uses that EXACT function directly (package-
+  internal reuse, no new public domain concept), and a new Postgres
+  integration test proves headline equality alone is insufficient
+  (same id, same headline, differing summary across channels still
+  raises `ConflictingDuplicateExternalIdError`); (3) the live test now
+  also asserts every accepted observation has a normalized `source_
+  published_at` and exactly one non-empty, normalized `"updated"`
+  provenance entry -- a live DRIFT assertion only, the parser's own
+  fail-soft handling of a malformed OPTIONAL timestamp is unchanged.
+  8 new test functions (verified via per-file before/after `grep -c`:
+  7 in `test_statcan_atom_parsing.py` (22 -> 29), 1 in `test_statcan_
+  news_ingestion.py` (10 -> 11); the adapter unit file and the live
+  test file each gained no NET new test, only corrected assertions/
+  internals). Deterministic default suite: final verification run was
+  `2032 passed, 9 deselected`, zero failures (an OANDA live-practice
+  test flickered failed on an earlier pass this same session --
+  environment/network-dependent, unrelated to news intelligence --
+  then passed cleanly on re-run). `live_source` suite: `1 failed, 8
+  passed` (same pre-existing, unrelated BLS 403). `ruff`/`mypy`/
+  `pre-commit` all clean. Manual runner re-run live once against
+  unchanged real data: `created=0, revisions_added=0, unchanged=121,
+  channel_memberships_added=0`, exactly as expected. The existing 341
+  rows across all five sources (45 Fed + 15 ECB + 150 BoE + 20 GOV.UK
+  + 111 STATCAN) confirmed untouched. No schema/migration change; no
+  change to the four adopted feeds, identity, the multi-channel model
+  (ADR 0006), `source_content_type`, timestamp mapping, PIT semantics,
+  or crawl-delay architecture. No ADR 0005/0006 change -- a pure
+  application-layer validation hardening pass, no new source fact.
+  **Stop after FX-57EH -- do not start FX-57F (BoC)/FX-58/FX-59/
+  FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

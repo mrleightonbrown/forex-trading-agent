@@ -361,7 +361,10 @@ async def test_items_invalid_passthrough_from_parser() -> None:
 
     assert outcome.observations == ()
     assert outcome.items_invalid == 1
-    assert "recurring product/catalogue reference" in outcome.invalid_reasons[0]
+    assert (
+        "known recurring StatCan Product/Study catalogue-reference shape"
+        in (outcome.invalid_reasons[0])
+    )
 
 
 # --- robots/rate pacing matrix (Section 19/48/79) ---------------------------

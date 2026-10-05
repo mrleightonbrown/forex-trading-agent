@@ -419,6 +419,47 @@ async def test_cross_subject_genuine_conflict_fails_whole_run_closed(
     assert await repository.get_item_by_source_identity(unrelated_identity) is None
 
 
+@pytest.mark.asyncio
+async def test_same_headline_but_differing_summary_across_channels_still_conflicts(
+    session: AsyncSession,
+) -> None:
+    # FX-57EH Section 6: headline equality ALONE is not sufficient to
+    # call a cross-subject overlap benign -- the SAME non-channel-
+    # fact rule IngestNewsSourceOnce actually uses compares every
+    # non-channel field, including summary. Two observations sharing
+    # an identical headline but differing summary across channels
+    # must still fail the whole run closed.
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    prices_body = _feed_xml(
+        _entry_xml(
+            "same-headline-diff-summary",
+            title="Identical headline across both channels",
+            summary="Summary as reported by the prices subject feed.",
+        )
+    )
+    trade_body = _feed_xml(
+        _entry_xml(
+            "same-headline-diff-summary",
+            title="Identical headline across both channels",
+            summary="A genuinely DIFFERENT summary as reported by trade.",
+        )
+    )
+
+    with pytest.raises(ConflictingDuplicateExternalIdError):
+        await ingest(
+            (
+                _fetcher(_PRICES_FEED, prices_body, _ts(20)),
+                _fetcher(_TRADE_FEED, trade_body, _ts(20)),
+            )
+        )
+    await session.commit()
+
+    identity = NewsSourceIdentity(SOURCE_KEY, _entry_id("same-headline-diff-summary"))
+    assert await repository.get_item_by_source_identity(identity) is None
+
+
 # --- PIT worked example (Section 70) ----------------------------------------
 
 
