@@ -467,6 +467,28 @@ with different semantics even at a source FX-52A already adopted.
   window in the feed; a predictable date-addressed HTML archive exists
   beyond that. **Verdict: ADOPT_PROSPECTIVE (strong). Historical:
   DEFER** (licence clearly permits it; mechanism is still HTML).
+  **FX-57E addendum (2026-10-05, live-reconfirmed)**: the official
+  feed-index page (`https://www.statcan.gc.ca/en/sc/rss`) currently
+  lists 33 total `dai-quo` feed rows (32 by subject plus "All
+  subjects"), not 34 -- a one-row decrease from this entry's original
+  count, confirmed by direct enumeration of every listed `.atom` link.
+  The four adopted macro feeds (prices/`18`, labour/`14`, economic
+  accounts/`36`, international trade/`12`) remain present and
+  unchanged at their original URLs. This is taxonomy/feed-index
+  drift, not a rights or PIT change -- the `ADOPT_PROSPECTIVE`
+  verdict and licence/`Crawl-delay`/100-day-window findings above are
+  all independently reconfirmed live and unchanged. Separately, live
+  research for FX-57E found that Statistics Canada legitimately
+  cross-lists the SAME Daily release under more than one of its own
+  subject feeds simultaneously -- a genuine SOURCE-SHAPE fact, not a
+  rights/PIT finding, so it does not belong in this ADR; it is
+  recorded, with the application-layer model correction it required,
+  in `docs/adr/0006-multi-channel-news-provenance.md` instead. Also
+  live-reconfirmed, unchanged: every same-day entry still shares one
+  identical `08:30:00-04:00` timestamp; the sequence-letter identity
+  scheme is unchanged; the Open Licence terms and required attribution
+  notice format are unchanged; zero future-dated items were found
+  across all four adopted feeds.
 
 - **Department of Finance Canada** (`api.io.canada.ca`) -- a real,
   functioning, parameterised news API (department/date-range/sort

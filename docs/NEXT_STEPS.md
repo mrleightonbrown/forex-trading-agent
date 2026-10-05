@@ -3898,3 +3898,178 @@ this same pass; do not start FX-57F (Bank of Canada)/FX-58/FX-59/
 FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
 remain DEFER; FX-53 remains BLOCKED. Return FX-57E0 for architectural
 review.
+
+## FX-57E: Statistics Canada "The Daily" prospective news ingestion (complete)
+
+Resumed on top of the accepted ADR 0006/FX-57E0 model correction. Git
+HEAD at this resumption's own start: `2dca97f` (the FX-57E0 commit),
+with FX-57E's own prior WIP (`statcan_atom_parsing.py`, `statcan_
+source.py`, the `http_fetch.py` `before_attempt` hook and its 2 tests)
+intact, uncommitted, exactly as preserved.
+
+**First action on resumption: re-verify the end-to-end flow against
+real data under the NEW model**, before writing a single additional
+test. Running the existing adapter through `IngestNewsSourceOnce`
+against all four real live feeds confirmed: 164 items fetched, 121
+genuine Daily-release observations normalized, 43 catalogue-reference
+items correctly excluded, 111 unique items created, and -- the
+critical confirmation -- exactly 10 revisions added, all attributable
+to `channel_added=True` (a newly-learned channel), zero attributable
+to ordinary content change, and zero exceptions raised. This is a
+direct, live, end-to-end proof that the FX-57E0 architectural fix
+actually resolves the original blocking finding for real StatCan data,
+not only for synthetic common-layer fixtures.
+
+**One stale claim found and corrected during resumption**:
+`statcan_source.py`'s own module docstring, written before the FX-57E0
+pause, still claimed "ZERO cross-subject overlap" and referenced the
+now-retired `CrossChannelIdentityCollisionError`. Corrected to state
+the actual live finding (genuine, reproducible overlap) and the actual
+mechanism (`observed_source_channels` cumulative merge, `Conflicting
+DuplicateExternalIdError` only on a genuine content conflict) --
+worth remembering: a module docstring written mid-story, before a
+pause-and-correct cycle, needs its own re-read before resuming, not
+just the code.
+
+**One genuine implementation gap found and fixed during resumption**:
+`StatCanSource.fetch_feed` called `http_fetch.fetch_text` with the new
+`before_attempt` pacing hook but did NOT pass its own injectable
+`sleep` through to `fetch_text`'s own `sleep` parameter -- meaning
+`fetch_text`'s OWN internal 5xx/429 retry backoff was still using the
+REAL `asyncio.sleep` by default. A deterministic retry-pacing test
+(Section 48.C) caught this immediately: it took 2+ real wall-clock
+seconds to run, which should be structurally impossible for a fully-
+injected deterministic test. Fixed by also passing `sleep=self._sleep`
+to `fetch_text`; the same test now runs in under 0.15s. This did not
+change real production behavior (both before and after the fix,
+actual retries still pace correctly in a live run) -- it fixed
+TESTABILITY, surfaced by writing the exact test the spec's own Section
+48 required.
+
+**Daily-release vs recurring catalogue-reference entries, resolved
+exactly as the pre-pause research found**: `statcan_atom_parsing.py`
+validates every entry's own `<id>` against the dated Daily-release
+URL shape (`https://www.statcan.gc.ca/daily-quotidien/<YYMMDD>/dq
+<YYMMDD><letter(s)>-eng.htm`); anything else (the recurring `cgi-bin/
+IPS/display?cat_num=...` catalogue reference, confirmed live to
+recur 7/21/14 times across Labour/Economic-accounts/International-
+trade with a fresh `updated` value each time, same id every time) is
+an ordinary item-level invalid, counted, never ingested, never
+raised as a response-level error -- a narrow, adapter-local content-
+shape filter, never a common-contract change. This parser performs
+NO same-identity dedupe of its own, exactly like `rss_item_
+parsing.py` -- that remains the common `IngestNewsSourceOnce` layer's
+job uniformly, now correctly extended (by FX-57E0) to merge rather
+than reject a benign cross-channel duplicate.
+
+**Field mappings, each pinned by a deterministic test**: `title`
+(flattened from its own `type="xhtml"` nested `<div>`, sometimes
+containing an inner `<span class="refper">` for the reference period)
+-> `headline`, required; `summary` (same flattening) -> `summary` if
+present; no `<content>` or entry-level `<author>` ever found live, so
+`body_text`/`authors` are always `None`/`()`; `<link>` -> `canonical_
+url`, mapped from a genuinely separate field than identity even though
+the two coincide for every live-sampled entry; `locale` is implicit
+(`*-eng.atom` feeds only, never language-detected) -> `language="en"`;
+`source_content_type` held constant at `"daily_release"` for all four
+feeds, deliberately NOT varying by channel (Section 31/32) -- exactly
+what lets a genuine cross-subject release merge as additional
+provenance instead of conflicting, in direct contrast to Fed's own
+per-channel `source_content_type`. `<updated>` (Case B: no
+`<published>` field exists at all) maps to `source_published_at` ONLY,
+never simultaneously to `source_updated_at` (which stays `None`), with
+the raw value also unconditionally preserved as its own timestamp-
+provenance entry -- live-reconfirmed to represent The Daily's own
+release instant (every same-day entry across all four feeds shares
+one identical `08:30:00-04:00` value, matching the date embedded in
+that same entry's own id). A live `-05:00` (EST/winter) example was
+not found within the live 100-day window (all sampled entries fell in
+EDT season), but ordinary ISO-8601 parsing handles any valid numeric
+offset without special-casing -- pinned by a deterministic test using
+a synthetic `-05:00` fixture, with NO Toronto-local reinterpretation
+(the Bank of Canada story's own known defect; StatCan does not inherit
+it). The sequence letter (`dq260929a`/`g`) is treated as fully opaque
+identity, never reconstructed, and never used to fabricate sub-second
+timing precision -- pinned by a dedicated sequence-id test proving two
+same-day letter-suffixed entries share the identical source timestamp.
+
+**Rate pacing, robots.txt reconfirmed live, unchanged from ADR 0005's
+own finding**: `www150.statcan.gc.ca/robots.txt` still sets `User-
+agent: * / Crawl-delay: 2`, covering none of `/n1/rss/dai-quo/`.
+`StatCanSource` paces every request -- including `fetch_text`'s own
+internal retry attempts, via the new `before_attempt` hook described
+above -- to at least 2.0 seconds apart. Feeds are fetched strictly
+sequentially (never concurrently) by construction: `IngestNewsSource
+Once` already iterates its fetchers one at a time, so no additional
+guard was needed. The full robots/rate test matrix (Section 48.A-E)
+is pinned deterministically with an injected monotonic clock and
+sleep -- confirmed to run with zero real wall-clock wait after the
+gap above was fixed.
+
+**Verification, reported separately**: focused suites -- StatCan
+Atom parser unit (`22 passed`), StatCan adapter unit (`27 passed`),
+StatCan Postgres integration (`10 passed`, including the genuine
+cross-subject merge and genuine-conflict-still-fails scenarios),
+`http_fetch.py`'s own transport tests (`10 passed`, up from 8),
+common application unit (`38 passed`, unchanged -- Phase 1c/
+`RecordNewsObservation` untouched by this story), Fed regression
+(`22 passed`), ECB regression (`21 passed`), BoE regression (`24
+passed`), GOV.UK regression (`80 passed`). StatCan's own `live_
+source` test, run separately: `1 passed` -- confirmed, live, that any
+cross-subject overlap found (10 instances this run, matching the
+original pre-pause research exactly) is BENIGN (identical titles
+across the overlapping channels), and that zero items carry an
+UNEXPECTED invalid reason (only the known catalogue-reference
+pattern). Deterministic default suite (`pytest`): final verification
+run was `2024 passed, 9 deselected`, zero failures (an OANDA live-
+practice-candle test flickered failed on an earlier pass this same
+session -- FX-EPIC-06, environment/network-dependent, unrelated to
+news intelligence -- then passed cleanly on re-run; reported per the
+actual final run). Full `live_source` suite (`pytest -m live_source`): `1
+failed, 8 passed` -- the same pre-existing, documented BLS 403
+(FX-EPIC-07, unrelated), confirmed unchanged; deselected count rose
+by exactly 1 (StatCan's own new live test). `ruff check .`, `ruff
+format --check .`, `mypy .` (444 source files), and `pre-commit run
+--all-files` all pass clean. 62 new test functions total (2 in the
+modified `test_http_fetch.py`, verified via before/after net `grep
+-c`; 60 across four new test files, verified via direct per-file
+`grep -c`, since none of those four existed before this resumption).
+
+`scripts/ingest_statcan_news.py` run live, twice, against the real
+four feeds and dev Postgres: run 1 -- 164 fetched, 121 normalized, 43
+invalid (expected catalogue references), 111 created, 10 revisions
+added (all 10 attributable to a newly-learned channel), 0 unchanged;
+run 2 -- identical fetch/normalize/invalid counts, 0 created, 0
+revisions added, 121 unchanged, 0 channel memberships added -- fully
+idempotent. Direct SQL confirmed the existing 45 Fed + 15 ECB + 150
+BoE + 20 GOV.UK rows (230 total) remained exactly untouched throughout,
+alongside the 111 new, genuine `STATCAN` items (121 vintage rows); a
+direct query for every StatCan vintage with more than one observed
+channel returned exactly the same 10 release ids the live research
+and the live test both independently found, each with the correct
+cumulative two-channel set.
+
+No schema or migration change beyond the one FX-57E0 already made.
+
+**ADR 0005 addendum added** (live-reconfirmed): the official feed-
+index page now lists 33 total `dai-quo` rows (32 subjects + "All
+subjects"), not 34 -- a taxonomy/feed-index change, not a rights/PIT
+one; the four adopted feeds are unchanged at their original URLs, and
+every other ADR 0005 StatCan finding (licence, `Crawl-delay`, 100-day
+window, same-day-shared-timestamp) was independently reconfirmed live
+and is unchanged. The cross-subject-overlap SOURCE-SHAPE finding
+itself, and the application-layer model correction it required, were
+already recorded in ADR 0006 during FX-57E0 and are not duplicated
+here.
+
+Full details in `docs/DECISIONS.md`'s FX-57E entry; `docs/
+ARCHITECTURE.md` carries a new "Statistics Canada 'The Daily'
+prospective news ingestion" section; `docs/CURRENT_STATE.md` carries
+its own FX-57E entry; `docs/adr/0005-...md` carries the feed-count
+addendum.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-57F (Bank of Canada, with its own known timestamp-remediation
+need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine
+work. FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED. Return FX-57E
+for review.

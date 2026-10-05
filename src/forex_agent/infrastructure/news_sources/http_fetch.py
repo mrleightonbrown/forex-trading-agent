@@ -31,6 +31,7 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 ClockFn = Callable[[], UtcTimestamp]
 SleepFn = Callable[[float], Awaitable[None]]
+BeforeAttemptFn = Callable[[], Awaitable[None]]
 
 
 def default_clock() -> UtcTimestamp:
@@ -75,14 +76,27 @@ async def fetch_text(
     max_attempts: int = 3,
     backoff_seconds: Callable[[int], float] = lambda attempt: 2.0 * attempt,
     sleep: SleepFn = _default_sleep,
+    before_attempt: BeforeAttemptFn | None = None,
 ) -> FetchedResponse:
     """GET `url`, retrying only a transport failure, HTTP 429, or HTTP
     5xx, up to `max_attempts` total attempts. An ordinary 4xx (other
     than 429) never retries. `retrieved_at` is captured exactly once,
     immediately after the attempt that actually succeeds -- never at
-    the start of the loop, and never per subsequent parsed item."""
+    the start of the loop, and never per subsequent parsed item.
+
+    **FX-57E Section 23**: `before_attempt`, when given, is awaited
+    immediately before EVERY attempt this call makes, including
+    retries -- the hook a source whose own `robots.txt` sets a
+    `Crawl-delay` (Statistics Canada) uses to enforce a minimum
+    inter-request interval that a bare per-call pacer (one that only
+    wraps the OUTER call, not this loop's own internal retries) could
+    otherwise violate. `None` (the default) preserves every existing
+    caller's behavior exactly -- Fed/ECB/BoE/GOV.UK pass nothing here
+    and are entirely unaffected."""
     last_error: str = "no attempt was made"
     for attempt in range(1, max_attempts + 1):
+        if before_attempt is not None:
+            await before_attempt()
         try:
             response = await client.get(url)
         except httpx.RequestError as exc:

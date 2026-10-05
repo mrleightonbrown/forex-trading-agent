@@ -134,6 +134,46 @@ async def test_5xx_exhausting_retries_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_before_attempt_hook_runs_on_every_attempt_including_retries() -> None:
+    # FX-57E Section 23: a source with its own robots.txt Crawl-delay
+    # (Statistics Canada) needs its pacing hook invoked before EVERY
+    # attempt this loop makes, including retries -- not just once
+    # per outer call.
+    attempts = {"count": 0}
+    before_attempt_calls = {"count": 0}
+
+    async def before_attempt() -> None:
+        before_attempt_calls["count"] += 1
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            return httpx.Response(503, text="unavailable")
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    await fetch_text(
+        client, "/feed.xml", sleep=_no_sleep, max_attempts=3, before_attempt=before_attempt
+    )
+    await client.aclose()
+
+    assert attempts["count"] == 3
+    assert before_attempt_calls["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_no_before_attempt_hook_is_a_no_op() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    result = await fetch_text(client, "/feed.xml", sleep=_no_sleep)
+    await client.aclose()
+
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
 async def test_retry_after_header_is_respected() -> None:
     attempts = {"count": 0}
     slept: list[float] = []

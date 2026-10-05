@@ -2280,6 +2280,69 @@ _Last updated: 2026-09-27 (FX-54V)_
   commit. **Stop after FX-57E0 -- do not resume FX-57E (StatCan)/
   start FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision
   Engine/Risk Engine in this same pass.**
+- **FX-57E: Statistics Canada "The Daily" prospective news ingestion
+  (complete)**. Resumed on top of the ADR 0006/FX-57E0 model
+  correction. Four exact adopted feeds (`18-eng.atom` prices,
+  `14-eng.atom` labour, `36-eng.atom` economic accounts, `12-
+  eng.atom` international trade), `source_key="STATCAN"`, one static
+  channel per feed, never the "all subjects" feed. FTA's first source
+  where Atom itself is the evidence surface -- a dedicated parser
+  (`statcan_atom_parsing.py`), not a reuse of the RSS parser or
+  GOV.UK's own discovery-only Atom parser. Live finding: three of the
+  four feeds recur a structurally distinct, static "Product/Study"
+  catalogue-reference entry (same id, fresh `updated` on almost every
+  mention) -- filtered at the adapter level via Daily-release URL-
+  shape validation, an ordinary item-level invalid, never ingested,
+  never a common-contract change. External identity is the Atom
+  `<id>` (live-verified stable); the sequence letter embedded in it
+  (`dq260929a`/`g`) recovers same-day ordering but never fabricates
+  timing precision -- same-day entries share one identical source
+  timestamp. `<updated>` maps to `source_published_at` only (never
+  `source_updated_at`, which stays `None`), raw value also preserved
+  as provenance. `source_content_type` is held CONSTANT at `"daily_
+  release"` across all four feeds (channel already preserves subject
+  taxonomy) -- deliberately unlike Fed's own per-channel content
+  type, and exactly what lets a genuine cross-subject release merge
+  cleanly rather than conflict. **The genuine cross-subject multi-
+  channel case (the one that originally paused this story) is
+  confirmed working end-to-end against real Postgres**: 10 real Daily
+  releases cross-listed under two adopted subject feeds in one live
+  poll, all 10 correctly merged into one item's own cumulative
+  `observed_source_channels` each, zero spurious content-change
+  revisions, `channel_memberships_added` exactly matching. Rate
+  pacing honors `robots.txt`'s own `Crawl-delay: 2` (live-reconfirmed)
+  via a new, provider-neutral `before_attempt` hook added to the
+  shared `http_fetch.fetch_text` (awaited before every attempt
+  including retries; `None` by default, Fed/ECB/BoE/GOV.UK
+  unaffected). Feeds fetched strictly sequentially. 62 new test
+  functions (verified via per-file net `grep -c` counts and `git
+  diff` for the one modified file): 2 in `test_http_fetch.py` (8 ->
+  10, the `before_attempt` hook), 22 in a new `test_statcan_atom_
+  parsing.py`, 27 in a new `test_statcan_source.py`, 10 in a new
+  `test_statcan_news_ingestion.py` (Postgres integration, including
+  the genuine cross-subject merge and a genuine-conflict-still-fails
+  regression), 1 new `live_source` test. Deterministic default suite:
+  `2024 passed, 9 deselected`, zero failures on the final verification
+  run (an OANDA live-practice-candle test flickered failed on an
+  earlier pass in this same session -- environment/network-dependent,
+  unrelated to news intelligence -- then passed on re-run; reported
+  per the actual final run, not an earlier one). `live_source` suite: `1 failed, 8 passed` (same
+  pre-existing, unrelated BLS 403; Fed/ECB/BoE/GOV.UK/StatCan's own
+  live tests all pass -- StatCan's own live test inverts the Fed/ECB/
+  BoE/GOV.UK precedent, asserting any cross-subject overlap found is
+  BENIGN rather than asserting no overlap exists, matching the live
+  reality this story itself established). `ruff`/`mypy`/`pre-commit`
+  all clean. Manual runner run live twice: run 1 created 111, added
+  10 cross-subject revisions; run 2 fully idempotent
+  (`created=0, unchanged=121`). The existing 45 Fed + 15 ECB + 150
+  BoE + 20 GOV.UK rows (230 total) confirmed untouched; 111 genuine
+  new STATCAN items (121 vintage rows) now present. No schema/
+  migration change beyond FX-57E0's own. **ADR 0005 addendum added**
+  (feed-index page now lists 33 total rows, not 34 -- taxonomy drift,
+  verdict unchanged); the cross-subject-overlap source-shape finding
+  itself was already recorded in ADR 0006, not duplicated here.
+  **Stop after FX-57E -- do not start FX-57F (BoC)/FX-58/FX-59/FX-60/
+  FX-61/FX-EPIC-09/Decision Engine/Risk Engine.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

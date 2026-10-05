@@ -2406,6 +2406,117 @@ FX-57E (Statistics Canada ingestion) remains paused, to resume as its
 own later story on top of this corrected model; its own partially-built
 adapter files are preserved, uncommitted, for that resumption.
 
+## Statistics Canada "The Daily" prospective news ingestion (FX-57E)
+
+Resumed and completed on top of the ADR 0006 / FX-57E0 model
+correction. Four exact adopted English subject feeds (ADR 0005's own
+minimum macro set): prices (`18-eng.atom`), labour (`14-eng.atom`),
+economic accounts (`36-eng.atom`), international trade (`12-eng.atom`)
+-- `source_key="STATCAN"`, one static channel per feed (`statcan_
+prices`/`statcan_labour`/`statcan_economic_accounts`/`statcan_
+international_trade`), never the "all subjects" feed.
+
+**Atom IS the evidence surface here** -- FTA's first source where
+this is true (every prior adapter's own Atom/RSS feed is either RSS
+evidence or, for GOV.UK, discovery-only). `statcan_atom_parsing.py` is
+a dedicated parser, deliberately not a reuse of `rss_item_parsing.py`
+(RSS-only) or `govuk_discovery.py` (discovery-only, models no
+evidence). It performs NO same-identity dedupe itself -- exactly like
+`rss_item_parsing.py`, that is the common `IngestNewsSourceOnce`
+layer's own job, applied uniformly.
+
+**A structurally distinct, non-Daily entry type, filtered at the
+adapter level (live finding).** Three of the four feeds recur a
+static StatCan "Product/Study" catalogue reference (e.g. `.../cgi-
+bin/IPS/display?cat_num=14200001`), re-announced with a fresh
+`<updated>` value on almost every poll while its own id/link stay
+byte-identical -- NOT a dated Daily-release article. The parser
+validates every entry's own `<id>` against the Daily-release URL
+shape (`https://www.statcan.gc.ca/daily-quotidien/<YYMMDD>/dq<YYMMDD>
+<letter(s)>-eng.htm`) and marks anything else an ordinary item-level
+invalid (counted, never ingested) -- a narrow, adapter-local content-
+shape filter, not a common-contract change. Zero within-response
+duplicates or conflicts were ever found among genuine dq-shaped ids.
+
+**External identity is the Atom `<id>`**, live-verified stable, never
+reconstructed from link/timestamp/sequence position. `canonical_url`
+is mapped from the entry's own `<link>` separately (the two happen to
+coincide for every StatCan Daily-release entry, confirmed live, but
+are parsed from genuinely separate fields). The sequence letter
+embedded in the id (`dq260929a`, `dq260929g`) recovers same-day
+ordering the timestamp cannot express, but is NEVER used to fabricate
+timing precision -- same-day entries share one identical source
+timestamp, preserved as identical, never split into synthetic
+sub-second instants.
+
+**Timestamp semantics (Case B)**: these feeds expose only `<updated>`,
+never `<published>`. Live research found every same-day entry across
+all four feeds shares one identical `08:30:00-04:00` value, matching
+the date embedded in that same entry's own id -- direct evidence this
+represents The Daily's own release instant. Mapped to `source_
+published_at` only (never simultaneously to `source_updated_at`,
+which stays `None`); the raw string is also preserved, unconditionally,
+as its own timestamp-provenance entry. `availability`/`observed_at`
+remains this adapter's own retrieval instant throughout, exactly like
+every other FX-57 adapter.
+
+**`source_content_type` is held CONSTANT at `"daily_release"` across
+all four feeds** -- the channel itself already preserves the subject
+taxonomy (Section 31/32: source-provenance, never FX-59's own topic
+classification). This constancy is exactly what lets a genuine cross-
+subject release merge cleanly as additional channel provenance rather
+than being misread as a content conflict -- contrast with Fed, whose
+own `source_content_type` genuinely DOES vary per channel, so an
+analogous Fed cross-channel case still conflicts correctly.
+
+**The genuine cross-subject multi-channel case, confirmed live and
+end-to-end against real Postgres.** Live research found the SAME
+Daily release legitimately cross-listed under more than one adopted
+subject feed in 10 instances across a single poll (e.g. `dq260903a`,
+"Canadian international merchandise trade, July 2026," in both
+`prices` and `international_trade`). Running the real adapter through
+`IngestNewsSourceOnce` end-to-end confirmed all 10 merge correctly
+into one item's own cumulative `observed_source_channels` each, with
+`channel_memberships_added` exactly matching the count and zero
+spurious content-change revisions -- the architectural fix works
+against real production data, not only synthetic fixtures.
+
+**Rate pacing**: `robots.txt` at `www150.statcan.gc.ca` sets `User-
+agent: * / Crawl-delay: 2` (live-reconfirmed), covering none of
+`/n1/rss/dai-quo/`. `StatCanSource` paces every request -- including
+`http_fetch.fetch_text`'s own internal retry attempts, via a new,
+provider-neutral `before_attempt` hook added to that shared function
+(awaited before every attempt, including retries; `None` by default,
+so Fed/ECB/BoE/GOV.UK are completely unaffected) -- to at least 2.0
+seconds apart, using an injectable monotonic clock and sleep so
+deterministic tests prove the pacing math (including the retry-path
+pacing) with zero real wall-clock wait. Feeds are fetched strictly
+sequentially, never concurrently.
+
+**No daemon, no scheduler**: `scripts/ingest_statcan_news.py` is a
+plain, manually-invoked one-shot script, matching every prior FX-57
+adapter's own precedent. Live-verified twice against the real feeds +
+dev Postgres: 121 Daily-release items normalized (43 catalogue-
+reference items correctly excluded), 111 genuine items created, 10
+cross-subject revisions added on the first run; the second run is
+fully idempotent (`created=0, revisions_added=0, unchanged=121,
+channel_memberships_added=0`).
+
+**Explicitly NOT built in FX-57E**: the GOV.UK-style discovery/
+hydration split (not applicable -- StatCan's own feeds ARE the
+evidence); any historical enumeration or 100-day-window backfill; the
+"all subjects" feed; linked-article/PDF/data-table fetching; numeric
+CPI/jobs/GDP/trade-balance extraction from headlines or summaries;
+any Economic Event table write; FX-57F (BoC); any scheduler/daemon;
+cross-source deduplication/classification/sentiment/reputation/
+snapshot/dashboard work; any Decision/Risk Engine integration.
+
+No schema or migration change beyond the one FX-57E0 already made
+(this story's own field mappings fit the existing model exactly); the
+existing 45 Fed + 15 ECB + 150 BoE + 20 GOV.UK rows (230 total) are
+untouched; 111 genuine new STATCAN items (121 vintage rows) are now
+present.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
