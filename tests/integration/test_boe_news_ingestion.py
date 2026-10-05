@@ -28,7 +28,7 @@ from forex_agent.application.ports.news_source import (
     NewsSourceFetchOutcome,
 )
 from forex_agent.application.use_cases.ingest_news_source_once import (
-    CrossChannelIdentityCollisionError,
+    ConflictingDuplicateExternalIdError,
     IngestNewsSourceOnce,
 )
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
@@ -283,20 +283,23 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_same_guid_in_two_boe_channels_within_one_run_fails_closed(
+async def test_same_guid_in_two_boe_channels_with_conflicting_content_fails_closed(
     session: AsyncSession,
 ) -> None:
-    # FX-57CH: live validation found ZERO cross-channel GUID overlap
-    # across all 150 sampled BoE items (50 per feed x 3 feeds), but
-    # the MODEL must not silently paper over it if it ever happens --
-    # the SAME guid observed through two DIFFERENT BoE channels
-    # WITHIN ONE INGESTION RUN means the source presented it as
-    # belonging to both simultaneously; representing that as
-    # `revision 0 channel=A, revision 1 channel=B` would invent a
-    # false temporal transition that never occurred. The whole run
-    # must fail closed, before ANY observation from it is persisted --
+    # FX-57CH found ZERO cross-channel GUID overlap across all 150
+    # sampled BoE items (50 per feed x 3 feeds); FX-57E0 then
+    # corrected the MODEL itself -- live Statistics Canada research
+    # proved same-identity-different-channel is not INHERENTLY an
+    # error (a benign cross-listing with IDENTICAL content is now
+    # legitimate, merged provenance). What remains a hard failure is
+    # a GENUINE content conflict: the SAME guid observed through two
+    # DIFFERENT BoE channels in one run, with DIFFERING non-channel
+    # facts (here: differing titles), is ambiguous -- FTA cannot
+    # safely tell whether that is a real source update between
+    # requests or a feed/parser inconsistency. The whole run must
+    # fail closed, before ANY observation from it is persisted --
     # including an UNRELATED, perfectly good observation from a
-    # THIRD, non-colliding channel in the SAME run.
+    # THIRD, non-conflicting channel in the SAME run.
     repository = SqlAlchemyNewsRepository(session)
     ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
 
@@ -334,7 +337,7 @@ async def test_same_guid_in_two_boe_channels_within_one_run_fails_closed(
     speeches_source = BoeRssSource(client=speeches_client, clock=lambda: retrieved_at)
     publications_source = BoeRssSource(client=publications_client, clock=lambda: retrieved_at)
 
-    with pytest.raises(CrossChannelIdentityCollisionError) as exc_info:
+    with pytest.raises(ConflictingDuplicateExternalIdError) as exc_info:
         await ingest(
             (
                 functools.partial(news_source.fetch_feed, news_feed),
@@ -348,7 +351,6 @@ async def test_same_guid_in_two_boe_channels_within_one_run_fails_closed(
     await session.commit()
 
     assert exc_info.value.external_item_id == _guid_for(shared_guid_suffix)
-    assert exc_info.value.channels == frozenset({"boe_news", "boe_speeches"})
 
     colliding_identity = NewsSourceIdentity(SOURCE_KEY, _guid_for(shared_guid_suffix))
     assert await repository.get_item_by_source_identity(colliding_identity) is None

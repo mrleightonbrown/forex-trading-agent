@@ -154,8 +154,13 @@ def _observation(
 
 
 @pytest.fixture
-def use_case() -> RecordNewsObservation:
-    return RecordNewsObservation(FakeNewsRepository())
+def repo() -> FakeNewsRepository:
+    return FakeNewsRepository()
+
+
+@pytest.fixture
+def use_case(repo: FakeNewsRepository) -> RecordNewsObservation:
+    return RecordNewsObservation(repo)
 
 
 async def test_first_observation_is_created(use_case: RecordNewsObservation) -> None:
@@ -192,13 +197,15 @@ async def test_changed_later_observation_adds_revision(use_case: RecordNewsObser
     assert second.revision_sequence == 1
 
 
-async def test_source_channel_change_alone_adds_a_revision_not_a_new_item(
+async def test_new_channel_alone_adds_a_revision_not_a_new_item(
     use_case: RecordNewsObservation,
 ) -> None:
-    # FX-57B Section 12: source_channel participates in modeled-fact
-    # equality -- a genuine channel change for the SAME external
-    # identity is a new vintage of the SAME item, never a new item,
-    # even when the headline itself is unchanged.
+    # FX-57E0 Section 9/10 (Matrix B): observed_source_channels, not
+    # the bare source_channel, now participates in modeled-fact
+    # equality -- gaining a NEW channel for the SAME external identity
+    # is a new vintage of the SAME item, never a new item, even when
+    # the headline itself is unchanged, because FTA's own cumulative
+    # channel knowledge genuinely grew.
     first = await use_case(
         _observation("x4b", _ts(2026, 9, 29, 9, 0), "Same headline", source_channel="channel_a")
     )
@@ -208,6 +215,108 @@ async def test_source_channel_change_alone_adds_a_revision_not_a_new_item(
     assert second.outcome is RecordNewsObservationOutcome.REVISION_ADDED
     assert second.news_item_key == first.news_item_key
     assert second.revision_sequence == 1
+    assert second.channel_added is True
+
+
+async def test_repeated_same_channel_is_unchanged(use_case: RecordNewsObservation) -> None:
+    # FX-57E0 Matrix A: re-observing an ALREADY-known channel, with
+    # otherwise identical content, must never mint a new revision.
+    first = await use_case(
+        _observation("x4c", _ts(2026, 9, 29, 9, 0), "Same headline", source_channel="channel_a")
+    )
+    second = await use_case(
+        _observation("x4c", _ts(2026, 9, 29, 10, 0), "Same headline", source_channel="channel_a")
+    )
+    assert second.outcome is RecordNewsObservationOutcome.UNCHANGED
+    assert second.revision_sequence == first.revision_sequence == 0
+    assert second.channel_added is False
+
+
+async def test_third_channel_adds_to_the_cumulative_set(use_case: RecordNewsObservation) -> None:
+    await use_case(
+        _observation("x4d", _ts(2026, 9, 29, 9, 0), "Same headline", source_channel="channel_a")
+    )
+    await use_case(
+        _observation("x4d", _ts(2026, 9, 29, 10, 0), "Same headline", source_channel="channel_b")
+    )
+    third = await use_case(
+        _observation("x4d", _ts(2026, 9, 29, 11, 0), "Same headline", source_channel="channel_c")
+    )
+    assert third.outcome is RecordNewsObservationOutcome.REVISION_ADDED
+    assert third.revision_sequence == 2
+    assert third.channel_added is True
+
+
+async def test_later_observation_of_an_already_known_first_channel_adds_no_revision(
+    use_case: RecordNewsObservation,
+) -> None:
+    await use_case(
+        _observation("x4e", _ts(2026, 9, 29, 9, 0), "Same headline", source_channel="channel_a")
+    )
+    await use_case(
+        _observation("x4e", _ts(2026, 9, 29, 10, 0), "Same headline", source_channel="channel_b")
+    )
+    # Re-observing channel_a again, with identical content, after
+    # channel_b is already known must NOT create a third revision --
+    # channel membership is monotonic and this adds nothing new.
+    third = await use_case(
+        _observation("x4e", _ts(2026, 9, 29, 11, 0), "Same headline", source_channel="channel_a")
+    )
+    assert third.outcome is RecordNewsObservationOutcome.UNCHANGED
+    assert third.revision_sequence == 1
+    assert third.channel_added is False
+
+
+async def test_content_change_on_an_already_known_channel_preserves_cumulative_channels(
+    use_case: RecordNewsObservation,
+) -> None:
+    # FX-57E0 Matrix D: a content change via an ALREADY-known channel
+    # still adds a revision (for the content change itself), but the
+    # cumulative channel set is unaffected -- channel_added is False.
+    await use_case(
+        _observation("x4f", _ts(2026, 9, 29, 9, 0), "Headline A", source_channel="channel_a")
+    )
+    await use_case(
+        _observation("x4f", _ts(2026, 9, 29, 10, 0), "Headline A", source_channel="channel_b")
+    )
+    third = await use_case(
+        _observation("x4f", _ts(2026, 9, 29, 11, 0), "Headline B", source_channel="channel_a")
+    )
+    assert third.outcome is RecordNewsObservationOutcome.REVISION_ADDED
+    assert third.channel_added is False
+
+
+async def test_first_observation_gets_singleton_observed_source_channels(
+    use_case: RecordNewsObservation, repo: FakeNewsRepository
+) -> None:
+    result = await use_case(
+        _observation("x4g", _ts(2026, 9, 29, 9, 0), "Headline", source_channel="channel_a")
+    )
+    vintages = await repo.list_vintages(result.news_item_key)
+    assert vintages[0].observed_source_channels == ("channel_a",)
+
+
+async def test_pit_before_second_channel_sees_only_first_channel(
+    use_case: RecordNewsObservation, repo: FakeNewsRepository
+) -> None:
+    # FX-57E0 Section 25's own PIT worked example: T1 observes via
+    # channel_a; T2 (later) observes via channel_b. A query strictly
+    # between T1 and T2 must see ONLY channel_a; a query at/after T2
+    # must see both.
+    t1 = _ts(2026, 9, 29, 9, 0)
+    t2 = _ts(2026, 9, 29, 10, 0)
+    between = _ts(2026, 9, 29, 9, 30)
+
+    first = await use_case(_observation("x4h", t1, "Same headline", source_channel="channel_a"))
+    await use_case(_observation("x4h", t2, "Same headline", source_channel="channel_b"))
+
+    as_of_between = await repo.latest_vintage_as_of(first.news_item_key, between)
+    assert as_of_between is not None
+    assert as_of_between.observed_source_channels == ("channel_a",)
+
+    as_of_t2 = await repo.latest_vintage_as_of(first.news_item_key, t2)
+    assert as_of_t2 is not None
+    assert as_of_t2.observed_source_channels == ("channel_a", "channel_b")
 
 
 async def test_identical_but_earlier_observation_fails_closed(

@@ -285,6 +285,7 @@ async def test_add_vintage_round_trip_with_full_fields(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Federal Reserve issues FOMC statement",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         summary="The Committee decided to maintain the target range.",
@@ -320,6 +321,7 @@ async def test_add_vintage_is_idempotent_for_exact_duplicate(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Same headline",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -343,6 +345,7 @@ async def test_add_vintage_conflict_raises_on_different_payload_same_identity(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Headline A",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -353,6 +356,7 @@ async def test_add_vintage_conflict_raises_on_different_payload_same_identity(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Headline B",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -369,6 +373,7 @@ async def test_vintage_requires_an_existing_item_fk(repo: SqlAlchemyNewsReposito
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Orphan",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -392,6 +397,7 @@ async def test_correction_pit_example(repo: SqlAlchemyNewsRepository) -> None:
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Original headline",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_updated_at=_ts(2026, 9, 29, 9, 10),
@@ -405,6 +411,7 @@ async def test_correction_pit_example(repo: SqlAlchemyNewsRepository) -> None:
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Corrected headline",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_updated_at=_ts(2026, 9, 29, 9, 10),
@@ -435,6 +442,7 @@ async def test_latest_vintage_as_of_returns_none_before_first_seen(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Headline",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -457,6 +465,7 @@ async def test_withdrawal_pit_example(repo: SqlAlchemyNewsRepository) -> None:
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Policy statement",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -469,6 +478,7 @@ async def test_withdrawal_pit_example(repo: SqlAlchemyNewsRepository) -> None:
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Policy statement",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.WITHDRAWN,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_revision_metadata=(
@@ -506,6 +516,7 @@ async def test_evidence_eligible_query_excludes_quarantined(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Suspicious speech listing",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.QUARANTINED,
         quarantine_reason="future_source_timestamp",
@@ -519,6 +530,7 @@ async def test_evidence_eligible_query_excludes_quarantined(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Speech transcript",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )
@@ -552,6 +564,7 @@ async def test_evidence_eligible_query_excludes_backfill_by_default(
         observation_mode=NewsObservationMode.BACKFILL,
         headline="Historically-imported article",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_published_at=_ts(2023, 4, 1),
@@ -589,6 +602,7 @@ async def test_first_poll_after_corrections_creates_only_one_revision(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="News story",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
         source_revision_metadata=(
@@ -625,6 +639,7 @@ async def test_malformed_authors_json_fails_loudly_on_read(
         observation_mode=NewsObservationMode.PROSPECTIVE,
         headline="Headline",
         source_channel="test_channel",
+        observed_source_channels=("test_channel",),
         source_status=NewsSourceStatus.ACTIVE,
         evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     )

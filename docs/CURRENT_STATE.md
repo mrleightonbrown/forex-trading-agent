@@ -2223,6 +2223,63 @@ _Last updated: 2026-09-27 (FX-54V)_
   layer hardening pass, no new source fact. **Stop after FX-57DH --
   do not start FX-57E (StatCan)/FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/
   FX-EPIC-09/Decision Engine/Risk Engine.**
+- **FX-57E0: multi-channel news provenance model (complete,
+  ADR 0006)**. FX-57E (Statistics Canada) paused mid-implementation
+  when live, reproducible research found StatCan legitimately
+  cross-lists the SAME Daily release under MULTIPLE subject feeds
+  simultaneously (same id/headline/content, several genuinely-true
+  channels) -- disproving a durable FX-57B/FX-57CH assumption that a
+  vintage has at most one channel "at a time." This story corrects
+  the model: `NewsItemVintage.source_channel` keeps its exact prior
+  shape (the channel of THIS vintage's own observation); a NEW field,
+  `observed_source_channels: tuple[str, ...]`, carries the canonical,
+  CUMULATIVE, non-empty set of every channel FTA has observed the
+  item through by this vintage's own availability -- monotonic,
+  never shrinking, always containing `source_channel`. Modeled-fact
+  equality now uses `observed_source_channels` in place of the bare
+  `source_channel`: an already-known channel changes nothing; a
+  genuinely NEW channel mints a revision even with byte-identical
+  content, because FTA's own provenance knowledge grew -- never
+  documented as "the publisher reclassified the item." `Cross
+  ChannelIdentityCollisionError` is RETIRED -- `IngestNewsSourceOnce`
+  now groups a run's own observations by identity and keeps every
+  channel whose non-channel facts agree (genuine additional
+  provenance merged by `RecordNewsObservation`), failing the whole
+  run closed (via the existing, broadened `ConflictingDuplicate
+  ExternalIdError`) only on an actual non-channel content conflict;
+  survivors persist in `observed_at` order, ties broken by original
+  fetch order. New additive counters: `RecordNewsObservationResult.
+  channel_added` / `NewsIngestionResult.channel_memberships_added`.
+  Migration `73b1423a5949` adds `observed_source_channels` (`NOT
+  NULL` JSONB), backfilled CUMULATIVELY per item (never merely
+  `[that row's own channel]`) -- verified via a full upgrade/
+  downgrade/re-upgrade round-trip against the real 230-row dev DB
+  (all single-channel, as expected); the downgrade guard refuses only
+  when a row actually carries more than one channel. Fed's own
+  cross-channel regression test still fails closed (its own `source_
+  content_type` genuinely differs per channel, a real conflict); BoE's
+  own benign-overlap case now succeeds, merged. 20 new test functions
+  (verified via per-file before/after `grep -c` net counts, since raw
+  `git diff` over/undercounts here: 3 tests were renamed, not added,
+  which a plain `+line` count would have misattributed as new) -- 2
+  in `test_ingest_news_source_once.py`, 6 in `test_record_news_
+  observation.py`, 6 in `test_news_item_vintage.py`, 6 in a new
+  migration-backfill unit test file. Deterministic default suite:
+  `1965 passed, 8 deselected`, zero failures this run (the previously
+  -flagged 7 OANDA live-candle tests happened to pass today --
+  environment-dependent, unrelated to this story, reported as
+  actually observed rather than assumed). `live_source` suite: `1
+  failed, 7 passed` (same pre-existing, unrelated BLS 403). `ruff`/
+  `mypy`/`pre-commit` all clean. **New ADR 0006** (`docs/adr/0006-
+  multi-channel-news-provenance.md`) records the research and
+  supersedes the FX-57B/FX-57CH single-channel-at-a-time assumption.
+  FX-57E's own StatCan adapter files (`statcan_atom_parsing.py`/
+  `statcan_source.py`) and the `http_fetch.fetch_text` `before_
+  attempt` crawl-delay hook remain uncommitted, preserved exactly as
+  left, for FX-57E's own later resumption -- NOT part of this
+  commit. **Stop after FX-57E0 -- do not resume FX-57E (StatCan)/
+  start FX-57F (BoC)/FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision
+  Engine/Risk Engine in this same pass.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

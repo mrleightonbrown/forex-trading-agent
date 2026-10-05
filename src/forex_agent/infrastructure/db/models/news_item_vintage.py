@@ -46,6 +46,15 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     deterministically from its own `source_content_type` before
     adding the constraint.
 
+    `observed_source_channels` (FX-57E0, migration `73b1423a5949`) is
+    a `NOT NULL` JSONB array -- the canonical, cumulative, sorted,
+    deduped set of every channel FTA had observed this item through
+    by this row's own `availability` (see `domain.news_item_vintage.
+    NewsItemVintage`'s own docstring for why this is now a SEPARATE
+    field from the singular `source_channel`). Never empty; always
+    contains this row's own `source_channel`, enforced at the domain
+    layer, not re-validated structurally here.
+
     `authors`/`source_timestamp_provenance`/`source_revision_metadata`
     are `JSONB` -- this project's first use of semi-structured
     persistence (no existing JSONB convention to reuse; see this
@@ -104,6 +113,7 @@ class NewsItemVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     observation_mode: Mapped[str] = mapped_column(String, nullable=False)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     source_channel: Mapped[str] = mapped_column(String, nullable=False)
+    observed_source_channels: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_url: Mapped[str | None] = mapped_column(String, nullable=True)

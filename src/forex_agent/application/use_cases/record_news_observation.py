@@ -41,6 +41,34 @@ rejected outright, never silently reconciled.
 This use case performs no network I/O and assumes no specific source
 adapter (FX-57's own job): it only ever receives an already-normalized
 `NormalizedNewsObservation`.
+
+**FX-57E0: cumulative multi-channel provenance.** Live Statistics
+Canada research proved false a durable assumption FX-57B/FX-57CH both
+made: that the same external identity is observed through at most ONE
+channel "at a time," any channel change being a genuinely SEQUENTIAL
+transition. StatCan legitimately cross-lists the SAME Daily release
+under MULTIPLE subject feeds simultaneously -- same external id, same
+headline, same content, several publisher channels. `NewsItemVintage.
+source_channel` still names exactly which channel produced THIS
+vintage's own observation (unchanged, singular, always one value); a
+NEW field, `observed_source_channels`, now also carries the canonical,
+CUMULATIVE set of every channel FTA has observed this item through by
+this vintage's own `availability`. This use case computes that
+cumulative set itself, on every call: `new_channels = canonicalize(
+latest.observed_source_channels | {observation.source_channel})` --
+channel membership only ever GROWS (an item disappearing from a feed
+proves nothing about whether its publisher classification changed, so
+nothing here ever removes a channel), and `observed_source_channels`
+(not the bare `source_channel`) now participates in modeled-fact
+equality: observing an identity through an ALREADY-known channel, with
+otherwise-identical content, is still `UNCHANGED` (the cumulative set
+does not grow); observing it through a genuinely NEW channel mints a
+`REVISION_ADDED` even if every other field is byte-identical, because
+FTA's own knowledge of this item's provenance just grew -- a fact
+worth its own vintage, same discipline as any other content change.
+This is never documented as "the publisher reclassified the item" --
+it is FTA learning an additional, independently-true fact about an
+item it already knew, nothing more.
 """
 
 import dataclasses
@@ -69,9 +97,26 @@ class RecordNewsObservationOutcome(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RecordNewsObservationResult:
+    """Fields:
+    news_item_key/revision_sequence/outcome: unchanged from
+        before FX-57E0.
+    channel_added: whether THIS call's own observation added a
+        channel to the item's cumulative `observed_source_
+        channels` that FTA did not already know about (FX-57E0
+        Section 21) -- `False` for a brand new item's own
+        first-ever observation (there is no prior "already known"
+        set to add to), so `created`/`channel_added` remain
+        mutually distinguishing signals, same discipline as
+        `created`/`revisions_added`/`unchanged` are already
+        mutually exclusive. Exists so a `REVISION_ADDED` outcome
+        never hides WHY it happened -- an ordinary content change,
+        a newly-learned channel, or both.
+    """
+
     news_item_key: str
     revision_sequence: int
     outcome: RecordNewsObservationOutcome
+    channel_added: bool
 
 
 class NewsObservationOutOfOrderError(Exception):
@@ -126,7 +171,12 @@ class RecordNewsObservation:
             identity,
             observation.observed_at,
             observation.observation_mode,
-            build_vintage=lambda key: _build_vintage(key, observation, revision_sequence=0),
+            build_vintage=lambda key: _build_vintage(
+                key,
+                observation,
+                revision_sequence=0,
+                observed_source_channels=(observation.source_channel,),
+            ),
         )
         if registration.outcome is NewsItemRegistrationOutcome.CREATED:
             # Item, mapping, and revision 0 were just committed together,
@@ -135,6 +185,7 @@ class RecordNewsObservation:
                 news_item_key=registration.news_item_key,
                 revision_sequence=0,
                 outcome=RecordNewsObservationOutcome.CREATED,
+                channel_added=False,
             )
 
         news_item_key = registration.news_item_key
@@ -153,12 +204,27 @@ class RecordNewsObservation:
                 news_item_key, latest.availability, observation.observed_at
             )
 
-        candidate = _build_vintage(news_item_key, observation, revision_sequence=0)
+        # FX-57E0: channel membership is monotonic -- FTA's own
+        # cumulative knowledge of this item's channels only ever
+        # grows, UNION'd with whatever this new observation's own
+        # channel is, never subtracted for any reason.
+        new_channels = _canonicalize_channels(
+            (*latest.observed_source_channels, observation.source_channel)
+        )
+        channel_added = observation.source_channel not in latest.observed_source_channels
+
+        candidate = _build_vintage(
+            news_item_key,
+            observation,
+            revision_sequence=0,
+            observed_source_channels=new_channels,
+        )
         if _same_modeled_facts(latest, candidate):
             return RecordNewsObservationResult(
                 news_item_key=news_item_key,
                 revision_sequence=latest.revision_sequence,
                 outcome=RecordNewsObservationOutcome.UNCHANGED,
+                channel_added=False,
             )
 
         next_revision = latest.revision_sequence + 1
@@ -172,20 +238,37 @@ class RecordNewsObservation:
                 news_item_key=news_item_key,
                 revision_sequence=next_revision,
                 outcome=RecordNewsObservationOutcome.UNCHANGED,
+                channel_added=False,
             )
         return RecordNewsObservationResult(
             news_item_key=news_item_key,
             revision_sequence=next_revision,
             outcome=RecordNewsObservationOutcome.REVISION_ADDED,
+            channel_added=channel_added,
         )
 
 
+def _canonicalize_channels(channels: tuple[str, ...]) -> tuple[str, ...]:
+    """The canonical, deterministic representation of a set of
+    channels (FX-57E0 Section 5) -- sorted and deduped, never
+    order-of-observation dependent."""
+    return tuple(sorted(set(channels)))
+
+
 def _build_vintage(
-    news_item_key: str, observation: NormalizedNewsObservation, *, revision_sequence: int
+    news_item_key: str,
+    observation: NormalizedNewsObservation,
+    *,
+    revision_sequence: int,
+    observed_source_channels: tuple[str, ...],
 ) -> NewsItemVintage:
     """Maps one observation onto a vintage at the given
-    `revision_sequence` -- every field other than `revision_sequence`
-    is this vintage's own final value, never a placeholder."""
+    `revision_sequence` -- every field other than `revision_sequence`/
+    `observed_source_channels` is this vintage's own final value,
+    never a placeholder. `observed_source_channels` is supplied by the
+    caller (FX-57E0): it depends on the ALREADY-known cumulative set of
+    the item this vintage belongs to, which this function has no
+    access to on its own."""
     return NewsItemVintage(
         news_item_key=news_item_key,
         revision_sequence=revision_sequence,
@@ -193,6 +276,7 @@ def _build_vintage(
         observation_mode=observation.observation_mode,
         headline=observation.headline,
         source_channel=observation.source_channel,
+        observed_source_channels=observed_source_channels,
         source_status=observation.source_status,
         evidence_disposition=observation.evidence_disposition,
         summary=observation.summary,
@@ -220,11 +304,20 @@ def _modeled_facts(vintage: NewsItemVintage) -> tuple[object, ...]:
     everything EXCEPT `news_item_key`/`revision_sequence`/
     `availability`, which are identity/bookkeeping, not an observed
     fact (FX-56 Section 15/34: "repeated observation of the same
-    modeled facts should NOT mint another revision")."""
+    modeled facts should NOT mint another revision").
+
+    **FX-57E0**: the bare `vintage.source_channel` no longer
+    participates here -- `vintage.observed_source_channels` (the
+    cumulative set) does instead. Re-observing an identity through an
+    ALREADY-known channel never changes this tuple on its own
+    (`observed_source_channels` is unchanged); a genuinely NEW channel
+    changes it (the cumulative set grew), correctly minting a revision
+    even when every other field is byte-identical -- FTA's own
+    knowledge just grew, which is itself a fact worth a vintage."""
     return (
         vintage.observation_mode,
         vintage.headline,
-        vintage.source_channel,
+        vintage.observed_source_channels,
         vintage.summary,
         vintage.body_text,
         vintage.canonical_url,

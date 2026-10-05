@@ -2330,6 +2330,82 @@ unchanged. No schema or migration change; Fed/ECB/BoE regressions
 confirmed unaffected; the existing 45 Fed + 15 ECB + 150 BoE + 20
 GOV.UK rows (230 total) are untouched.
 
+## Multi-channel news provenance model (FX-57E0, ADR 0006)
+
+FX-57E (Statistics Canada ingestion) paused mid-implementation when
+live, reproducible research found that Statistics Canada legitimately
+cross-lists the SAME Daily release under MULTIPLE subject feeds
+simultaneously -- same external id, same headline, same content,
+several genuinely-true publisher channels (e.g. `dq260903a`,
+"Canadian international merchandise trade, July 2026," appears
+identically in both the adopted `prices` and `international_trade`
+feeds). This disproved a durable assumption FX-57B introduced and
+FX-57CH hardened: that a vintage has at most one `source_channel` "at
+a time," any channel change being inherently sequential. See ADR 0006
+for the full research and the alternatives considered and rejected.
+
+**`NewsItemVintage.source_channel` keeps its exact prior shape and
+meaning, narrowed in wording**: the channel through which FTA
+received the observation that produced THIS vintage -- singular,
+required, unchanged. **A new field, `observed_source_channels: tuple[
+str, ...]`**, carries the canonical (sorted, deduped), CUMULATIVE,
+non-empty set of every channel FTA has observed this item through by
+this vintage's own `availability` -- always containing this vintage's
+own `source_channel`. Channel membership is MONOTONIC: nothing in this
+codebase ever removes a channel from this set (a disappearance from
+one feed proves nothing about publisher reclassification).
+
+**Modeled-fact equality changed to match**: the bare `source_channel`
+no longer participates in the `CREATED`/`REVISION_ADDED`/`UNCHANGED`
+comparison -- `observed_source_channels` does. Re-observing an
+ALREADY-known channel with identical content remains `UNCHANGED`; a
+genuinely NEW channel mints a `REVISION_ADDED` even if every other
+field is byte-identical, because FTA's own cumulative provenance
+knowledge just grew -- never documented as "the publisher
+reclassified the item," always as FTA learning an additional,
+independently-true fact. `RecordNewsObservation`/`IngestNewsSource
+Once` each gained a new, additive counter (`channel_added`/`channel_
+memberships_added`) so this is distinguishable from an ordinary
+content revision, without redefining any existing counter.
+
+**`CrossChannelIdentityCollisionError` is retired.** `IngestNewsSource
+Once`'s Phase 1c now groups a run's own whole-run observations by
+external identity: a distinct channel whose own NON-CHANNEL facts
+agree with every other channel already seen for that identity is kept
+as genuine additional provenance (both observations reach `Record
+NewsObservation`'s cumulative merge); only a genuine disagreement on a
+non-channel fact -- regardless of channel -- still fails the WHOLE
+run closed, via the existing, broadened `ConflictingDuplicateExternal
+IdError`. Surviving observations persist in `observed_at` ascending
+order (ties broken by original fetch order, never channel name), so
+cumulative channel knowledge accumulates in the order it was actually
+learned.
+
+**Provider-neutral, not StatCan-specific**: no `statcan_subjects`/
+`statcan_channels`/`is_cross_listed` concept exists in the domain.
+Fed/ECB/BoE/GOV.UK are unaffected in practice (none of their own
+adopted feeds has ever been found to cross-list an identity with
+agreeing non-channel facts), but the model can now represent it
+correctly for any of them if it is ever discovered -- their own
+`live_source` tests keep re-checking their own current channel-
+disjointness as a drift DIAGNOSTIC, no longer as a correctness
+dependency.
+
+Migration `73b1423a5949` adds `observed_source_channels` (`NOT NULL`
+JSONB) to `news_item_vintages`, backfilled CUMULATIVELY per item (never
+merely `[that row's own source_channel]`) -- verified live against the
+dev DB's existing 230 rows (all single-channel, as expected, since no
+currently-stored history has ever recorded more than one channel for
+the same item); a full upgrade/downgrade/re-upgrade round-trip was run
+against that same data. The downgrade guard refuses only when any row
+actually carries more than one channel (not reconstructable from
+`source_channel` alone), not blanket-refusing merely because the table
+is non-empty.
+
+FX-57E (Statistics Canada ingestion) remains paused, to resume as its
+own later story on top of this corrected model; its own partially-built
+adapter files are preserved, uncommitted, for that resumption.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

@@ -31,21 +31,25 @@ unique within each feed. This clears the architectural concern the
 story's own Section 9 raised -- the standard FX-56/FX-57 model
 applies without modification for BoE's own current feed design.
 
-**FX-57CH correction**: if the SAME GUID is ever observed under TWO
-DIFFERENT BoE channels WITHIN ONE ingestion run, that is now
-explicitly REJECTED, not silently represented as a provenance-change
-vintage. A single-valued `source_channel` per vintage cannot
-represent simultaneous multi-channel membership without inventing a
-false temporal transition -- `IngestNewsSourceOnce` fails the WHOLE
-run closed with `CrossChannelIdentityCollisionError` before
-persisting anything from it, rather than guessing which channel is
-"current" (see that exception's own docstring). This is checked live
-on every run of `tests/integration/test_boe_rss_source_live.py`, not
-assumed from this one-time research finding. A genuinely SEQUENTIAL
-channel change -- the same GUID observed under channel A in one
-ingestion run, then under channel B in a LATER, separate run --
-remains representable as an ordinary new vintage; the guard above is
-scoped to one run, never across runs.
+**FX-57CH correction, refined by FX-57E0**: if the SAME GUID is ever
+observed under TWO DIFFERENT BoE channels WITHIN ONE ingestion run,
+and the two observations AGREE on every other fact, both are now kept
+-- merged into one item's own cumulative `observed_source_channels`
+(FX-57E0; live Statistics Canada research proved genuine simultaneous
+multi-channel membership exists for at least one adopted source, so a
+single-valued `source_channel` per vintage no longer needs to stand in
+for that -- the cumulative field does). If the two observations
+instead DISAGREE on a non-channel fact, `IngestNewsSourceOnce` still
+fails the WHOLE run closed, now via `ConflictingDuplicateExternalIdError`
+rather than the retired `CrossChannelIdentityCollisionError` -- FTA
+cannot safely tell, from one run alone, whether that disagreement is a
+genuine source update or a feed/parser inconsistency (see that
+exception's own docstring). This is checked live on every run of
+`tests/integration/test_boe_rss_source_live.py`, not assumed from this
+one-time research finding. A genuinely SEQUENTIAL channel change --
+the same GUID observed under channel A in one ingestion run, then
+under channel B in a LATER, separate run -- remains representable as
+an ordinary new vintage, now explicitly ALSO true within one run.
 
 **Mixed pubDate timezone format, confirmed exactly as ADR 0005
 predicted -- requires NO new code.** The speeches feed mixes RFC-822

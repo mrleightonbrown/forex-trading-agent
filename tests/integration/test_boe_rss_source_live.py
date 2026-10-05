@@ -115,7 +115,11 @@ async def test_all_three_boe_feeds_are_reachable_and_yield_valid_items() -> None
             assert not overlap, (
                 f"cross-channel GUID overlap found between {channel_a!r} and "
                 f"{channel_b!r}: {sorted(overlap)!r} -- this contradicts this story's own "
-                "live-validation finding of zero cross-channel overlap; IngestNewsSourceOnce "
-                "would now fail this ingestion run closed (CrossChannelIdentityCollisionError) "
-                "rather than silently forcing it through the single-channel-per-vintage model"
+                "live-validation finding of zero cross-channel overlap for BoE specifically. "
+                "FX-57E0: cross-channel identity is no longer inherently an ingestion failure "
+                "(IngestNewsSourceOnce now merges identical-content overlap into one item's "
+                "own cumulative observed_source_channels, failing closed only on a genuine "
+                "non-channel content conflict) -- but this remains worth a human look, since "
+                "BoE's own adopted feed shape was previously confirmed fully channel-disjoint "
+                "and this is a change to that specific finding"
             )

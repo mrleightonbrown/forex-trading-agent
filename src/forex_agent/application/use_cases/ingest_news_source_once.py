@@ -17,20 +17,16 @@ Outcome` itself). This module therefore no longer needs to guard
 against an anonymous channel -- `outcome.source_channel` is appended
 to `channels` unconditionally.
 
-**FX-57CH: two-phase run, collect-then-persist.** `__call__` now
-fetches, validates, and dedupes EVERY configured channel's response
-FIRST (Phase 1), and only persists anything (Phase 2) once Phase 1
-has confirmed no `(source_key, external_item_id)` was observed under
-more than one DISTINCT `source_channel` anywhere in this SAME run
-(`CrossChannelIdentityCollisionError`, raised before Phase 2 starts
--- see that exception's own docstring for why this must fail the
-WHOLE run closed, never just the colliding channels). The original
-single-pass design persisted each response's own observations
-immediately after validating it, which meant an EARLIER channel's
-evidence could already be durably written before a LATER channel's
-response revealed a collision with it -- this refactor closes that
-gap by construction: nothing is persisted until every channel in the
-run has been fetched and checked.
+**FX-57CH: two-phase run, collect-then-persist.** `__call__` fetches,
+validates, and dedupes EVERY configured channel's response FIRST
+(Phase 1), and only persists anything (Phase 2) once Phase 1 has
+confirmed the whole run is internally consistent -- see Phase 1c
+below. The original single-pass design persisted each response's own
+observations immediately after validating it, which meant an EARLIER
+channel's evidence could already be durably written before a LATER
+channel's response revealed a conflict with it -- this refactor closes
+that gap by construction: nothing is persisted until every channel in
+the run has been fetched and checked.
 
 **FX-57D Section 14/55: a narrow extension to the same two-phase
 design.** GOV.UK's own adapter configures ONE fetcher PER DISCOVERED
@@ -41,18 +37,42 @@ produced by TWO DIFFERENT fetchers/responses that happen to share one
 channel (e.g. two discovery paths that both hydrate to the same
 `content_id`) -- a case the original per-response-only dedupe never
 checked, since each of those two responses' own `observations` tuple
-has length 1 and is trivially "deduped" on its own. Phase 1 now ALSO
+has length 1 and is trivially "deduped" on its own. Phase 1 therefore
 accumulates every response's own deduped observations into one flat,
-whole-run list; after the Phase 1b cross-channel check passes, that
-flat list is deduped AGAIN at the whole-run level (`_dedupe_
-observations`, the same function, reused) -- an identical duplicate
-collapses silently; a genuinely conflicting one raises `Conflicting
-DuplicateExternalIdError` and aborts the WHOLE run, exactly like a
-cross-channel collision (not caught and skipped the way a single
-response's own internal conflict is). This is a no-op for Fed/ECB/
-BoE: none of them can ever have more than one response per channel
-in a single run, so the whole-run pass can never find anything the
-per-response pass didn't already resolve.
+whole-run list; Phase 1c (below) validates and orders that list.
+
+**FX-57E0: cross-channel identity is no longer inherently a
+collision.** Live Statistics Canada research proved false the
+original FX-57CH assumption that the SAME `(source_key, external_
+item_id)` observed under more than one DISTINCT `source_channel`
+within one run is ALWAYS an error -- StatCan legitimately cross-lists
+the SAME Daily release under multiple subject feeds simultaneously:
+same identity, same content, several genuinely-true channels. The
+original `CrossChannelIdentityCollisionError` has therefore been
+RETIRED (removed, not kept as a parallel concept alongside the
+mechanism below -- CLAUDE.md's own "don't keep unused/overlapping
+concepts" discipline) in favour of one unified rule, Phase 1c:
+
+Phase 1c groups this run's own flat, whole-run observation list by
+external identity. Within each identity's own group: an exact
+same-channel re-observation (identical NON-channel facts) collapses
+silently -- this is the FX-57D Section 14/55 case, still a no-op for
+Fed/ECB/BoE/GOV.UK today. A DISTINCT channel whose own non-channel
+facts AGREE with every other channel already seen for this identity
+is genuine ADDITIONAL channel provenance and is kept, never collapsed
+-- both observations reach `RecordNewsObservation`, which merges them
+into one item's own cumulative `observed_source_channels` (FX-57E0;
+see that use case's own docstring). But if ANY two observations for
+the SAME identity, in this SAME run, have DISAGREEING non-channel
+facts -- regardless of whether they share a channel or not -- the
+WHOLE run fails closed with `ConflictingDuplicateExternalIdError`,
+before anything is persisted: FTA cannot safely tell, from one run
+alone, whether that disagreement is a genuine source update between
+requests, a feed inconsistency, or a parser bug. Surviving
+observations are then persisted in `observed_at` ascending order
+(ties broken by original fetch order) -- not channel name -- so FTA's
+own cumulative channel knowledge accumulates in the actual order it
+was learned.
 
 Deliberately the SMALLEST shared orchestration piece (FX-57A Section
 8/9): given a tuple of already-configured channel fetchers (each one
@@ -73,12 +93,15 @@ failure (`NewsSourceUnavailableError`) is recorded in `errors` and
 that channel is skipped -- it must never abort the other configured
 channels. A single response's own internal identity conflict
 (`ConflictingDuplicateExternalIdError`) is likewise recorded and that
-RESPONSE is skipped, never the whole operation. Anything else --
-notably a `NewsObservationOutOfOrderError`, `SourceKeyMismatchError`,
-`CrossChannelIdentityCollisionError`, or any repository/database
-failure from `RecordNewsObservation` -- is an unexpected system
-failure and propagates unchanged, aborting the call; it is never
-swallowed into `errors`.
+RESPONSE is skipped, never the whole operation; the SAME exception
+raised by Phase 1c, however, aborts the WHOLE run (it propagates
+uncaught -- see that phase's own docstring for why a whole-run
+conflict cannot safely be narrowed to "just skip the offending
+identity"). Anything else -- notably a `NewsObservationOutOfOrderError`,
+`SourceKeyMismatchError`, or any repository/database failure from
+`RecordNewsObservation` -- is an unexpected system failure and
+propagates unchanged, aborting the call; it is never swallowed into
+`errors`.
 """
 
 from dataclasses import dataclass
@@ -98,27 +121,41 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 class ConflictingDuplicateExternalIdError(Exception):
     """Raised when the SAME `(source_key, external_item_id)` appears
-    more than once with DIFFERING modeled facts -- either within a
-    SINGLE response (FX-57A Section 39, e.g. a duplicate `<item>` in
-    one RSS document), or, more generally, ACROSS two different
-    responses sharing the SAME `source_channel` within one run
-    (FX-57D Section 14/55 -- e.g. GOV.UK's own one-fetcher-per-
-    discovered-path shape, where two different discovery paths could
-    legitimately hydrate to the same `content_id`). Both cases fail
-    closed rather than guessing, from response or item ordering,
-    which occurrence FTA "really" saw. An identical repeat of the
-    same identity -- within one response, or across responses in the
-    same channel -- is NOT an error (handled idempotently, see
-    `_dedupe_observations`); only a genuine content conflict is. This
-    is a no-op distinction for Fed/ECB/BoE, which never produce more
-    than one response per configured channel in a single run."""
+    more than once with DIFFERING NON-CHANNEL modeled facts, anywhere
+    within one run -- within a SINGLE response (FX-57A Section 39,
+    e.g. a duplicate `<item>` in one RSS document), ACROSS two
+    different responses sharing the SAME `source_channel` (FX-57D
+    Section 14/55 -- e.g. GOV.UK's own one-fetcher-per-discovered-path
+    shape, where two different discovery paths could legitimately
+    hydrate to the same `content_id`), or ACROSS two different
+    responses under genuinely DIFFERENT channels (FX-57E0 -- e.g.
+    StatCan's own same-release-multiple-subject-feeds shape; this case
+    used to be `CrossChannelIdentityCollisionError`, now RETIRED,
+    since live evidence proved cross-channel identity is not
+    inherently invalid -- only a genuine NON-CHANNEL content conflict
+    is). `source_channel` itself is explicitly EXCLUDED from the
+    comparison that decides this (FX-57E0 Section 9/11) -- two
+    observations that agree on everything else but differ only in
+    channel are legitimate ADDITIONAL provenance, never a conflict,
+    and both survive to be merged by `RecordNewsObservation`'s own
+    cumulative `observed_source_channels` logic. All conflicting cases
+    fail closed rather than guessing, from response/item ordering,
+    which occurrence FTA "really" saw. An identical repeat of the same
+    identity -- within one response, across responses in the same
+    channel, or across responses in different but content-agreeing
+    channels -- is NOT an error (handled idempotently or kept as
+    additional provenance, see `_dedupe_observations`/`_group_and_
+    validate_whole_run`); only a genuine non-channel content conflict
+    is. The within-one-response case is a no-op distinction for Fed/
+    ECB/BoE/GOV.UK, which never produce more than one response per
+    configured channel in a single run."""
 
     def __init__(self, source_key: str, external_item_id: str) -> None:
         self.source_key = source_key
         self.external_item_id = external_item_id
         super().__init__(
             f"source_key={source_key!r} external_item_id={external_item_id!r} appears more "
-            "than once in the same response with differing modeled facts -- refusing to "
+            "than once in this run with differing NON-CHANNEL modeled facts -- refusing to "
             "guess which occurrence FTA actually saw"
         )
 
@@ -151,43 +188,6 @@ class SourceKeyMismatchError(Exception):
         )
 
 
-class CrossChannelIdentityCollisionError(Exception):
-    """Raised when the SAME `(source_key, external_item_id)` is
-    observed under more than one DISTINCT `source_channel` WITHIN THE
-    SAME `IngestNewsSourceOnce` call (FX-57CH) -- fails the WHOLE run
-    closed, before ANY observation from ANY channel in this run is
-    persisted, never just the colliding channels' own observations.
-
-    A single-valued `source_channel` per vintage can represent a
-    genuinely SEQUENTIAL provenance change (the same item observed
-    under channel A in one run, then under channel B in a LATER run)
-    -- that remains an ordinary new vintage, unaffected by this check,
-    since this guard is scoped to one `__call__` invocation's own
-    collected responses, never across separate calls. But the SAME
-    identity appearing under two DIFFERENT channels within ONE run
-    means the source presented it as belonging to both SIMULTANEOUSLY
-    -- there is no way to tell, from that single run alone, which
-    channel FTA "should" treat as current, and modeling it as
-    `revision 0 channel=A, revision 1 channel=B` would invent a false
-    temporal transition that never actually happened. Rather than
-    guess (first channel wins, last channel wins, concatenate the
-    channel names, or silently drop one), this fails the entire run
-    closed and returns nothing -- the adapter or the source itself
-    needs review, not a fabricated history."""
-
-    def __init__(self, source_key: str, external_item_id: str, channels: frozenset[str]) -> None:
-        self.source_key = source_key
-        self.external_item_id = external_item_id
-        self.channels = channels
-        super().__init__(
-            f"source_key={source_key!r} external_item_id={external_item_id!r} was observed "
-            f"under multiple distinct channels within the same ingestion run: "
-            f"{sorted(channels)!r} -- a single source_channel per vintage cannot represent "
-            "simultaneous multi-channel membership without inventing a false temporal "
-            "transition; refusing to persist any observation from this run"
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class NewsIngestionResult:
     """A purely factual summary of one `IngestNewsSourceOnce` call
@@ -211,6 +211,17 @@ class NewsIngestionResult:
       duplicate guid -- see `ConflictingDuplicateExternalIdError`).
       `items_processed == created + revisions_added + unchanged`
       always.
+
+    **FX-57E0**: `channel_memberships_added` counts how many of this
+    run's own `RecordNewsObservation` calls reported `channel_added=
+    True` -- i.e. added a channel to an EXISTING item's cumulative
+    `observed_source_channels` that FTA did not already know about.
+    This is NOT a subset of `created` (a brand-new item's own first
+    channel is never counted here, matching `RecordNewsObservation
+    Result.channel_added`'s own docstring) and is reported separately
+    from `revisions_added` so a revision caused purely by a newly-
+    learned channel is distinguishable from an ordinary content
+    change, without removing or redefining any existing counter.
     """
 
     source_key: str
@@ -224,6 +235,7 @@ class NewsIngestionResult:
     revisions_added: int
     unchanged: int
     quarantined: int
+    channel_memberships_added: int
     errors: tuple[str, ...]
 
 
@@ -243,12 +255,11 @@ class IngestNewsSourceOnce:
         errors: list[str] = []
 
         # Phase 1: fetch every channel, enforce source-key isolation,
-        # and dedupe within each response -- collect everything
-        # BEFORE persisting anything, so a cross-channel identity
-        # collision can be detected and fail the WHOLE run closed
-        # before any response's evidence is written (FX-57CH).
+        # and dedupe WITHIN each response -- collect everything
+        # BEFORE persisting anything, so a whole-run conflict can be
+        # detected and fail the WHOLE run closed before any response's
+        # evidence is written (FX-57CH).
         ready_batches: list[tuple[NormalizedNewsObservation, ...]] = []
-        identity_channels: dict[str, set[str]] = {}
 
         for fetcher in fetchers:
             try:
@@ -269,41 +280,41 @@ class IngestNewsSourceOnce:
                     raise SourceKeyMismatchError(self._source_key, observation)
 
             try:
-                deduped = _dedupe_observations(self._source_key, outcome.observations)
+                deduped = _dedupe_within_response(self._source_key, outcome.observations)
             except ConflictingDuplicateExternalIdError as exc:
                 errors.append(str(exc))
                 continue
 
-            for observation in deduped:
-                identity_channels.setdefault(observation.external_item_id, set()).add(
-                    observation.source_channel
-                )
             ready_batches.append(deduped)
 
-        # Phase 1b: cross-channel identity collision check, across
-        # EVERY successfully-fetched, non-conflicting response in
-        # this run -- before any persistence.
-        for external_item_id, observed_channels in identity_channels.items():
-            if len(observed_channels) > 1:
-                raise CrossChannelIdentityCollisionError(
-                    self._source_key, external_item_id, frozenset(observed_channels)
-                )
-
-        # Phase 1c (FX-57D): whole-run, cross-response, same-channel
-        # duplicate identity check -- a no-op for Fed/ECB/BoE (see the
-        # module docstring); raises uncaught, aborting the whole run,
-        # exactly like a cross-channel collision -- a run-level
-        # identity conflict is not one response's own problem to skip.
+        # Phase 1c (FX-57D/FX-57E0): whole-run validation across EVERY
+        # successfully-fetched, non-conflicting response's own
+        # observations -- see `_group_and_validate_whole_run`'s own
+        # docstring for the exact rule. Raises uncaught, aborting the
+        # whole run: a run-level conflict is not one response's own
+        # problem to skip. Surviving observations are then persisted
+        # in `observed_at` order (ties broken by original fetch
+        # order), so cumulative channel provenance (FX-57E0) is
+        # learned in the order it actually happened.
         all_observations = tuple(obs for batch in ready_batches for obs in batch)
-        final_observations = _dedupe_observations(self._source_key, all_observations)
+        ordered = _group_and_validate_whole_run(
+            self._source_key, tuple(enumerate(all_observations))
+        )
+        final_observations = tuple(
+            observation
+            for _, observation in sorted(
+                ordered, key=lambda pair: (pair[1].observed_at.value, pair[0])
+            )
+        )
 
-        # Phase 2: persist -- only reached once every response in
-        # this run is confirmed free of any identity collision.
+        # Phase 2: persist -- only reached once the whole run is
+        # confirmed internally consistent.
         items_processed = 0
         created = 0
         revisions_added = 0
         unchanged = 0
         quarantined = 0
+        channel_memberships_added = 0
         for observation in final_observations:
             items_processed += 1
             record_result = await self._record_observation(observation)
@@ -313,6 +324,8 @@ class IngestNewsSourceOnce:
                 revisions_added += 1
             else:
                 unchanged += 1
+            if record_result.channel_added:
+                channel_memberships_added += 1
             if observation.evidence_disposition is NewsEvidenceDisposition.QUARANTINED:
                 quarantined += 1
 
@@ -328,18 +341,22 @@ class IngestNewsSourceOnce:
             revisions_added=revisions_added,
             unchanged=unchanged,
             quarantined=quarantined,
+            channel_memberships_added=channel_memberships_added,
             errors=tuple(errors),
         )
 
 
-def _dedupe_observations(
+def _dedupe_within_response(
     source_key: str, observations: tuple[NormalizedNewsObservation, ...]
 ) -> tuple[NormalizedNewsObservation, ...]:
-    """Collapses an identical duplicate identity to one entry;
-    raises `ConflictingDuplicateExternalIdError` for a genuinely
-    conflicting one. Used twice: once per response (Phase 1, FX-57A),
-    and once across the whole run's own flattened observations
-    (Phase 1c, FX-57D) -- the same logic applies at both scopes."""
+    """Collapses an identical duplicate identity WITHIN ONE response
+    to one entry; raises `ConflictingDuplicateExternalIdError` for a
+    genuinely conflicting one (FX-57A Section 39). Every observation
+    in one response shares the same `source_channel` (enforced by
+    `NewsSourceFetchOutcome.__post_init__`), so comparing the FULL
+    fact set here (`_observation_facts`, channel included) is
+    equivalent to comparing non-channel facts only -- channel is never
+    the discriminating field at this scope."""
     by_external_id: dict[str, NormalizedNewsObservation] = {}
     for observation in observations:
         existing = by_external_id.get(observation.external_item_id)
@@ -352,10 +369,75 @@ def _dedupe_observations(
     return tuple(by_external_id.values())
 
 
+def _group_and_validate_whole_run(
+    source_key: str,
+    indexed_observations: tuple[tuple[int, NormalizedNewsObservation], ...],
+) -> tuple[tuple[int, NormalizedNewsObservation], ...]:
+    """FX-57E0: groups this run's own flat, whole-run observation list
+    by external identity. Within each identity's own group: an exact
+    same-channel re-observation (identical NON-channel facts)
+    collapses silently -- the FX-57D Section 14/55 case, still a no-op
+    for Fed/ECB/BoE/GOV.UK today, since none of them ever produce more
+    than one response per channel in a single run. A DISTINCT channel
+    whose own non-channel facts AGREE with every other channel already
+    seen for this identity is genuine ADDITIONAL channel provenance
+    and is KEPT, never collapsed away -- live Statistics Canada
+    research proved the same identity can legitimately be observed
+    through more than one channel within a single run (the same Daily
+    release cross-listed under several subject feeds). Both survive to
+    reach `RecordNewsObservation`, which merges them into one item's
+    own cumulative `observed_source_channels`. But if ANY two
+    observations for the SAME identity in this run have DISAGREEING
+    non-channel facts -- regardless of whether they share a channel or
+    not -- this raises `ConflictingDuplicateExternalIdError` for the
+    WHOLE run: FTA cannot safely tell, from one run alone, whether
+    that disagreement is a genuine source update between requests, a
+    feed inconsistency, or a parser bug. The original `CrossChannel
+    IdentityCollisionError` (same identity, different channel is
+    ALWAYS an error) has been retired -- this is its direct
+    replacement."""
+    groups: dict[str, list[tuple[int, NormalizedNewsObservation]]] = {}
+    for index, observation in indexed_observations:
+        groups.setdefault(observation.external_item_id, []).append((index, observation))
+
+    surviving: list[tuple[int, NormalizedNewsObservation]] = []
+    for external_item_id, group in groups.items():
+        by_channel: dict[str, tuple[int, NormalizedNewsObservation]] = {}
+        for index, observation in group:
+            existing = by_channel.get(observation.source_channel)
+            if existing is None:
+                by_channel[observation.source_channel] = (index, observation)
+                continue
+            _, existing_observation = existing
+            if _same_non_channel_facts(existing_observation, observation):
+                continue
+            raise ConflictingDuplicateExternalIdError(source_key, external_item_id)
+
+        channel_entries = list(by_channel.values())
+        _, first_observation = channel_entries[0]
+        for _, other_observation in channel_entries[1:]:
+            if not _same_non_channel_facts(first_observation, other_observation):
+                raise ConflictingDuplicateExternalIdError(source_key, external_item_id)
+        surviving.extend(channel_entries)
+
+    return tuple(surviving)
+
+
 def _observation_facts(observation: NormalizedNewsObservation) -> tuple[object, ...]:
     return (
         observation.headline,
         observation.source_channel,
+        *_non_channel_observation_facts(observation),
+    )
+
+
+def _non_channel_observation_facts(observation: NormalizedNewsObservation) -> tuple[object, ...]:
+    """Every modeled fact EXCEPT `source_channel` (FX-57E0 Section 9/
+    11) -- two observations agreeing on all of these but differing
+    only in channel are legitimate additional provenance, never a
+    conflict."""
+    return (
+        observation.headline,
         observation.summary,
         observation.body_text,
         observation.canonical_url,
@@ -374,3 +456,7 @@ def _observation_facts(observation: NormalizedNewsObservation) -> tuple[object, 
 
 def _same_observation_facts(a: NormalizedNewsObservation, b: NormalizedNewsObservation) -> bool:
     return _observation_facts(a) == _observation_facts(b)
+
+
+def _same_non_channel_facts(a: NormalizedNewsObservation, b: NormalizedNewsObservation) -> bool:
+    return _non_channel_observation_facts(a) == _non_channel_observation_facts(b)

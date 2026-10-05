@@ -3689,3 +3689,212 @@ FX-57E (Statistics Canada)/FX-57F (Bank of Canada, with its own known
 timestamp-remediation need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or
 any Decision/Risk Engine work. FX-49/FX-52 remain DEFER; FX-53 remains
 BLOCKED. Return FX-57DH for review.
+
+## FX-57E0: multi-channel news provenance model (complete)
+
+FX-57E (Statistics Canada "The Daily" prospective ingestion) was
+explicitly authorized and begun. Git HEAD at FX-57E0's own start:
+`ef5d5a8` (the FX-57DH commit).
+
+**Why FX-57E paused.** Before wiring any adapter into production
+ingestion, FX-57E's own spec required a pre-implementation gate: live-
+fetch all four adopted StatCan subject feeds (prices, labour, economic
+accounts, international trade) and compare every pairwise intersection
+of their own Atom entry ids, because StatCan's feeds are SUBJECT feeds
+and the same Daily release could plausibly belong to more than one.
+That check found genuine, reproducible overlap -- NOT zero, as every
+prior FX-57 source's own equivalent check had found:
+
+| Pair | Overlap |
+|---|---|
+| prices ∩ labour | 0 |
+| prices ∩ economic_accounts | 2 |
+| prices ∩ international_trade | 3 |
+| labour ∩ economic_accounts | 2 |
+| labour ∩ international_trade | 0 |
+| economic_accounts ∩ international_trade | 3 |
+
+Every overlapping pair was the exact same Atom id, title, and content
+-- e.g. `dq260903a` ("Canadian international merchandise trade, July
+2026") appears, byte-identically, in both the `prices` and
+`international_trade` feeds. Re-fetched fresh, independently, hours
+apart, with the same result both times. Per the spec's own explicit
+instruction ("IF ANY same identity appears in more than one selected
+feed: STOP FX-57E IMPLEMENTATION. Return for architecture review") and
+CLAUDE.md's "stop before implementing an architectural change"
+discipline, FX-57E paused at this exact point -- no adapter was wired
+into `IngestNewsSourceOnce`, no manual runner was written, no Postgres
+write was ever attempted for StatCan data. The partially-built pieces
+(`statcan_atom_parsing.py`, `statcan_source.py`, plus a provider-
+neutral `before_attempt` pacing hook added to `http_fetch.fetch_text`
+for StatCan's own `Crawl-delay: 2` requirement, with its own
+deterministic tests) were left in place, uncommitted, exactly as
+built -- preserved for FX-57E's own later resumption, deliberately
+EXCLUDED from this story's own commit.
+
+**The architectural correction, now accepted as ADR 0006.** The
+existing model (`NewsItemVintage.source_channel: str`, singular,
+participating in modeled-fact equality) could not represent legitimate
+simultaneous multi-channel membership without either inventing a
+false "revision 0 channel=A, revision 1 channel=B" transition (the
+exact failure mode FX-57CH's own `CrossChannelIdentityCollisionError`
+was designed to PREVENT) or permanently blocking StatCan ingestion by
+treating every real cross-listed release as a fatal collision. Full
+reasoning, the decision, and every rejected alternative (pick one
+channel; concatenate channel names; add channel to identity; keep the
+old guard with a StatCan-specific exemption) are recorded in the new
+`docs/adr/0006-multi-channel-news-provenance.md`.
+
+**The fix, in one sentence**: `source_channel` keeps its exact prior
+meaning (which channel produced THIS vintage's own observation); a
+new, separate field, `observed_source_channels: tuple[str, ...]`, now
+carries the canonical, CUMULATIVE, monotonically-growing set of every
+channel FTA has observed the item through by this vintage's own
+availability, and THAT field -- not the bare `source_channel` -- now
+participates in modeled-fact equality.
+
+**Precise behavioral rules, each pinned by a dedicated test:**
+
+- Re-observing an ALREADY-known channel, with otherwise-identical
+  content, is still `UNCHANGED` -- the cumulative set does not grow,
+  so nothing new happened.
+- Observing a GENUINELY NEW channel mints a `REVISION_ADDED` even
+  when every other field is byte-identical -- FTA's own cumulative
+  provenance knowledge grew, which is itself worth a vintage, on
+  exactly the same discipline as any other content change. This is
+  NEVER documented as "the publisher reclassified the item" -- it is
+  FTA learning an ADDITIONAL, independently-true fact.
+- A content change via an ALREADY-known channel still adds a revision
+  for the content change itself, but leaves the cumulative channel set
+  untouched (`channel_added=False`).
+- Channel membership is strictly MONOTONIC: nothing anywhere in this
+  codebase ever removes a channel from `observed_source_channels` --
+  an item's disappearance from one feed proves nothing about whether
+  its publisher classification changed.
+- `CrossChannelIdentityCollisionError` is RETIRED outright (removed,
+  not kept as a parallel concept -- CLAUDE.md's own "don't keep
+  unused/overlapping abstractions" discipline). `IngestNewsSourceOnce`
+  now groups a run's own whole-run observation list by external
+  identity: a distinct channel whose own NON-CHANNEL facts agree with
+  every other channel already seen for that identity is genuine
+  additional provenance and is KEPT -- both observations reach
+  `RecordNewsObservation`'s own cumulative merge. Only a genuine
+  disagreement on a NON-CHANNEL fact -- regardless of whether the
+  colliding observations share a channel or not -- still fails the
+  WHOLE run closed, via the EXISTING, broadened `ConflictingDuplicate
+  ExternalIdError` (its own docstring updated to cover this third
+  case explicitly).
+- Surviving observations are persisted in `observed_at` ASCENDING
+  order (ties broken by original configured-fetch order, never
+  channel name), so cumulative channel knowledge accumulates in the
+  actual order FTA learned it -- pinned by a dedicated exact-
+  timestamp-tie test proving the result is deterministic, not
+  dict/set-iteration-order-dependent.
+- New, additive observability: `RecordNewsObservationResult.channel_
+  added: bool` and `NewsIngestionResult.channel_memberships_added:
+  int` -- both `False`/excluded for a brand-new item's own first-ever
+  observation (there is no prior "already known" set to add to), so
+  `created` and `channel_added` remain mutually distinguishing
+  signals, exactly like `created`/`revisions_added`/`unchanged`
+  already are. No existing counter was removed or redefined.
+
+**Fed and BoE regression, corrected, not merely re-run.** Both
+adapters had their own pre-existing cross-channel test from FX-57CH,
+and both needed genuine correction, not just an exception rename:
+Fed's own test's mock data turned out to ALREADY genuinely conflict
+under the new rule (Fed's `source_content_type` is set from each
+feed's own static metadata -- `speech` for the speeches feed,
+`testimony` for the testimony feed -- so the same guid observed
+through both channels always differs on that non-channel fact, even
+with byte-identical XML) -- it still fails closed, correctly, now via
+`ConflictingDuplicateExternalIdError`. BoE's own test used genuinely
+DIFFERING titles across its two colliding channels, so it too still
+fails closed for the same reason, simply re-pointed at the new
+exception. Both adapters' own `live_source` tests keep actively
+re-checking their own currently-observed channel-disjointness --
+reframed as a drift DIAGNOSTIC worth a human look if it ever changes,
+no longer as something ingestion correctness depends on (per the
+spec's own Section 23).
+
+**Migration `73b1423a5949`** adds `observed_source_channels` (`NOT
+NULL` JSONB) to `news_item_vintages`. Backfill is CUMULATIVE per item,
+walking each item's own vintages in `revision_sequence` order and
+UNION-ing every `source_channel` seen on revisions `0..N` -- never
+merely `[that row's own source_channel]`, since a genuinely sequential
+cross-run channel change was always legal before this story even
+though no currently-stored row happens to have one. Verified three
+ways: (1) a pure-function unit test of the cumulative-backfill helper
+itself, proving it is a true running union, not per-row; (2) a
+downgrade-guard unit test (mocked `alembic.op`, no real DB) proving the
+guard refuses ONLY when a row actually carries more than one channel,
+naming every offending `news_item_key`/`revision_sequence`, and that
+nothing is dropped before the guard runs; (3) a full live upgrade ->
+downgrade -> re-upgrade round-trip against the REAL 230-row dev
+database (45 Fed + 15 ECB + 150 BoE + 20 GOV.UK), confirming every row
+count, every `observed_source_channels` value (`[source_channel]` for
+every one of the 230 rows, exactly as expected since no existing
+history has ever recorded more than one channel), and a clean
+downgrade (every row single-channel, so the guard correctly allowed
+it) followed by a clean re-upgrade reproducing the identical state.
+
+**Verification, reported separately**: focused suites -- domain
+(`test_news_item_vintage.py`, 19 passed, up from 13), common
+application unit (`test_record_news_observation.py` 14 passed, up
+from 8; `test_ingest_news_source_once.py` 24 passed, up from 22),
+migration unit (`test_migration_observed_source_channels_backfill.py`,
+new, 6 passed), repository integration (`test_news_repository.py`, 22
+passed, unchanged count), `test_record_news_observation.py`
+integration (18 passed, unchanged count). Fed regression: 22 passed.
+BoE regression: 24 passed. ECB regression: 21 passed. GOV.UK
+regression: 80 passed. Deterministic default suite (`pytest`): `1965
+passed, 8 deselected`, with ZERO failures this run -- the seven
+previously-documented OANDA live-practice-candle failures (unrelated
+to news intelligence, tracked separately) happened to pass in this
+run; reported as actually observed, not assumed stale. `live_source`
+suite (`pytest -m live_source`): `1 failed, 7 passed` -- the same
+pre-existing, documented BLS 403 (FX-EPIC-07, unrelated), confirmed
+unchanged; Fed's, ECB's, BoE's, and GOV.UK's own live tests all pass.
+`ruff check .`, `ruff format --check .`, `mypy .` (439 source files),
+and `pre-commit run --all-files` all pass clean across the whole
+repository, StatCan's own uncommitted WIP files included (they type-
+check and lint cleanly even though nothing yet imports or tests them
+as production code).
+
+**Test counts, verified via per-file BEFORE/AFTER `grep -cE
+'^(async )?def test_'` net totals** -- deliberately NOT a raw `git
+diff ... | grep '^\+.*def test_'` line count this time, because 3
+tests were RENAMED (not added) as part of correcting their own
+behavior, which a plain added-line count would have misattributed as
+new: **20 new test functions** -- 2 in `test_ingest_news_source_
+once.py` (22 -> 24), 6 in `test_record_news_observation.py` (8 -> 14),
+6 in `test_news_item_vintage.py` (13 -> 19), 6 in the new migration
+test file.
+
+**No schema change beyond the one migration above.** No ADR 0005
+amendment (ADR 0005 is about source feasibility/rights, not the PIT
+domain model) -- this story's own finding instead justified a NEW
+ADR, 0006, exactly as its own spec anticipated.
+
+**Explicitly confirmed NOT done in FX-57E0**: no StatCan adapter wired
+into production ingestion; no StatCan manual runner; no StatCan write
+to Postgres, ever, in this story; no resumption of FX-57E's own
+remaining work (deterministic/Postgres/live-source tests for the
+StatCan adapter itself, the manual runner, live ingestion); FX-57F
+(Bank of Canada) not started; no FX-58+ (dedup/classification/
+snapshot/dashboard/source-reputation) work; no Decision/Risk Engine
+integration; no StatCan-specific concept added to the domain
+(`statcan_subjects`/`statcan_channels`/`is_cross_listed` all
+explicitly absent).
+
+Full details in `docs/adr/0006-multi-channel-news-provenance.md` and
+`docs/DECISIONS.md`'s FX-57E0 entry; `docs/ARCHITECTURE.md` carries a
+new "Multi-channel news provenance model" section; `docs/CURRENT_
+STATE.md` carries its own FX-57E0 entry.
+
+**Per this story's own explicit stop instruction**: commit/push
+FX-57E0 SEPARATELY from FX-57E's own StatCan WIP (which remains
+uncommitted) and STOP. Do not resume FX-57E (Statistics Canada) in
+this same pass; do not start FX-57F (Bank of Canada)/FX-58/FX-59/
+FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work. FX-49/FX-52
+remain DEFER; FX-53 remains BLOCKED. Return FX-57E0 for architectural
+review.

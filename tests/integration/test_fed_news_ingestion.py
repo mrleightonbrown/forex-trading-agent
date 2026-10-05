@@ -28,7 +28,7 @@ from forex_agent.application.ports.news_source import (
     NewsSourceFetchOutcome,
 )
 from forex_agent.application.use_cases.ingest_news_source_once import (
-    CrossChannelIdentityCollisionError,
+    ConflictingDuplicateExternalIdError,
     IngestNewsSourceOnce,
 )
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
@@ -237,15 +237,21 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
 async def test_duplicate_guid_across_two_channels_fails_closed(
     session: AsyncSession,
 ) -> None:
-    # FX-57CH correction: source_key+guid is identity, so the SAME
-    # guid observed through two DIFFERENT Fed channels WITHIN ONE
-    # ingestion run is ambiguous simultaneous membership, not a
-    # sequential provenance change -- `IngestNewsSourceOnce` must fail
-    # the whole run closed (`CrossChannelIdentityCollisionError`)
-    # rather than inventing a false "revision 0 channel=speeches,
-    # revision 1 channel=testimony" history. (The original version of
-    # this test pinned exactly that unsafe fallback -- corrected here,
-    # mirroring the same correction made to BoE's own equivalent test.)
+    # FX-57CH correction, refined by FX-57E0: cross-channel identity
+    # is no longer INHERENTLY an error (a benign cross-listing with
+    # IDENTICAL non-channel facts is now legitimate, merged
+    # provenance -- see the common `test_ingest_news_source_once.py`
+    # matrix for that case). But Fed's OWN adapter sets `source_
+    # content_type` from each feed's own static `content_type`
+    # metadata (`speech` for the speeches feed, `testimony` for the
+    # testimony feed) -- a NON-channel fact that therefore genuinely
+    # DIFFERS whenever the same guid is observed through two different
+    # Fed channels, even with byte-identical XML. This case therefore
+    # still fails the whole run closed -- now via `Conflicting
+    # DuplicateExternalIdError` rather than the retired `CrossChannel
+    # IdentityCollisionError` -- rather than inventing a false
+    # "revision 0 channel=speeches, revision 1 channel=testimony"
+    # history.
     repository = SqlAlchemyNewsRepository(session)
     ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
 
@@ -263,7 +269,7 @@ async def test_duplicate_guid_across_two_channels_fails_closed(
     )
     source = FedRssSource(client=client, clock=lambda: retrieved_at)
 
-    with pytest.raises(CrossChannelIdentityCollisionError) as exc_info:
+    with pytest.raises(ConflictingDuplicateExternalIdError) as exc_info:
         await ingest(
             (
                 functools.partial(source.fetch_feed, speeches_feed),
@@ -274,7 +280,6 @@ async def test_duplicate_guid_across_two_channels_fails_closed(
     await session.commit()
 
     assert exc_info.value.external_item_id == shared_guid
-    assert exc_info.value.channels == frozenset({"speeches", "testimony"})
 
     identity = NewsSourceIdentity(SOURCE_KEY, shared_guid)
     assert await repository.get_item_by_source_identity(identity) is None

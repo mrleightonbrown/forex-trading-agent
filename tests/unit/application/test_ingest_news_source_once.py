@@ -23,7 +23,6 @@ from forex_agent.application.ports.news_source import (
 )
 from forex_agent.application.use_cases.ingest_news_source_once import (
     ConflictingDuplicateExternalIdError,
-    CrossChannelIdentityCollisionError,
     IngestNewsSourceOnce,
     SourceKeyMismatchError,
 )
@@ -501,9 +500,13 @@ async def test_b_disjoint_identities_across_two_channels_both_succeed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_c_same_identity_in_two_channels_within_one_run_fails_closed_before_persistence() -> (
-    None
-):
+async def test_c_same_identity_in_two_channels_with_identical_content_both_succeed() -> None:
+    # FX-57E0: live Statistics Canada research proved the SAME
+    # identity, with IDENTICAL non-channel facts, can legitimately be
+    # observed through two DIFFERENT channels within one run -- this
+    # no longer fails closed (CrossChannelIdentityCollisionError is
+    # retired); both observations are kept and merged into one item's
+    # own cumulative observed_source_channels.
     repo = FakeNewsRepository()
     ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
     outcome_a = NewsSourceFetchOutcome(
@@ -521,13 +524,98 @@ async def test_c_same_identity_in_two_channels_within_one_run_fails_closed_befor
         items_invalid=0,
     )
 
-    with pytest.raises(CrossChannelIdentityCollisionError) as exc_info:
-        await ingest((_fetcher_returning(outcome_a), _fetcher_returning(outcome_b)))
-    assert exc_info.value.external_item_id == "guid-shared"
-    assert exc_info.value.channels == frozenset({"press_monetary", "speeches"})
+    result = await ingest((_fetcher_returning(outcome_a), _fetcher_returning(outcome_b)))
+
+    assert result.created == 1
+    assert result.revisions_added == 1
+    assert result.channel_memberships_added == 1
+    assert result.errors == ()
 
     identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-shared")
-    assert await repo.get_item_by_source_identity(identity) is None
+    item = await repo.get_item_by_source_identity(identity)
+    assert item is not None
+    vintages = sorted(
+        await repo.list_vintages(item.news_item_key), key=lambda v: v.revision_sequence
+    )
+    assert len(vintages) == 2
+    assert vintages[0].observed_source_channels == ("press_monetary",)
+    assert vintages[1].observed_source_channels == ("press_monetary", "speeches")
+
+
+@pytest.mark.asyncio
+async def test_c2_same_identity_in_three_channels_with_identical_content_all_succeed() -> None:
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    outcomes = tuple(
+        NewsSourceFetchOutcome(
+            source_channel=channel,
+            retrieved_at=_ts(),
+            observations=(_observation(external_item_id="guid-triple", source_channel=channel),),
+            items_invalid=0,
+        )
+        for channel in ("press_monetary", "speeches", "testimony")
+    )
+
+    result = await ingest(tuple(_fetcher_returning(outcome) for outcome in outcomes))
+
+    assert result.created == 1
+    assert result.revisions_added == 2
+    assert result.channel_memberships_added == 2
+
+    identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-triple")
+    item = await repo.get_item_by_source_identity(identity)
+    assert item is not None
+    vintages = sorted(
+        await repo.list_vintages(item.news_item_key), key=lambda v: v.revision_sequence
+    )
+    assert len(vintages) == 3
+    assert vintages[-1].observed_source_channels == ("press_monetary", "speeches", "testimony")
+
+
+@pytest.mark.asyncio
+async def test_c3_exact_timestamp_tie_has_deterministic_fetch_order_result() -> None:
+    # FX-57E0 Section 15/24: when every observation for one identity
+    # shares the EXACT same observed_at, ties are broken by original
+    # fetch order -- the first-configured fetcher's own channel
+    # becomes revision 0, deterministically, every time.
+    repo = FakeNewsRepository()
+    ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
+    same_instant = _ts(15)
+    outcome_a = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=same_instant,
+        observations=(
+            _observation(
+                external_item_id="guid-tie",
+                observed_at=same_instant,
+                source_channel="press_monetary",
+            ),
+        ),
+        items_invalid=0,
+    )
+    outcome_b = NewsSourceFetchOutcome(
+        source_channel="speeches",
+        retrieved_at=same_instant,
+        observations=(
+            _observation(
+                external_item_id="guid-tie", observed_at=same_instant, source_channel="speeches"
+            ),
+        ),
+        items_invalid=0,
+    )
+
+    result = await ingest((_fetcher_returning(outcome_a), _fetcher_returning(outcome_b)))
+    assert result.created == 1
+    assert result.revisions_added == 1
+
+    identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-tie")
+    item = await repo.get_item_by_source_identity(identity)
+    assert item is not None
+    vintages = sorted(
+        await repo.list_vintages(item.news_item_key), key=lambda v: v.revision_sequence
+    )
+    assert vintages[0].source_channel == "press_monetary"
+    assert vintages[1].source_channel == "speeches"
 
 
 @pytest.mark.asyncio
@@ -563,43 +651,77 @@ async def test_d_one_channel_fetch_failure_plus_two_disjoint_successful_channels
 
 
 @pytest.mark.asyncio
-async def test_e_fetch_failure_plus_colliding_successful_channels_persists_nothing() -> None:
+async def test_e_fetch_failure_plus_conflicting_successful_channels_persists_nothing() -> None:
+    # FX-57E0: cross-channel identity is no longer AUTOMATICALLY a
+    # conflict -- this test now gives the two channels genuinely
+    # DIFFERING non-channel facts (different headlines) to pin that a
+    # real conflict still fails the whole run closed, even when one
+    # other channel failed to fetch.
     repo = FakeNewsRepository()
     ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
     outcome_b = NewsSourceFetchOutcome(
         source_channel="speeches",
         retrieved_at=_ts(),
-        observations=(_observation(external_item_id="guid-shared", source_channel="speeches"),),
+        observations=(
+            _observation(
+                external_item_id="guid-shared",
+                headline="Headline from speeches",
+                source_channel="speeches",
+            ),
+        ),
         items_invalid=0,
     )
     outcome_c = NewsSourceFetchOutcome(
         source_channel="testimony",
         retrieved_at=_ts(),
-        observations=(_observation(external_item_id="guid-shared", source_channel="testimony"),),
+        observations=(
+            _observation(
+                external_item_id="guid-shared",
+                headline="Conflicting headline from testimony",
+                source_channel="testimony",
+            ),
+        ),
+        items_invalid=0,
+    )
+    unrelated_outcome = NewsSourceFetchOutcome(
+        source_channel="press_monetary",
+        retrieved_at=_ts(),
+        observations=(
+            _observation(external_item_id="guid-unrelated", source_channel="press_monetary"),
+        ),
         items_invalid=0,
     )
 
-    with pytest.raises(CrossChannelIdentityCollisionError):
+    with pytest.raises(ConflictingDuplicateExternalIdError):
         await ingest(
             (
                 _fetcher_raising(NewsSourceUnavailableError("channel A unreachable")),
                 _fetcher_returning(outcome_b),
                 _fetcher_returning(outcome_c),
+                _fetcher_returning(unrelated_outcome),
             )
         )
 
     identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-shared")
     assert await repo.get_item_by_source_identity(identity) is None
+    # FX-57E0 Section 13: an unrelated, non-conflicting identity in
+    # the SAME run must also remain unpersisted -- the whole run fails
+    # closed, not just the conflicting identity.
+    unrelated_identity = NewsSourceIdentity(
+        source_key=_SOURCE_KEY, external_item_id="guid-unrelated"
+    )
+    assert await repo.get_item_by_source_identity(unrelated_identity) is None
 
 
 @pytest.mark.asyncio
 async def test_f_same_identity_across_separate_ingestion_runs_remains_a_sequential_vintage() -> (
     None
 ):
-    # Section 3: the collision guard is scoped to ONE `__call__`
-    # invocation -- the SAME identity observed under a DIFFERENT
-    # channel on a LATER, separate call remains an ordinary
-    # provenance-change vintage, exactly as before FX-57CH.
+    # FX-57E0: a channel observed on a LATER, separate `__call__`
+    # still adds to the SAME item's cumulative observed_source_
+    # channels (never a new item, never a false "channel A changed to
+    # B" narrative) -- this is now true regardless of whether the
+    # channels were ever observed simultaneously in one run.
     repo = FakeNewsRepository()
     ingest = IngestNewsSourceOnce(_SOURCE_KEY, RecordNewsObservation(repo))
 
@@ -637,8 +759,12 @@ async def test_f_same_identity_across_separate_ingestion_runs_remains_a_sequenti
     identity = NewsSourceIdentity(source_key=_SOURCE_KEY, external_item_id="guid-sequential")
     item = await repo.get_item_by_source_identity(identity)
     assert item is not None
-    vintages = await repo.list_vintages(item.news_item_key)
+    vintages = sorted(
+        await repo.list_vintages(item.news_item_key), key=lambda v: v.revision_sequence
+    )
     assert len(vintages) == 2
+    assert vintages[0].observed_source_channels == ("press_monetary",)
+    assert vintages[1].observed_source_channels == ("press_monetary", "speeches")
 
 
 # --- FX-57D Section 14/55: cross-response, same-channel duplicate -- ------

@@ -389,6 +389,7 @@ def _vintage_row_values(vintage: NewsItemVintage) -> dict[str, Any]:
         "observation_mode": vintage.observation_mode.value,
         "headline": vintage.headline,
         "source_channel": vintage.source_channel,
+        "observed_source_channels": list(vintage.observed_source_channels),
         "summary": vintage.summary,
         "body_text": vintage.body_text,
         "canonical_url": vintage.canonical_url,
@@ -417,6 +418,7 @@ def _vintage_to_domain(row: NewsItemVintageRow) -> NewsItemVintage:
         observation_mode=NewsObservationMode(row.observation_mode),
         headline=row.headline,
         source_channel=row.source_channel,
+        observed_source_channels=_observed_source_channels_from_json(row.observed_source_channels),
         source_status=NewsSourceStatus(row.source_status),
         evidence_disposition=NewsEvidenceDisposition(row.evidence_disposition),
         summary=row.summary,
@@ -440,6 +442,18 @@ def _vintage_to_domain(row: NewsItemVintageRow) -> NewsItemVintage:
 def _authors_from_json(data: object) -> tuple[str, ...]:
     if not isinstance(data, list) or not all(isinstance(entry, str) for entry in data):
         raise MalformedNewsVintageRowError(f"authors must be a list of strings, got {data!r}")
+    return tuple(data)
+
+
+def _observed_source_channels_from_json(data: object) -> tuple[str, ...]:
+    if (
+        not isinstance(data, list)
+        or not data
+        or not all(isinstance(entry, str) and entry.strip() for entry in data)
+    ):
+        raise MalformedNewsVintageRowError(
+            f"observed_source_channels must be a non-empty list of non-empty strings, got {data!r}"
+        )
     return tuple(data)
 
 

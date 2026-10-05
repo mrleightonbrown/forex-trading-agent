@@ -24,6 +24,7 @@ def _minimal_vintage(**overrides: object) -> NewsItemVintage:
         "observation_mode": NewsObservationMode.PROSPECTIVE,
         "headline": "Federal Reserve issues FOMC statement",
         "source_channel": "press_monetary",
+        "observed_source_channels": ("press_monetary",),
         "source_status": NewsSourceStatus.ACTIVE,
         "evidence_disposition": NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
     }
@@ -54,6 +55,42 @@ def test_headline_is_required_non_empty() -> None:
 def test_source_channel_is_required_non_empty() -> None:
     with pytest.raises(ValueError, match="source_channel"):
         _minimal_vintage(source_channel="")
+
+
+# --- observed_source_channels (FX-57E0) ------------------------------------
+
+
+def test_observed_source_channels_must_be_a_tuple() -> None:
+    with pytest.raises(TypeError, match="observed_source_channels"):
+        _minimal_vintage(observed_source_channels=["press_monetary"])
+
+
+def test_observed_source_channels_must_be_non_empty() -> None:
+    with pytest.raises(ValueError, match="observed_source_channels"):
+        _minimal_vintage(observed_source_channels=())
+
+
+def test_observed_source_channels_entries_must_be_non_empty_strings() -> None:
+    with pytest.raises(ValueError, match="observed_source_channels"):
+        _minimal_vintage(observed_source_channels=("press_monetary", ""))
+
+
+def test_observed_source_channels_must_not_contain_duplicates() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        _minimal_vintage(observed_source_channels=("press_monetary", "press_monetary"))
+
+
+def test_source_channel_must_be_a_member_of_observed_source_channels() -> None:
+    with pytest.raises(ValueError, match="observed_source_channels"):
+        _minimal_vintage(source_channel="press_monetary", observed_source_channels=("speeches",))
+
+
+def test_observed_source_channels_may_carry_more_than_one_channel() -> None:
+    vintage = _minimal_vintage(
+        source_channel="statcan_prices",
+        observed_source_channels=("statcan_economic_accounts", "statcan_prices"),
+    )
+    assert vintage.observed_source_channels == ("statcan_economic_accounts", "statcan_prices")
 
 
 def test_availability_must_be_a_utc_timestamp() -> None:

@@ -54,18 +54,53 @@ class NewsItemVintage:
         headline: the item's headline/title as FTA observed it.
             Required, non-empty -- every adopted source supplies one.
         source_channel: a stable, provider-neutral technical identifier
-            for WHICH configured feed/endpoint produced this item
-            (e.g. `"press_monetary"` for Fed, `"ecb_press"` for ECB's
-            own single combined feed) -- distinct from `source_
-            content_type` (FX-57B Section 10): a source may serve
-            several content types through ONE channel (ECB does), so
-            collapsing the two into one field is wrong in general even
-            though they happened to coincide 1:1 for Fed (FX-57A).
-            Required, non-empty -- every adapter must supply one, same
-            discipline as `headline`. Participates in modeled-fact
-            equality (FX-57B Section 12): a genuine channel change for
-            the same external identity is a new vintage, never a new
-            `NewsItem`.
+            for the channel THROUGH WHICH FTA RECEIVED THE OBSERVATION
+            THAT PRODUCED THIS PARTICULAR VINTAGE (e.g. `"press_
+            monetary"` for Fed, `"ecb_press"` for ECB's own single
+            combined feed) -- distinct from `source_content_type`
+            (FX-57B Section 10): a source may serve several content
+            types through ONE channel (ECB does), so collapsing the
+            two into one field is wrong in general even though they
+            happened to coincide 1:1 for Fed (FX-57A). Required,
+            non-empty -- every adapter must supply one, same
+            discipline as `headline`.
+
+            **FX-57E0 correction**: this field alone no longer
+            participates in modeled-fact equality (see `observed_
+            source_channels` below for why) -- live Statistics Canada
+            research proved the same external identity can legitimately
+            be observed through MORE THAN ONE channel simultaneously
+            (a single Daily release cross-listed under several subject
+            feeds), which the original FX-57B assumption ("one channel
+            at a time, a change is always sequential") did not allow
+            for. `source_channel` itself is NEVER stale or wrong to
+            read in isolation -- it always names the real channel of
+            THIS vintage's own observation -- it is simply no longer
+            sufficient, on its own, to answer "which channels does FTA
+            know this item through as of this vintage."
+        observed_source_channels: the canonical, cumulative, non-empty
+            set of every source channel through which FTA had observed
+            this source item BY THIS VINTAGE'S OWN `availability`
+            (FX-57E0) -- a sorted, deduped tuple, always containing
+            `source_channel` itself (the channel that produced THIS
+            vintage) plus every channel any EARLIER vintage of the SAME
+            item already carried. Channel membership is MONOTONIC
+            knowledge: it only ever grows, never shrinks -- an item's
+            disappearance from a feed proves nothing about whether its
+            publisher classification changed, so no code path in this
+            codebase ever removes a channel from this set. Gaining a
+            channel FTA did not previously know about is itself a
+            genuine new fact about FTA's own knowledge and therefore
+            participates in modeled-fact equality (replacing the bare
+            `source_channel` FX-57B originally added there) -- but
+            re-observing an ALREADY-known channel, with otherwise
+            identical content, must never by itself mint a new
+            revision. Adding a channel here is an FTA provenance-
+            knowledge revision ("FTA additionally learned channel B at
+            this instant"), NEVER a claim that the publisher itself
+            reclassified the item at that instant -- see `application.
+            use_cases.record_news_observation.RecordNewsObservation`'s
+            own docstring for the exact cumulative-merge rule.
         summary: a short summary/snippet, if the source supplies one.
         body_text: full article body text, if the source supplies one
             -- `None` is expected and normal; FX-56 never fetches a
@@ -132,6 +167,7 @@ class NewsItemVintage:
     observation_mode: NewsObservationMode
     headline: str
     source_channel: str
+    observed_source_channels: tuple[str, ...]
     source_status: NewsSourceStatus
     evidence_disposition: NewsEvidenceDisposition
     summary: str | None = None
@@ -166,6 +202,31 @@ class NewsItemVintage:
         if not isinstance(self.source_channel, str) or not self.source_channel.strip():
             raise ValueError(
                 f"source_channel must be a non-empty string, got {self.source_channel!r}"
+            )
+        if not isinstance(self.observed_source_channels, tuple):
+            raise TypeError(
+                "observed_source_channels must be a tuple, got "
+                f"{type(self.observed_source_channels).__name__}"
+            )
+        if not self.observed_source_channels:
+            raise ValueError("observed_source_channels must be non-empty")
+        for channel in self.observed_source_channels:
+            if not isinstance(channel, str) or not channel.strip():
+                raise ValueError(
+                    "each observed_source_channels entry must be a non-empty string, got "
+                    f"{channel!r}"
+                )
+        if len(set(self.observed_source_channels)) != len(self.observed_source_channels):
+            raise ValueError(
+                "observed_source_channels must not contain duplicate channels, got "
+                f"{self.observed_source_channels!r}"
+            )
+        if self.source_channel not in self.observed_source_channels:
+            raise ValueError(
+                f"source_channel={self.source_channel!r} must be a member of this vintage's "
+                f"own observed_source_channels={self.observed_source_channels!r} -- the "
+                "channel that produced THIS vintage's own observation must always be part of "
+                "the cumulative set it belongs to"
             )
         for optional_text_field in (
             self.summary,
