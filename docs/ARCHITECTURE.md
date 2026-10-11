@@ -2574,6 +2574,114 @@ StatCan items (121 vintages) and every other source's own rows (230
 total) are untouched; a re-run of the manual script against unchanged
 live data remained fully idempotent.
 
+## Bank of Canada prospective press-release ingestion & dc:date timestamp remediation (FX-57F)
+
+The sixth and final source-specific FX-57 story. Adopts exactly one
+feed -- the BoC press-releases feed (`source_key="BOC"`, one channel
+`boc_press_releases`, `/content_type/press-releases/feed/`) -- live-
+reconfirmed to match ADR 0005's own shorthand exactly. The speeches
+feed is excluded with no production fetcher and no bounded research
+request either (unlike StatCan's own catalogue exception, explicitly
+unnecessary here per this story's own spec: the source stays fully
+excluded, not partially probed).
+
+**A genuinely new document model among FX-57 adapters: RSS 1.0/RDF.**
+Live research found this feed is structurally NOT RSS 2.0 (Fed/ECB/
+BoE) or Atom (GOV.UK discovery, StatCan) -- its root is `<rdf:RDF>`,
+each release is an `<item rdf:about="<canonical-url>">` that is a
+SIBLING of `<channel>` (not nested inside it the way RSS 2.0 nests
+`<item>` inside `<channel>`), and the provider's own identity is read
+from an XML ATTRIBUTE (`rdf:about`) rather than a child element like
+`<guid>`/`<id>` -- the first FX-57 source where identity is not simply
+"the text of one named child element." `boc_rdf_parsing.py` is
+therefore a wholly dedicated parser, deliberately not a reuse or
+broadening of `rss_item_parsing.py`/`statcan_atom_parsing.py` --
+provider syntax belongs at the adapter boundary, not taught to the
+shared parser merely to accommodate one source. A `<cb:news>` block
+(the RSS-CB 1.2 central-bank extension) is present on every live item
+but deliberately never read: nothing in it adds information beyond
+`<title>`/`<dc:date>`, and `source_content_type` stays fixed at
+`"press_release"` regardless of that block's own `rdf:type` value.
+
+**The dc:date defect, live-reconfirmed before writing any remediation
+code.** `dc:date` presents America/Toronto LOCAL wall-clock time,
+mislabelled with a literal, misleading `+00:00` offset (e.g. a 09:45
+ET rate announcement appears as `...T09:47:53+00:00`, which read
+literally as UTC would place the release before dawn). This story's
+own spec required live-reconfirming this -- not assuming it from ADR
+0005 -- using at least three independently Bank-anchored items,
+ideally spanning both DST seasons, and required STOPPING before
+implementing the old remediation if the defect turned out fixed. It
+is not fixed: three live, directly-observed 2026 FAD (fixed
+announcement date, i.e. rate-decision) press releases (June 10, July
+15, September 2) were each cross-checked against the Bank's OWN
+officially-published rate-announcement schedule (a separate Bank-
+owned press release, published months in advance, stating plainly
+"All interest rate announcements will take place at 09:45 (ET)" and
+listing each year's own exact dates) -- every live `dc:date` wall-
+clock value lands a few seconds to minutes after 09:45, consistent
+with ordinary publishing lag, and impossible under the literal UTC
+reading. A fourth, winter-season (EST) anchor (January 28, 2026) was
+confirmed via the SAME official-schedule mechanism; the live feed's
+own 10-item depth no longer reaches that date, so its own raw
+`dc:date` string could not be directly re-observed for this story --
+stated transparently rather than glossed over, since the official
+schedule still independently confirms the same 09:45 (ET) policy
+applies across both seasons, which is exactly what this remediation's
+own `ZoneInfo`-based (never hardcoded-offset) design is built to
+handle correctly either way.
+
+**`boc_timestamp_remediation.remediate_boc_dc_date`: a dedicated,
+narrow, fail-closed remediation module, never buried in generic date
+parsing.** A strict regex recognizes ONLY the exact verified malformed
+shape (`YYYY-MM-DDTHH:MM:SS+00:00`) -- any other offset, including a
+well-formed-LOOKING `-04:00`/`-05:00` that happens to already look
+correct, is left untouched (`normalized_at=None`, an explanatory
+note), never silently reinterpreted just because it resembles the
+known pattern. The recognized wall-clock is reinterpreted via
+`ZoneInfo("America/Toronto")` -- DST itself is resolved entirely by
+the IANA tzdata database, never a hardcoded UTC offset, so the same
+code correctly produces a 4-hour (EDT) or 5-hour (EST) shift depending
+on the date. Two DST hazards are detected and never guessed through:
+an AMBIGUOUS local time (the autumn fall-back, where one wall-clock
+instant occurs twice) is detected by comparing `.utcoffset()` under
+`fold=0` vs `fold=1` -- if they differ, the function refuses to pick
+one; a NONEXISTENT local time (the spring-forward gap, where a
+wall-clock instant never occurs) is detected by a local-to-UTC-to-
+local round trip -- if the wall-clock does not survive unchanged, that
+instant never existed and is refused the same way. Both hazards return
+`normalized_at=None` with a note explaining why, never an arbitrary
+fold choice. **The remediated value may ONLY ever become
+`source_published_at`/`NewsSourceTimestampProvenance.normalized_at` --
+never `observed_at`/`availability`/`first_seen_at`, under any
+circumstance.** A missing `dc:date` is not a remediation failure at
+all -- the parser itself treats it as an ordinary optional field, and
+no timestamp provenance entry is created for that item.
+
+**One genuine channel, by construction.** Unlike Fed/ECB's multi-feed
+or StatCan's multi-subject shape, BoC is adopted here as exactly one
+channel -- the FX-57E0/ADR 0006 multi-channel provenance machinery
+(`observed_source_channels`, `_group_and_validate_whole_run`) still
+runs, unmodified and never special-cased away, but is exercised as a
+no-op by construction: every BoC vintage's own `observed_source_
+channels` is simply `("boc_press_releases",)`.
+
+No schema or migration change (BoC's own field mappings fit the
+existing FX-56/FX-57E0 model exactly, same as every other adapter). No
+`before_attempt` crawl-delay pacing hook (live-reconfirmed `robots.txt`
+has no `Crawl-delay` for this host/path, unlike StatCan's own
+adapter). No ADR 0005 addendum (every live finding this story made --
+endpoint, dialect, defect, identity semantics, rights -- reconfirms
+rather than changes ADR 0005's own existing text). No ADR 0006 change.
+
+**Explicitly NOT built in FX-57F**: the BoC speeches feed; historical/
+backfill ingestion; article/PDF/HTML fetching in production (bounded
+official-schedule-page lookups were used ONLY for this story's own
+remediation research, never inside the adapter/runner/normal poll);
+numeric policy-rate extraction or Economic-Event-table writes; CAD/
+sentiment/classification interpretation; cross-source dedup; any
+scheduler/daemon.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

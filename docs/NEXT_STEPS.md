@@ -4218,3 +4218,154 @@ FX-57F (Bank of Canada, with its own known timestamp-remediation
 need), FX-58/FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine
 work. FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED. Return FX-57EH
 for review.
+
+## FX-57F: Bank of Canada prospective press-release ingestion & dc:date timestamp remediation (complete)
+
+The sixth and final source-specific FX-57 story. Git HEAD at this
+story's own start: `dd9fc18` (the FX-57EH commit).
+
+**Live re-verification performed BEFORE writing any code (Sections
+22/23), per the spec's own explicit instruction not to blindly
+preserve an old workaround.** The official RSS index page
+(`https://www.bankofcanada.ca/rss-feeds/`) was fetched live and
+resolved the "Press Releases" feed to `content_type/press-releases/
+feed/` -- exactly matching ADR 0005's own shorthand, with no endpoint
+drift (carefully distinguished from a visually similar but genuinely
+different "Press" feed at `content_type/press/feed/`, a broader
+category never adopted). The feed was fetched live and found to be
+genuinely RSS 1.0/RDF, not RSS 2.0 -- root `<rdf:RDF>`, `<item
+rdf:about="...">` a SIBLING of `<channel>`, identity read from an XML
+ATTRIBUTE rather than a child element -- requiring a wholly dedicated
+parser (`boc_rdf_parsing.py`) per Section 8's own instruction, never a
+reuse/broadening of `rss_item_parsing.py`. `robots.txt` was confirmed
+to have no `Crawl-delay`/`Disallow` affecting this feed (no `before_
+attempt` pacing hook needed, unlike StatCan's own adapter). Terms-of-
+Use rights language was reconfirmed to match ADR 0005's own
+description essentially verbatim.
+
+**The dc:date defect was reconfirmed live, not assumed.** Three live,
+directly-observed 2026 FAD (rate-decision) press releases -- June 10,
+July 15, September 2 -- were each cross-checked against the Bank's OWN
+officially-published rate-announcement schedule (a separate, Bank-
+owned press release, published months in advance, stating "All
+interest rate announcements will take place at 09:45 (ET)" and listing
+each year's own exact dates): every live `dc:date` wall-clock value
+lands a few seconds to minutes after 09:45, impossible under the
+literal `+00:00`-as-UTC reading. A fourth, winter-season (EST) anchor
+(January 28, 2026) was confirmed via the SAME official-schedule
+mechanism -- the live feed's own 10-item depth no longer reaches that
+date, so no live `dc:date` string could be directly re-observed for
+it this time; this limitation is stated transparently here rather than
+glossed over, exactly per Section 22's own fallback clause ("bounded
+research against an older official Bank press-release/event page is
+permitted solely to reconfirm DST semantics"). The defect is RECON-
+FIRMED, unchanged -- the old remediation design is correctly not
+obsolete, and this story proceeded to implement it rather than
+stopping for architecture review.
+
+**`boc_timestamp_remediation.remediate_boc_dc_date`: a dedicated,
+narrow, fail-closed module (Section 50), never buried in generic date
+parsing.** A strict regex (`_MALFORMED_SHAPE_RE`) recognizes ONLY the
+exact verified malformed shape (`YYYY-MM-DDTHH:MM:SS+00:00`); anything
+else -- including a well-formed-LOOKING `-04:00`/`-05:00` offset that
+already resembles the correct answer, a fractional-seconds variant
+never observed live, or outright garbage -- is left untouched
+(`normalized_at=None`, an explanatory note). The recognized wall-clock
+is reinterpreted via `ZoneInfo("America/Toronto")`, never a hardcoded
+UTC offset, so DST is resolved entirely by the IANA tzdata database.
+Two DST hazards are detected and never guessed through: an AMBIGUOUS
+local time (autumn fall-back, one wall-clock instant occurring twice)
+via a `fold=0`/`fold=1` `.utcoffset()` comparison; a NONEXISTENT local
+time (spring-forward gap) via a local-UTC-local round-trip check. Both
+return `normalized_at=None` with a note, never an arbitrary fold
+choice. **The remediated value may ONLY ever become `source_published_
+at`/`NewsSourceTimestampProvenance.normalized_at` -- never `observed_
+at`/`availability`/`first_seen_at`, under any circumstance (Sections
+20/37)**, verified directly in both the adapter unit tests and the
+Postgres integration tests. A missing `dc:date` is not a remediation
+failure -- the parser treats it as an ordinary optional field and no
+timestamp provenance entry is created for that item (Section 31).
+
+**One genuine channel, by construction (Section 6).** Unlike Fed/
+ECB's multi-feed or StatCan's multi-subject shape, BoC is adopted as
+exactly one channel (`boc_press_releases`) -- the FX-57E0/ADR 0006
+multi-channel machinery still runs, unmodified, never special-cased
+away, but is exercised as a no-op: every BoC vintage's own `observed_
+source_channels` is simply `("boc_press_releases",)`. `source_content_
+type` is fixed at `"press_release"` for the whole feed, never inferred
+from title/content (Section 9) -- live-verified against a title
+("Bank of Canada unveils new vertical $20 bank note") that reads
+nothing like a rate decision, confirming the fixed value is not
+accidentally correct only for monetary-policy releases.
+
+**Verification, reported separately**: focused BoC suite (parser unit
+`21 passed`, remediation unit `15 passed`, adapter unit `13 passed`,
+Postgres integration `10 passed`, `live_source` `1 passed` -- `59`
+combined excluding the live test, `60` including it). Full regression
+of every prior FX-57 adapter plus the common application layer: `348
+passed`, zero new failures. Full deterministic default suite: `2084
+passed, 7 failed, 10 deselected` -- the 7 failures are the pre-
+existing, documented OANDA live-candle-backfill gap (FX-EPIC-06,
+unrelated to news intelligence, already recorded in [[toolchain-and-
+ci-state]]), confirmed unchanged by this story. Full `live_source`
+suite: `8 passed, 2 failed` -- BoC's own live test passes; the 2
+failures are the pre-existing BLS 403 (FX-EPIC-07, unrelated) and a
+genuinely NEW, incidental finding discovered while running this suite:
+a live ECB "accounts" content-class URL (`/press/accounts/...`) that
+`ecb_rss_source.py`'s own content-class recognizer does not accept.
+**This ECB finding was NOT caused by this story -- `ecb_rss_source.py`
+was not touched at all this session** -- and is reported here
+honestly rather than silently absorbed or fixed out-of-scope; it is
+left for a future narrow ECB hardening story (analogous to FX-57CH/
+FX-57EH) to pick up, not addressed in this commit. `ruff check .`,
+`ruff format --check .`, `mypy .` (453 source files), and `pre-commit
+run --all-files` all pass clean across the whole repository.
+
+**Test counts, verified via per-file `grep -cE '^(async )?def test_'`
+on five newly-created files** (no existing test file was modified, so
+every count below is the file's own total, not a before/after delta):
+**60 new test functions** -- `test_boc_rdf_parsing.py` (21),
+`test_boc_timestamp_remediation.py` (15), `test_boc_source.py` (13),
+`test_boc_news_ingestion.py` (10), `test_boc_source_live.py` (1).
+
+`scripts/ingest_boc_news.py` run live TWICE against the real feed and
+dev Postgres: first run `created=10, revisions_added=0, unchanged=0,
+items_invalid=0`; second run, immediately after, fully idempotent:
+`created=0, revisions_added=0, unchanged=10, channel_memberships_
+added=0`. Database spot-check: 351 genuine rows now present across all
+six adopted sources (45 FED + 15 ECB + 150 BOE + 20 GOVUK_HMT + 111
+STATCAN + 10 BOC); every pre-existing source's own row count confirmed
+untouched.
+
+**No schema or migration change** -- BoC's own field mappings fit the
+existing FX-56/FX-57E0 model exactly. **No ADR 0005 addendum** -- every
+live finding this story made (endpoint, dialect, defect, identity
+semantics, rights) reconfirms rather than changes ADR 0005's own
+existing text; an addendum documenting "an adapter now exists" with no
+new source fact was explicitly judged unwarranted. **No ADR 0006
+change** -- BoC is a genuine one-channel source.
+
+**Explicitly confirmed NOT done in FX-57F**: the BoC speeches feed (no
+production fetcher, no bounded research request either -- unlike
+StatCan's catalogue exception, explicitly unnecessary per this story's
+own spec); historical/backfill ingestion; article/PDF/HTML fetching in
+production (bounded official-schedule-page lookups were used ONLY for
+this story's own remediation research); numeric policy-rate extraction
+or Economic-Event-table writes; CAD/sentiment/classification
+interpretation; cross-source deduplication (FX-58), relevance/topic
+classification or sentiment (FX-59), a news snapshot/dashboard
+(FX-60), any Decision/Risk Engine work (FX-61/FX-EPIC-09); any
+scheduler/daemon; the incidentally-discovered ECB "accounts"
+content-class gap (left for a future ECB hardening story). FX-49/
+FX-52 remain DEFER; FX-53 remains BLOCKED.
+
+Full details in `docs/DECISIONS.md`'s FX-57F entry; `docs/
+ARCHITECTURE.md` carries a new "Bank of Canada prospective press-
+release ingestion & dc:date timestamp remediation (FX-57F)" section;
+`docs/CURRENT_STATE.md` carries its own FX-57F entry.
+
+**This is the SIXTH and FINAL source-specific FX-57 story.** Per this
+story's own explicit stop instruction: do not start FX-58/FX-59/
+FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work. Do not start
+an ECB "accounts" hardening story unless separately assigned. Return
+FX-57F for review.
