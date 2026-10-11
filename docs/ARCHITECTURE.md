@@ -2811,6 +2811,79 @@ algorithm itself; no fix to the incidentally-discovered ECB
 "accounts" content-class gap (`ecb_rss_source.py` untouched); no
 FX-58+ work.
 
+## PIT-safe news canonicalization & conservative deduplication (FX-58, ADR 0007)
+
+A DERIVED evidence layer above the six FX-57 source-native pipelines,
+answering "which source-native `NewsItem`s does FTA currently believe
+represent the SAME underlying news story?" -- without ever mutating,
+merging, or repointing the source-native identity/history FX-56/FX-57
+established as permanent. Full architecture in `docs/adr/0007-pit-
+safe-news-canonicalization.md`; summarized here.
+
+**Append-only pairwise relation vintages, never a persisted mutable
+group.** One new table, `news_canonical_relation_vintages`
+(`domain.news_canonical_relation_vintage.NewsCanonicalRelation
+Vintage`): a lexicographically-ordered `(left_news_item_key, right_
+news_item_key)` pair, `revision_sequence`, `availability` (ALWAYS
+FTA's own decision time, captured exactly once per `CanonicalizeNews
+Once` run, never any source timestamp), `relation_kind` (`SAME_STORY`
+/ `NOT_SAME_STORY`), `method` (`EXACT_CANONICAL_URL`/`EXACT_BODY_
+TEXT`/`EXACT_HEADLINE_AND_SUMMARY`/`MANUAL_REVIEW`), the two basis
+`NewsItemVintage.revision_sequence` values actually compared (via
+genuine composite foreign keys, never copying content), and a stable
+`algorithm_version` (`"fx58_v1"`, never a git commit hash). No
+application code path ever issues an `UPDATE` against this table.
+
+**Canonical groups are derived connected components, computed fresh,
+never cached as a mutable master row.** `domain.news_canonical_
+grouping.derive_canonical_groups` -- union-find over `SAME_STORY`
+edges among every `NewsItem` known as of a requested instant, failing
+closed (`NewsCanonicalizationInconsistentStateError`) if a `NOT_SAME_
+STORY` edge would otherwise land inside one component via
+transitivity. Group key: earliest `first_seen_at` member, lexical
+tie-break -- a deterministic label, never an implied "best source."
+
+**The v1 automatic matcher (`CanonicalizeNewsOnce`, `fx58_v1`) is
+deliberately exact, high-precision, low-recall.** Three rules, fixed
+precedence (`EXACT_CANONICAL_URL` > `EXACT_BODY_TEXT` > `EXACT_
+HEADLINE_AND_SUMMARY`), each requiring byte-for-byte equality after a
+minimal, non-fuzzy normalization (`domain.news_text_normalization`)
+plus a minimum length (body >= 200 chars, summary >= 80 chars). No
+fuzzy/ML/LLM matching of any kind. The matcher NEVER writes `NOT_
+SAME_STORY`; that relation kind may only ever be written with
+`method=MANUAL_REVIEW` (enforced by the domain type itself) -- no
+manual UI exists yet, but the schema already supports a future
+audited correction without redesign. An existing `NOT_SAME_STORY`
+blocks the automatic matcher from overturning it (`BLOCKED_BY_
+REVIEW_OVERRIDE`, counted, never raised as an error).
+
+**Candidate input reuses the EXISTING FX-56 evidence-eligible PIT
+query unmodified** (`NewsRepository.latest_evidence_eligible_vintage_
+as_of`, via a dedicated `NewsCanonicalizationRepository` port rather
+than bloating `NewsRepository`) -- including that method's own
+already-shipped fallback behavior (an item whose CURRENT latest
+vintage is quarantined still uses an EARLIER evidence-eligible
+vintage, if one exists, rather than being excluded outright).
+
+**Real-data activation is currently BLOCKED, by design, pending
+architecture review** -- the required pre-persistence dry-run against
+the real 358-item dev database found that `EXACT_HEADLINE_AND_
+SUMMARY` produces confirmed false-positive proposals for sources
+whose own "summary" field is itself recurring institutional
+boilerplate (Bank of Canada rate-decision outcome text; Federal
+Reserve committee-hearing titles) rather than genuinely per-event
+text. Per this story's own explicit safety-gate instruction, ZERO
+relations were persisted; `news_canonical_relation_vintages` remains
+empty. See ADR 0007's own "Real-data finding" section for the full
+evidence and the deferred correction options.
+
+**Explicitly NOT built in FX-58**: no `EconomicEvent` linkage of any
+kind (FX-52 remains DEFER); no entities/countries/currencies/topics/
+relevance/sentiment/hawkish-dovish/bullish-bearish (FX-59's own
+future job); no source-reputation weighting (FX-EPIC-09); no pair-
+specific news snapshot (FX-60); no Market Context visualization
+change (FX-61); no network I/O of any kind; no scheduler/daemon.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

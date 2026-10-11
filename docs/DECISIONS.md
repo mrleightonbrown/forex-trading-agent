@@ -14074,3 +14074,323 @@ clears FX-58.** Per this story's own explicit stop instruction: do
 not start FX-58, FX-59, FX-60, FX-61, FX-EPIC-09, or any Decision/
 Risk Engine work without separate authorization. Return FX-57BH.1 for
 review.
+
+## 2026-10-11 — FX-58: PIT-safe news canonicalization & conservative deduplication
+
+Builds the first DERIVED evidence layer above the six now-closed
+FX-57 pipelines. Git HEAD at this story's own start: `ed8e630` (the
+FX-57BH.1 commit), clean working tree except `.claude/`. Full
+architecture record in the new `docs/adr/0007-pit-safe-news-
+canonicalization.md`.
+
+**1. `NewsItem`/`NewsItemVintage` remain exactly as FX-56/FX-57 left
+them -- no mutation, merge, or repoint of any kind, anywhere.** No
+new column on `news_items`/`news_item_vintages`; no existing FX-57
+adapter touched; no `NewsSourceMapping` ever repointed; no `first_
+seen_at` ever changed; no existing vintage ever rewritten. Verified
+directly: `test_canonicalization_never_mutates_source_news_items`
+re-reads an item's full vintage history before and after a real
+`CanonicalizeNewsOnce` run and asserts byte-for-byte equality.
+
+**2. Append-only pairwise relation vintages, one new table.**
+`news_canonical_relation_vintages` (migration `274aabcc57dd`):
+`(left_news_item_key, right_news_item_key)` lexicographically ordered
+(`left < right`, enforced by a domain `__post_init__` check AND a DB
+`CHECK` constraint -- self-relations forbidden at both layers),
+`revision_sequence`, `availability`, `relation_kind` (`SAME_STORY`/
+`NOT_SAME_STORY`), `method` (`EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT`/
+`EXACT_HEADLINE_AND_SUMMARY`/`MANUAL_REVIEW`), `left_item_revision_
+sequence`/`right_item_revision_sequence` (genuine COMPOSITE foreign
+keys into `news_item_vintages(news_item_key, revision_sequence)` --
+pinning the EXACT two vintages FTA compared, never copying their
+headline/summary/body/URL into this table), and a stable, non-empty
+`algorithm_version` (`"fx58_v1"`, never a git commit hash). Two
+additional `CHECK` constraints mirror the domain type's own cross-
+field invariant in storage: an automatic method may only ever pair
+with `SAME_STORY`; `NOT_SAME_STORY` may only ever pair with `MANUAL_
+REVIEW`. Downgrade is guarded from the start (mirrors `504030474987`'s
+own precedent exactly) -- verified three ways: empty-table downgrade
+succeeds, a populated table refuses with a clear `RuntimeError`
+naming the row count BEFORE any destructive DDL runs, and re-upgrade
+after a refused downgrade attempt leaves the migration state
+unaffected.
+
+**3. `availability` is ALWAYS FTA's own canonicalization-decision
+time -- never a source timestamp, never either item's own vintage
+availability, never an inferred event time.** `CanonicalizeNewsOnce`
+captures `run_at` EXACTLY ONCE per run via an injected `ClockFn`
+(`UtcTimestamp.now()` by default) and uses that SAME instant for
+every relation decision the run produces -- pinned directly by
+`test_run_clock_is_captured_exactly_once`, which counts actual clock
+invocations. This `ClockFn` is defined LOCALLY inside `application.
+use_cases.canonicalize_news_once` rather than importing the existing
+one `infrastructure.news_sources.http_fetch` already defines, because
+importing an infrastructure-layer type into an application use case
+would violate this project's own `domain -> application ->
+infrastructure` dependency direction (CLAUDE.md) -- the first FX-57/
+FX-58 use case with no HTTP response of its own to derive a clock
+from, so no existing adapter-level `ClockFn` was reusable anyway.
+
+**4. Canonical groups are DERIVED connected components, computed
+fresh on every query -- deliberately NOT a persisted mutable group
+table (Section 11).** `domain.news_canonical_grouping.derive_
+canonical_groups` builds a union-find over `SAME_STORY` edges across
+every `NewsItem` known as of a requested instant (`GetCanonicalNews
+GroupsAsOf`), then fails closed (a new exception, `NewsCanonicaliz
+ationInconsistentStateError`) if any `NOT_SAME_STORY` edge would
+otherwise land inside one component via `SAME_STORY` transitivity --
+e.g. A-SAME-B, B-SAME-C, A-NOT_SAME-C raises rather than silently
+producing `{A,B,C}` or silently ignoring the correction, pinned by a
+dedicated Postgres end-to-end test. The group key is deterministic:
+the member with the earliest `NewsItem.first_seen_at`, lexically
+tie-broken -- explicitly documented as NEVER an implied "most
+trustworthy/primary source" (that interpretation is reserved for
+FX-EPIC-09's own future source-reputation work, not this story's).
+This design was chosen specifically to avoid reopening the class of
+orphan-row/race/lineage problems this project's own FX-52A/FX-52AH/
+FX-56H history already paid down once for a related reason (a
+persisted mutable master record requiring a destructive reassignment
+operation somewhere).
+
+**5. `NOT_SAME_STORY` is append-only and reviewer-only; the automatic
+matcher can neither write nor overturn one.** `NewsCanonicalRelation
+Vintage.__post_init__` enforces, structurally (not merely by
+convention), that every automatic method may ONLY pair with `SAME_
+STORY`, and `NOT_SAME_STORY` may ONLY pair with `MANUAL_REVIEW` -- no
+manual review UI was built in this story (none was required), but the
+schema already supports a future audited correction without any
+redesign. `RecordNewsCanonicalRelation` checks PIT ordering FIRST,
+UNCONDITIONALLY -- mirroring FX-56H.1's own corrected lesson ("check
+ordering first, then identity") -- so an incoming decision whose
+`availability` is earlier than the pair's own latest recorded
+relation always raises `OutOfOrderRelationDecisionError`, regardless
+of whether its content would otherwise be a no-op; equal availability
+is explicitly permitted (pinned by a dedicated test). If the pair's
+latest relation is `NOT_SAME_STORY` and the incoming decision uses an
+automatic method, the call returns a NEW outcome variant, `BLOCKED_
+BY_REVIEW_OVERRIDE` -- modeled as an ordinary, counted, NON-
+exceptional result (never a raised error), since `CanonicalizeNews
+Once` is expected to tally and report this routinely, not treat it as
+a failure. Re-observing the SAME decision (even via a newly-
+discovered DIFFERENT matching method, or after an unrelated source
+vintage change) is `UNCHANGED`, minting no new revision -- "the
+original relation already records when FTA first learned the dedup
+fact," mirroring FX-56's own "repeated identical poll creates no new
+vintage" discipline exactly. Losing today's exact match never auto-
+writes `NOT_SAME_STORY` -- `CanonicalizeNewsOnce` simply never calls
+`RecordNewsCanonicalRelation` for a non-matching pair at all (Section
+5's own invariant: absence of a match is never treated as an
+explicit "these are different" assertion), so an existing relation
+is left completely untouched by a later non-match, pinned by a
+dedicated test that deliberately changes a matching candidate's body
+text between two runs and confirms the original relation survives
+unchanged.
+
+**6. The v1 automatic matcher (`fx58_v1`) is deliberately exact,
+high-precision, low-recall -- no fuzzy, semantic, or ML/LLM matching
+exists or is planned.** `domain.news_canonicalization_matching.
+classify_candidate_pair` applies exactly three rules in FIXED
+precedence (`EXACT_CANONICAL_URL` > `EXACT_BODY_TEXT` > `EXACT_
+HEADLINE_AND_SUMMARY`) and returns only the FIRST (strongest) one
+that matches, even when several would -- `CanonicalizeNewsOnce` never
+mints more than one relation per pair per run regardless of how many
+signals agree, pinned directly. Text comparison uses `domain.news_
+text_normalization.normalize_text` (Unicode NFKC, HTML-entity
+unescape, whitespace-run collapse, casefold) -- deliberately no
+stemming, stopword removal, tokenization, translation, language
+detection, embeddings, or edit distance; URL comparison uses
+`normalize_canonical_url` (lowercase scheme/host, discard fragment,
+preserve EVERYTHING else verbatim -- path including duplicate
+slashes, query string including its own ordering, trailing-slash
+presence) -- a dedicated regression confirms ECB's own deliberate
+`https://www.ecb.europa.eu//press/...` double slash survives
+normalization unchanged. Minimum lengths (body >= 200 chars, summary
+>= 80 chars) exclude boilerplate fragments from the body/summary
+rules; headline alone and summary alone are both explicitly
+insufficient (pinned by dedicated tests); there is no time-window/
+same-pubDate heuristic anywhere -- `classify_candidate_pair`'s own
+signature does not even accept a timestamp.
+
+**7. Candidate input reuses the EXISTING FX-56 evidence-eligible PIT
+query directly, through a NEW, dedicated `NewsCanonicalizationRepository`
+port (never bloating `NewsRepository` itself, per the spec's own
+explicit preference).** `SqlAlchemyNewsCanonicalizationRepository.
+list_candidates_as_of` calls `NewsRepository.latest_evidence_
+eligible_vintage_as_of` per item -- the SAME, unmodified, already-
+shipped method every FX-56/FX-57 PIT query already uses, never a
+second interpretation written independently here. **A genuine
+correction made DURING this story, worth recording precisely**: this
+story's own draft spec characterized that method, in its own Section
+27, as "if the latest vintage is quarantined: do NOT fall back to an
+older eligible vintage" -- reading the ACTUAL, already-deployed FX-56
+production SQL (`conditions = [..., evidence_disposition ==
+EVIDENCE_ELIGIBLE]` filtered FIRST, THEN ordered by availability
+DESC/revision_sequence DESC) proved this characterization factually
+wrong: the real query filters to evidence-eligible rows first, so it
+DOES correctly fall back to an earlier eligible vintage when the
+item's current latest vintage is quarantined, excluding the item
+entirely ONLY when NO vintage at all, as of the query instant, is
+evidence-eligible. The CODE in this story was never affected (it
+calls the existing method directly, unmodified, exactly as instructed)
+-- what needed correcting was a docstring claim (written from the
+spec's own premise before this verification) and the test that had
+encoded the same wrong assumption; both were fixed, and the test file
+now carries two cases (quarantined-with-no-fallback-available excludes
+the item; quarantined-with-an-earlier-eligible-vintage-available
+falls back to it) rather than the single, incorrect one originally
+drafted.
+
+**Verification, reported separately:**
+
+- Domain unit tests (pure, no I/O): `test_news_text_normalization.py`
+  `16 passed`, `test_news_canonicalization_matching.py` `15 passed`
+  (including the Section 26 anti-overmerge regression -- ECB
+  decision/account and speech/decision pairs, plus a StatCan-CPI/
+  BoC-speech related-but-distinct pair, all correctly non-matching),
+  `test_news_canonical_relation_vintage.py` `12 passed`, `test_news_
+  canonical_grouping.py` `9 passed` (including the transitive and
+  contradictory-graph cases).
+- Application unit tests (in-memory fake repository, no DB):
+  `test_record_news_canonical_relation.py` `9 passed`, `test_
+  canonicalize_news_once.py` `10 passed`.
+- Postgres integration: `test_news_canonicalization_repository.py`
+  `14 passed` (round-trip, PIT before/after, equal-availability
+  tie-break, FK enforcement for both items AND both exact basis
+  vintages, idempotent and conflicting writes, a genuine two-session
+  concurrency race, and the corrected quarantine-fallback semantics);
+  `test_canonicalize_news_e2e.py` `6 passed` (the full chain, the
+  group PIT worked example, transitive grouping, the contradictory-
+  graph fail-closed case, the ECB anti-overmerge regression through
+  the REAL matcher, and the no-source-mutation proof).
+- Full regression of all six source families plus the common news
+  application layer: `412 passed`, zero new failures.
+- Deterministic default suite (`pytest`): `2223 passed, 7 failed, 10
+  deselected` -- the SAME 7 pre-existing, documented OANDA live-
+  candle-backfill failures (FX-EPIC-06, unrelated), confirmed
+  unchanged.
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the same pre-existing BLS 403 (FX-EPIC-07, unrelated),
+  confirmed unchanged. FX-58 itself performs zero network I/O and
+  added no `live_source` test of its own.
+- `ruff check .`, `ruff format --check .`, `mypy .` (475 source
+  files), and `pre-commit run --all-files` all pass clean.
+
+**Test counts, verified via per-file `grep -cE '^(async )?def test_'`**
+(every file is brand new, so each count is simply that file's own
+total): **91 new test functions** across 8 files -- `test_news_text_
+normalization.py` (16), `test_news_canonicalization_matching.py`
+(15), `test_news_canonical_relation_vintage.py` (12), `test_news_
+canonical_grouping.py` (9), `test_record_news_canonical_relation.py`
+(9), `test_canonicalize_news_once.py` (10), `test_news_canonicalization_
+repository.py` (14), `test_canonicalize_news_e2e.py` (6).
+
+**The required pre-persistence dry-run safety gate (Section 42/43)
+found a genuine, confirmed real-data problem -- this story's own
+single most important finding, and it BLOCKS real-data activation
+entirely.** `scripts/canonicalize_news.py --dry-run`, run against the
+real, live 358-item dev database (63,903 candidate pairs generated),
+proposed exactly 7 `SAME_STORY` relations, every single one via
+`EXACT_HEADLINE_AND_SUMMARY` (zero via `EXACT_CANONICAL_URL`, zero
+via `EXACT_BODY_TEXT`). Direct SQL inspection of the underlying
+stored evidence (canonical URL, summary, `source_published_at`) for
+EVERY proposed pair found:
+
+- **3 Bank of Canada pairs** (every pairwise combination of the June
+  10, July 15, and September 2, 2026 rate-decision press releases):
+  each is a genuinely SEPARATE monetary-policy decision, on a
+  different date, about a different meeting -- but all three carry
+  the byte-identical boilerplate summary ("The Bank of Canada today
+  held its target for the overnight rate at 2.25%, with the Bank Rate
+  at 2.5% and the deposit rate at 2.20%.") purely because the policy
+  rate did not change across any of the three decisions. **Confirmed
+  false positive.**
+- **3 Federal Reserve pairs** (Powell semiannual testimony across
+  four hearing dates spanning March 2024 through June 2025; Barr
+  supervision testimony across two 2024 dates): the stored "summary"
+  field is in fact a standing committee-name boilerplate ("Testimony
+  Before the Committee on Financial Services, U.S. House of
+  Representatives" / "...Committee on Banking, Housing, and Urban
+  Affairs, U.S. Senate, Washington, D.C.") reused verbatim across
+  genuinely different hearings. **Confirmed false positive**, same
+  root cause as the BoC pairs.
+- **1 GOV.UK/HMT pair** ("More overseas firms enticed to buy
+  British," published the same calendar day six hours apart, one URL
+  carrying GOV.UK's own `--2` duplicate-slug disambiguation suffix):
+  plausibly a genuine CMS republish of the identical announcement --
+  reported as AMBIGUOUS, not confirmed either way, since the stored
+  evidence alone (identical headline, identical summary, same day,
+  the known `--2` CMS convention) cannot settle whether this is one
+  announcement republished or two genuinely separate announcements
+  that happen to share identical boilerplate text.
+
+**6 of 7 proposed pairs are confirmed related-but-distinct
+publications sharing recurring institutional boilerplate TEXT, not
+genuine duplicates of the same story** -- precisely the hazard this
+story's own Section 23 explicitly warned about ("Recurring
+institutional headlines make this unsafe"), extended here to a case
+the spec's own authors may not have anticipated: summary EQUALITY
+alone does not protect against this hazard either, when the SOURCE's
+own "summary" field is itself templated/outcome-boilerplate (e.g. "we
+held the rate at X%," "this is the standing title of this recurring
+hearing type") rather than genuinely free, per-event descriptive
+text. Per this story's own explicit Section 43 instruction -- "If ANY
+proposed pair is actually related but distinct: STOP... Return the
+pair and matching evidence for architecture review" -- **the first
+real persistent write-mode canonicalization run was never executed
+in this story.** `news_canonical_relation_vintages` remains
+completely empty (confirmed via direct `SELECT COUNT(*)`); all 358
+pre-existing genuine rows across all six sources are confirmed
+exactly untouched by a direct database spot-check taken both before
+and after every step of this story's own work. No threshold was
+weakened or strengthened to engineer a different outcome either way
+(Section 43's own explicit prohibition on both "manufacturing
+canonical clusters" and "casually adding a source-specific
+exception"). This is reported here, and in ADR 0007's own "Real-data
+finding" section, as an architecture finding requiring a separately-
+authorized follow-up story -- NOT fixed unilaterally within FX-58
+itself, per CLAUDE.md's own "document the issue, explain the proposed
+change, and stop before implementing an architectural change"
+instruction, and in direct analogy to this project's own established
+precedent of never quietly patching a "documented but still wrong"
+behavior in-story (see the FX-57CH entry's own retrospective on
+exactly that mistake pattern, made and corrected once already in this
+project's history).
+
+**No schema change beyond the one new table** (migration
+`274aabcc57dd`). **No ADR 0005 or ADR 0006 update** -- FX-58 touches
+no source-feasibility fact and no multi-channel provenance concept;
+it is an entirely new, additive evidence layer. **ADR 0007 created**,
+recording the full architecture decision and the real-data finding
+above in full.
+
+**Explicitly confirmed NOT done in FX-58**: no event extraction of
+any kind (policy-rate level, rate vote, inflation/growth forecasts,
+balance-sheet policy, member positions, forward guidance, surprise --
+none parsed from any item's own content, per the spec's own explicit
+Section 28 prohibition); no semantic classification (EUR relevance,
+hawkish/dovish, bullish/bearish, inflation topic, policy stance, high
+impact -- none added, per Section 29); no `EconomicEvent` linkage of
+any kind (FX-52 remains DEFER, and no occurrence identity was ever
+manufactured from a news headline, per Section 47); no source-
+reputation/weighting of any kind (FX-EPIC-09's own future job, per
+Section 46); no pair-specific news evidence snapshot (FX-60's own
+future job); no Market Context dashboard change (FX-61's own future
+job); no network I/O added anywhere (Section 64 -- no FX-57 adapter
+was modified except as genuinely required for test/import plumbing,
+which turned out to be none); no scheduler/daemon of any kind.
+FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk Engine not started.
+FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED.
+
+Full details in `docs/ARCHITECTURE.md`'s new "PIT-safe news
+canonicalization & conservative deduplication (FX-58, ADR 0007)"
+section; `docs/CURRENT_STATE.md` carries its own FX-58 entry; `docs/
+NEXT_STEPS.md` carries the full narrative; `docs/adr/0007-pit-safe-
+news-canonicalization.md` carries the full architecture record and
+the real-data finding in full.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-59, FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Do
+NOT attempt a real write-mode canonicalization run against production
+data until the `EXACT_HEADLINE_AND_SUMMARY` finding above is
+explicitly resolved by a separately-authorized follow-up story.
+Return FX-58 for architectural review.

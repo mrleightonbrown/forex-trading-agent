@@ -2585,6 +2585,60 @@ _Last updated: 2026-09-27 (FX-54V)_
   source-ingestion sequence and clears FX-58 — do not start FX-58/
   FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work,
   without separate authorization.**
+- **FX-58: PIT-safe news canonicalization & conservative
+  deduplication (code/schema/tests complete; real-data activation
+  BLOCKED pending review — ADR 0007)**. A derived evidence layer
+  above the six FX-57 pipelines: `news_canonical_relation_vintages`
+  (new table, migration `274aabcc57dd`, downgrade-guarded from the
+  start) stores append-only `SAME_STORY`/`NOT_SAME_STORY` pairwise
+  decisions, each pinning the exact two `NewsItemVintage`s compared
+  via composite FKs, with `availability` always FTA's own decision
+  time (captured once per `CanonicalizeNewsOnce` run). Canonical
+  groups (`domain.news_canonical_grouping.derive_canonical_groups`)
+  are derived connected components computed fresh on every query,
+  never a persisted mutable group — fails closed
+  (`NewsCanonicalizationInconsistentStateError`) on a contradictory
+  graph. The `fx58_v1` automatic matcher (`domain.news_
+  canonicalization_matching.classify_candidate_pair`) is exact-match
+  only, three rules in fixed precedence (`EXACT_CANONICAL_URL` >
+  `EXACT_BODY_TEXT` > `EXACT_HEADLINE_AND_SUMMARY`, with 200/80-char
+  minimums) — no fuzzy/ML/LLM matching anywhere; it never writes
+  `NOT_SAME_STORY`, which is reserved for a future `MANUAL_REVIEW`
+  (no UI built here). 91 new tests across 8 new files (domain:
+  normalization 16, matcher 15, relation vintage 12, grouping 9;
+  application: record-relation 9, canonicalizer 10; Postgres
+  integration: repository 14, full end-to-end 6) — all passing. Full
+  regression (six source families + common news layer, 412 tests)
+  passes; full deterministic default suite `2223 passed, 7 failed
+  (the same pre-existing, unrelated OANDA live-candle-backfill gap),
+  10 deselected`; full `live_source` suite `9 passed, 1 failed` (same
+  pre-existing BLS 403). `ruff`/`ruff format`/`mypy`/`pre-commit` all
+  clean. **The required pre-persistence dry-run safety gate (`scripts/
+  canonicalize_news.py --dry-run` against the real 358-item dev
+  database) found 7 proposed `SAME_STORY` pairs, ALL via `EXACT_
+  HEADLINE_AND_SUMMARY` — direct inspection confirmed 6 of 7 are
+  FALSE POSITIVES**: three Bank of Canada rate-decision press
+  releases (different dates, genuinely different decisions) sharing
+  identical boilerplate summary text because the rate did not change;
+  three Federal Reserve testimony items (different hearing dates)
+  sharing a standing committee-name boilerplate as their own
+  "summary." (The 7th, a GOV.UK pair published hours apart under a
+  `--2` duplicate-slug URL, is ambiguous — plausibly, not confirmably,
+  a genuine republish.) Per this story's own explicit instruction,
+  this halts real-data activation entirely: **zero relations were
+  persisted**; `news_canonical_relation_vintages` remains empty;
+  all 358 pre-existing source rows across six sources confirmed
+  exactly untouched. This is reported as an architecture finding for
+  separately-authorized review (see ADR 0007's own "Real-data
+  finding" section), not fixed unilaterally in this story. No change
+  to any FX-57 adapter; no network I/O added anywhere. No `Economic
+  Event` linkage (FX-52 remains DEFER); no entities/topics/relevance/
+  sentiment (FX-59's own job); no source-reputation weighting
+  (FX-EPIC-09); no pair-specific snapshot (FX-60); no Market Context
+  change (FX-61). **Stop after FX-58 — do not start FX-59/FX-60/
+  FX-61/FX-EPIC-09, or any Decision/Risk Engine work, and do not
+  attempt a real write-mode canonicalization run until the `EXACT_
+  HEADLINE_AND_SUMMARY` finding above is explicitly resolved.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
