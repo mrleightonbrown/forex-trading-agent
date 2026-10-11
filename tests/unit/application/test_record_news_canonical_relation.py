@@ -33,8 +33,15 @@ class FakeNewsCanonicalizationRepository:
     full Protocol contract, mirroring `FakeNewsRepository`'s own
     precedent in `test_record_news_observation.py`."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, simulate_lost_race: bool = False) -> None:
         self._relations: dict[tuple[str, str], list[NewsCanonicalRelationVintage]] = {}
+        # FX-58H Section 18/19: when True, `add_relation_vintage`
+        # reports `inserted=False` for the FIRST write of any given
+        # identity, simulating a concurrent writer that already
+        # durably inserted the exact same payload moments earlier --
+        # without needing a real second session/thread for this fast,
+        # DB-free unit test.
+        self._simulate_lost_race = simulate_lost_race
 
     async def list_candidates_as_of(
         self, as_of: UtcTimestamp, *, include_backfill: bool = False
@@ -85,6 +92,8 @@ class FakeNewsCanonicalizationRepository:
                     return RelationVintageWriteResult(inserted=False)
                 raise NewsCanonicalRelationConflictError(existing, vintage)
         rows.append(vintage)
+        if self._simulate_lost_race:
+            return RelationVintageWriteResult(inserted=False)
         return RelationVintageWriteResult(inserted=True)
 
 
@@ -291,6 +300,63 @@ async def test_manual_review_may_still_reverse_not_same_story() -> None:
     )
     assert result.outcome is NewsCanonicalRelationOutcome.REVISION_ADDED
     assert result.relation.relation_kind is NewsCanonicalRelationKind.SAME_STORY
+
+
+# --- FX-58H Section 18: outcome reflects the actual durable write ---------
+
+
+@pytest.mark.asyncio
+async def test_lost_race_on_first_creation_reports_unchanged_not_created() -> None:
+    # A concurrent writer already durably inserted the EXACT SAME
+    # revision-0 payload first -- this caller's own `add_relation_
+    # vintage` call returns inserted=False, so the outcome must be
+    # UNCHANGED, never CREATED (the bug this hardening pass fixes).
+    repo = FakeNewsCanonicalizationRepository(simulate_lost_race=True)
+    record = RecordNewsCanonicalRelation(repo)
+
+    result = await record(
+        ("A", 0),
+        ("B", 0),
+        availability=_ts(10),
+        relation_kind=NewsCanonicalRelationKind.SAME_STORY,
+        method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
+        algorithm_version="fx58_v2",
+    )
+
+    assert result.outcome is NewsCanonicalRelationOutcome.UNCHANGED
+    # Exactly one durable row exists regardless of how this caller's
+    # own attempt was reported.
+    stored = await repo.list_relation_vintages_for_pair("A", "B")
+    assert len(stored) == 1
+
+
+@pytest.mark.asyncio
+async def test_lost_race_on_later_revision_reports_unchanged_not_revision_added() -> None:
+    repo = FakeNewsCanonicalizationRepository()
+    record = RecordNewsCanonicalRelation(repo)
+    await record(
+        ("A", 0),
+        ("B", 0),
+        availability=_ts(10),
+        relation_kind=NewsCanonicalRelationKind.SAME_STORY,
+        method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
+        algorithm_version="fx58_v2",
+    )
+    # From here on, simulate every subsequent write losing its own race.
+    repo._simulate_lost_race = True
+
+    result = await record(
+        ("A", 1),
+        ("B", 1),
+        availability=_ts(11),
+        relation_kind=NewsCanonicalRelationKind.NOT_SAME_STORY,
+        method=NewsCanonicalizationMethod.MANUAL_REVIEW,
+        algorithm_version="fx58_v2",
+    )
+
+    assert result.outcome is NewsCanonicalRelationOutcome.UNCHANGED
+    stored = await repo.list_relation_vintages_for_pair("A", "B")
+    assert len(stored) == 2  # revision 0 and revision 1 both durably exist
 
 
 @pytest.mark.asyncio

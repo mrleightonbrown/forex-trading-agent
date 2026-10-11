@@ -8,7 +8,6 @@ from forex_agent.domain.timestamps import UtcTimestamp
 _AUTOMATIC_METHODS = (
     NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
     NewsCanonicalizationMethod.EXACT_BODY_TEXT,
-    NewsCanonicalizationMethod.EXACT_HEADLINE_AND_SUMMARY,
 )
 
 

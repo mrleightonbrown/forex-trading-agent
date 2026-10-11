@@ -3,20 +3,30 @@
 ## Status
 
 **Accepted (architecture) -- code/schema/tests complete and merged,
-2026-10-11. Real-data activation BLOCKED pending review** -- the
-required pre-persistence dry-run safety gate (Section 42/43 of this
-story's own spec) found that the v1 automatic matcher's `EXACT_
-HEADLINE_AND_SUMMARY` rule produces confirmed false-positive proposals
-against real, already-ingested data (see "Real-data finding" below).
-Per this story's own explicit instruction ("If ANY proposed pair is
-actually related but distinct: STOP... Return the pair and matching
-evidence for architecture review"), **zero relations were persisted
-against the real database**; `news_canonical_relation_vintages`
-remains empty. The architecture itself (the relation model, PIT
-semantics, group derivation, the URL/body matching rules) is sound
-and fully tested; the ONE matching rule found unsafe in practice is
-flagged below for a future, separately-authorized correction before
-any real write-mode run is attempted.
+2026-10-11. Real-data activation COMPLETE as of FX-58H (2026-10-11),
+under the corrected `fx58_v2` policy** -- see this ADR's own FX-58H
+addendum at the end of this document for the full correction record.
+The original `fx58_v1` policy, described in the body of this ADR
+below, NEVER reached real-data activation: the required pre-
+persistence dry-run safety gate (Section 42/43 of FX-58's own spec)
+found that its `EXACT_HEADLINE_AND_SUMMARY` rule produced confirmed
+false-positive proposals against real, already-ingested data (see
+"Real-data finding" below, preserved exactly as originally written --
+this historical fact is not rewritten to imply `fx58_v1` had always
+used a different policy). Per FX-58's own explicit instruction ("If
+ANY proposed pair is actually related but distinct: STOP... Return
+the pair and matching evidence for architecture review"), zero
+relations were ever persisted under `fx58_v1`. FX-58H then demoted
+that rule to a non-persisted review-only signal, introduced `fx58_v2`
+(exact canonical URL + exact body text only), and re-ran the full
+safety gate: `fx58_v2` found ZERO automatic matches against the same
+real data -- a fully valid, honestly-reported success, not a failure
+-- so `news_canonical_relation_vintages` is now genuinely ACTIVE
+(real write-mode runs succeed and are idempotent) while still holding
+zero rows, because no real automatic match currently exists. The
+underlying architecture (the relation model, PIT semantics, group
+derivation, the URL/body matching rules) was never in question and is
+unchanged by FX-58H.
 
 ## Context
 
@@ -240,3 +250,116 @@ silently reinterpreted as `fx58_v1` itself) or `fx58_v2`.
   DECISIONS.md`'s FX-57CH entry): a quiet in-story fix is not a
   substitute for an explicitly reviewed, explicitly versioned
   (`fx58_v2`) policy change.
+
+## FX-58H addendum (2026-10-11): `fx58_v2` -- the authorized correction
+
+This is exactly the "future, separately-authorized follow-up" the
+"Real-data finding" section above called for -- delivered as its own
+reviewed story, not a quiet in-story patch.
+
+**1. `fx58_v1` never reached real-data activation.** Every fact in
+this ADR's own body above about `fx58_v1` remains true and
+unmodified: it was designed, fully tested, dry-run against the real
+358-item dataset, found to produce 6 confirmed false positives (plus
+1 genuinely ambiguous pair) among exactly 7 proposals -- ALL via
+`EXACT_HEADLINE_AND_SUMMARY` -- and consequently never wrote a single
+relation row. `news_canonical_relation_vintages` held zero rows for
+the entire lifetime of `fx58_v1`.
+
+**2. Root cause, confirmed by direct inspection of the real stored
+evidence**: recurring INSTITUTIONAL BOILERPLATE in a source's own
+"summary" field -- Bank of Canada's unchanged-rate-decision outcome
+sentence, reused verbatim across three genuinely separate monetary-
+policy decisions; the Federal Reserve's own standing committee-
+hearing title, reused verbatim across genuinely separate testimony
+dates. Exact equality of BOTH headline AND summary does not protect
+against this, because the SOURCE itself -- not FTA's own matching
+logic -- is the one repeating the text.
+
+**3. `EXACT_HEADLINE_AND_SUMMARY` is demoted to a review-only signal,
+never removed from the codebase entirely.** It survives as `domain.
+news_canonicalization_review.NewsCanonicalizationReviewReason.EXACT_
+HEADLINE_AND_SUMMARY` -- a genuinely DIFFERENT type from `NewsCanon
+icalizationMethod`, detected by a SEPARATE pure function (`detect_
+review_candidate`), consulted by `CanonicalizeNewsOnce` ONLY when the
+automatic matcher (`classify_candidate_pair`) already returned `None`
+for that same pair -- so a pair satisfying a stronger automatic rule
+is never ALSO flagged as needing review. `RecordNewsCanonicalRelation`
+is NEVER called for a review candidate; it exists purely as a
+reporting artifact for a future, still-unbuilt, human-audited
+`MANUAL_REVIEW` workflow.
+
+**4. `fx58_v2`'s own automatic, persistable methods are exactly
+`EXACT_CANONICAL_URL` and `EXACT_BODY_TEXT`** -- `NewsCanonicaliz
+ationMethod.EXACT_HEADLINE_AND_SUMMARY` was removed from that enum
+entirely (not merely deprecated), and the `news_canonical_relation_
+vintages.method` `CHECK` constraint was narrowed to match via a new
+FORWARD migration (`3fe8c43841ee`, never editing `274aabcc57dd` in
+place) -- guarded by a precheck that fails loudly if any persisted
+row ever used the demoted method (none did; the precheck ran against
+zero rows, exactly as expected, since `fx58_v1` never persisted
+anything).
+
+**5. No source-specific exception, blacklist, or gating was
+introduced anywhere.** No Bank-of-Canada-rate-decision blacklist, no
+Fed-testimony blacklist, no GOV.UK slug exception, no per-source
+boilerplate dictionary, no "same source_key never matches" rule --
+the GENERAL rule (`EXACT_HEADLINE_AND_SUMMARY` as independent
+automatic evidence) was what the real data disproved, so the general
+rule is what was fixed. `EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT` both
+remain fully capable of linking two different external identities
+from the SAME provider, or even different providers, exactly as
+before.
+
+**6. No time-based heuristic was introduced to rehabilitate the
+demoted signal.** No same-publication-day, no within-N-hours, no
+same-`source_published_at`, no same-`retrieved_at` corroboration was
+added anywhere -- time proximity remains explicitly not identity. The
+one genuinely ambiguous real pair (the GOV.UK `--2` duplicate-slug
+pair) remains review-only, with its own true disposition (genuine
+republish vs. coincidental boilerplate) deliberately left unresolved
+by this ADR -- that determination belongs to a future human reviewer
+holding the actual pages open, not to an automated heuristic guessing
+from timing alone.
+
+**7. The underlying relation/grouping ARCHITECTURE was not touched at
+all.** Every invariant this ADR's own numbered Decision list already
+established (append-only vintages, FTA-decision-time availability,
+pinned basis vintages, derived connected-component groups,
+deterministic group keys, fail-closed contradictory graphs, `MANUAL_
+REVIEW`-only `NOT_SAME_STORY`, zero `EconomicEvent` linkage, zero
+network I/O) is unchanged by FX-58H. This was a matching-POLICY
+correction and one concurrency-reporting bug fix (`RecordNewsCanon
+icalRelation` now correctly reports `UNCHANGED` rather than `CREATED`/
+`REVISION_ADDED` when a concurrent writer's identical payload lands
+first -- `RelationVintageWriteResult.inserted` was previously computed
+but never actually checked), never a redesign.
+
+**8. `fx58_v2`'s own renewed dry-run against the real, unchanged
+358-item dataset found ZERO automatic matches** (0 `EXACT_CANONICAL_
+URL`, 0 `EXACT_BODY_TEXT`) -- a fully valid, honestly-reported
+success, exactly as Section 26 of FX-58H's own spec anticipated
+("Zero automatic pairs is a fully valid success"). The same 7 pairs
+that previously triggered `fx58_v1`'s own false positives now
+correctly surface ONLY as review-only candidates, never as automatic
+relations. The first and second real write-mode runs both reported
+`relations_created=0`, confirming idempotency; `news_canonical_
+relation_vintages` is now genuinely ACTIVE (a real write-mode run
+against it succeeds without the Section 42/43 STOP this ADR's own
+original body describes) while still holding zero rows, because the
+real data genuinely contains zero `fx58_v2`-automatic matches today
+-- a fact about the DATA, not a limitation of the (now-corrected)
+POLICY.
+
+**9. No `NewsCanonicalRelationVintage` row required migration or
+conversion.** `fx58_v1` persisted nothing; there is no historical
+relation data of any kind to reinterpret, relabel, or carry forward
+under `fx58_v2`.
+
+**10. No ADR 0008 was created for this correction** -- it is a
+direct, numbered addendum to this ADR, since the underlying
+architecture decision was never in question; only the matching
+policy and one application-layer bug were. A future ADR 0008 remains
+available the day a GENUINELY new architectural question arises (e.g.
+a `MANUAL_REVIEW` UI's own design, or a `fx58_v3` policy introducing a
+fundamentally different kind of evidence).

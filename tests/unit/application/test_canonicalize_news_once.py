@@ -1,5 +1,8 @@
-"""FX-58 Section 59: fast, DB-free unit tests for `CanonicalizeNewsOnce`
-against an in-memory fake repository."""
+"""FX-58/FX-58H Section 59: fast, DB-free unit tests for
+`CanonicalizeNewsOnce` against an in-memory fake repository --
+including FX-58H's own Section 12 precedence tests (automatic match
+always wins over a review-only candidate) and the review-only-pair
+reporting-without-persisting tests."""
 
 from datetime import UTC, datetime
 
@@ -202,7 +205,7 @@ async def test_existing_not_same_story_blocks_auto_override_and_is_counted() -> 
         availability=_ts(5),
         relation_kind=NewsCanonicalRelationKind.NOT_SAME_STORY,
         method=NewsCanonicalizationMethod.MANUAL_REVIEW,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
 
     canonicalize = CanonicalizeNewsOnce(repo, record, clock=lambda: _ts(10))
@@ -273,7 +276,11 @@ async def test_multiple_matching_methods_create_one_relation_strongest_wins() ->
     assert result.relations_created == 1
     assert result.exact_url_matches == 1
     assert result.exact_body_matches == 0
-    assert result.exact_headline_summary_matches == 0
+    # FX-58H Section 12: the automatic URL match wins -- this pair is
+    # NEVER additionally reported as a review candidate even though
+    # the (now review-only) headline+summary signal also matches it.
+    assert result.headline_summary_review_candidates == 0
+    assert result.review_candidates == ()
 
 
 @pytest.mark.asyncio
@@ -344,3 +351,88 @@ async def test_basis_vintage_revision_sequences_are_the_actual_compared_ones() -
     assert relation is not None
     assert relation.left_item_revision_sequence == 3
     assert relation.right_item_revision_sequence == 7
+
+
+# --- FX-58H Section 11/12/13: review-only candidates -----------------------
+
+
+@pytest.mark.asyncio
+async def test_headline_summary_only_pair_is_reported_as_review_candidate_not_persisted() -> None:
+    summary = "s" * 80
+    repo = FakeNewsCanonicalizationRepository(
+        (
+            _candidate("a", headline="Same Headline", summary=summary),
+            _candidate("b", headline="Same Headline", summary=summary),
+        )
+    )
+    canonicalize = CanonicalizeNewsOnce(
+        repo, RecordNewsCanonicalRelation(repo), clock=lambda: _ts(10)
+    )
+
+    result = await canonicalize()
+
+    assert result.relations_created == 0
+    assert result.relations_unchanged == 0
+    assert result.blocked_by_review_override == 0
+    assert result.headline_summary_review_candidates == 1
+    assert len(result.review_candidates) == 1
+    candidate = result.review_candidates[0]
+    assert candidate.left_news_item_key == "a"
+    assert candidate.right_news_item_key == "b"
+    # Never persisted -- RecordNewsCanonicalRelation is never called
+    # for a review-only pair.
+    relations = await repo.list_relation_vintages_for_pair("a", "b")
+    assert relations == ()
+
+
+@pytest.mark.asyncio
+async def test_automatic_match_is_never_also_reported_as_review_candidate() -> None:
+    # FX-58H Section 12's own precedence rule, pinned directly at the
+    # orchestrator level (the pure matcher-level version of this
+    # already lives in test_news_canonicalization_matching.py).
+    summary = "s" * 80
+    repo = FakeNewsCanonicalizationRepository(
+        (
+            _candidate(
+                "a",
+                headline="Same Headline",
+                summary=summary,
+                canonical_url="https://x.com/1",
+            ),
+            _candidate(
+                "b",
+                headline="Same Headline",
+                summary=summary,
+                canonical_url="https://x.com/1",
+            ),
+        )
+    )
+    canonicalize = CanonicalizeNewsOnce(
+        repo, RecordNewsCanonicalRelation(repo), clock=lambda: _ts(10)
+    )
+
+    result = await canonicalize()
+
+    assert result.relations_created == 1
+    assert result.exact_url_matches == 1
+    assert result.headline_summary_review_candidates == 0
+    assert result.review_candidates == ()
+
+
+@pytest.mark.asyncio
+async def test_algorithm_version_default_is_fx58_v2() -> None:
+    repo = FakeNewsCanonicalizationRepository(
+        (
+            _candidate("a", canonical_url="https://x.com/1"),
+            _candidate("b", canonical_url="https://x.com/1"),
+        )
+    )
+    canonicalize = CanonicalizeNewsOnce(
+        repo, RecordNewsCanonicalRelation(repo), clock=lambda: _ts(10)
+    )
+
+    await canonicalize()
+
+    relation = await repo.latest_relation_for_pair("a", "b")
+    assert relation is not None
+    assert relation.algorithm_version == "fx58_v2"

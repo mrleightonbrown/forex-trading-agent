@@ -14394,3 +14394,282 @@ NOT attempt a real write-mode canonicalization run against production
 data until the `EXACT_HEADLINE_AND_SUMMARY` finding above is
 explicitly resolved by a separately-authorized follow-up story.
 Return FX-58 for architectural review.
+
+## 2026-10-11 — FX-58H: canonicalization precision & concurrent-write hardening
+
+The separately-authorized follow-up to FX-58's own "Real-data
+finding," explicitly scoped as a NARROW correction, never a
+redesign. Git HEAD at this story's own start: `7ebeebf` (the FX-58
+commit, ADR 0007 included), clean working tree except `.claude/`.
+ADR 0007 is amended with a dated addendum rather than superseded; no
+new ADR.
+
+**1. Every approved FX-58 architecture decision is preserved exactly
+-- this story touches only the matching policy and one concurrency-
+reporting bug, nothing else.** Append-only relation vintages,
+`SAME_STORY`/`NOT_SAME_STORY`, `availability` always FTA's own
+decision time, basis-vintage pinning via composite FKs,
+lexicographic pair ordering, derived connected-component groups
+computed fresh per query, the deterministic group key, contradictory-
+graph fail-closed behavior, `MANUAL_REVIEW` with no UI, no `UPDATE`
+path, no `EconomicEvent` linkage, zero network I/O -- all unchanged,
+all re-verified by the full regression suite passing.
+
+**2. `fx58_v1` is permanently non-activated history -- never
+rewritten to imply it used a different policy, and nothing needed
+converting.** It persisted zero rows (FX-58's own STOP prevented
+that before this story began), so there is no `fx58_v1`-tagged row
+anywhere in `news_canonical_relation_vintages` to migrate, relabel,
+or reinterpret.
+
+**3. Root cause of the FX-58 finding, confirmed again here by direct
+re-inspection of the same real evidence**: `EXACT_HEADLINE_AND_
+SUMMARY`'s summary-equality requirement does not protect against a
+SOURCE's own summary field being templated/outcome-boilerplate text
+reused verbatim across genuinely different events (three Bank of
+Canada rate-decision press releases where the target rate happened
+not to change; three Federal Reserve testimony items sharing a
+standing committee-name boilerplate). This is a property of the
+SIGNAL itself -- recurring institutional boilerplate defeats exact-
+text equality regardless of which institution produced it -- so the
+correction is to the general rule. **Explicitly confirmed NOT used as
+a shortcut anywhere**: no BoC-specific, Fed-specific, or GOV.UK-
+specific exception list; no source-key gating (same-source-never-
+matches remains structurally forbidden); no same-day/within-N-hours/
+same-timestamp time heuristic rehabilitating the signal.
+
+**4. The fix: demote the signal to a genuinely different, non-
+persistable type, rather than deleting it or patching around specific
+sources.** `domain.news_canonicalization_method.News
+CanonicalizationMethod` now has exactly three members -- `EXACT_
+CANONICAL_URL`, `EXACT_BODY_TEXT`, `MANUAL_REVIEW` -- `EXACT_
+HEADLINE_AND_SUMMARY` is removed from this enum entirely, not merely
+deprecated or left unused. The underlying comparison survives ONLY
+inside a brand-new module, `domain.news_canonicalization_review`,
+defining `NewsCanonicalizationReviewReason` (currently one member,
+`EXACT_HEADLINE_AND_SUMMARY`) -- a deliberately DIFFERENT type from
+`NewsCanonicalizationMethod`, so that `RecordNewsCanonicalRelation`,
+whose `method` parameter is typed as `NewsCanonicalizationMethod`,
+cannot even accept a review reason as an argument: accidental
+persistence of the weak signal is now a type error caught by `mypy`,
+not a runtime check that could be bypassed or forgotten.
+
+**5. Matcher split into two pure functions with explicit precedence
+rules, in `domain.news_canonicalization_matching` (now `fx58_v2`).**
+`classify_candidate_pair` (the automatic matcher) checks ONLY exact
+canonical URL then exact body text (>= 200 chars), returning `None`
+otherwise -- the headline+summary branch is removed from this
+function entirely, not merely demoted to a lower-precedence check
+within it. A separate, new function, `detect_review_candidate`,
+applies the demoted rule (same >= 80-char summary minimum, same
+`normalize_text` normalization, exact headline AND exact summary
+equality) and returns `NewsCanonicalizationReviewReason | None`.
+**Precedence (Section 12) is enforced by the CALLER, not by either
+pure function**: `CanonicalizeNewsOnce`'s main loop calls `detect_
+review_candidate` for a pair ONLY when `classify_candidate_pair`
+already returned `None` for that same pair -- so a pair satisfying
+both an automatic rule and the headline+summary signal is reported
+solely as the automatic match, never also surfaced as a review
+candidate. `RecordNewsCanonicalRelation` is never invoked for a
+review candidate under any code path.
+
+**6. Counters and output renamed to reflect what is actually
+persistable.** `NewsCanonicalizationRunResult.exact_headline_summary_
+matches` is renamed `headline_summary_review_candidates`; a new
+`review_candidates: tuple[ReviewCandidate, ...]` field exposes the
+actual pairs (each carrying both news-item keys, both headlines, and
+the `NewsCanonicalizationReviewReason`) for human inspection.
+`exact_url_matches`/`exact_body_matches` remain genuine automatic-
+match counters, unchanged in meaning. `scripts/canonicalize_news.py`'s
+printed output now has two explicitly separated sections -- "===
+AUTOMATIC RELATIONS (safe-to-write under `fx58_v2`) ===" and "===
+REVIEW-ONLY CANDIDATES (weak signal -- will NEVER be persisted by
+this script) ===" -- and the script's own docstring and `--dry-run`
+help text were both updated to stop describing a headline+summary
+candidate as a "proposed relation" anywhere.
+
+**7. Schema narrowed via a brand-new forward migration, never editing
+the already-applied `274aabcc57dd` in place.** `3fe8c43841ee`
+(`down_revision = "274aabcc57dd"`): `upgrade()` runs a data precheck
+FIRST -- `SELECT COUNT(*) FROM news_canonical_relation_vintages WHERE
+method = 'EXACT_HEADLINE_AND_SUMMARY'` -- raising a `RuntimeError`
+naming the exact row count if nonzero, BEFORE either affected `CHECK`
+constraint (`ck_ncrv_method`, `ck_ncrv_automatic_method_is_same_
+story`) is dropped or recreated. The narrowed constraints remove the
+demoted method from both the allowed-method list and the automatic-
+method list; `downgrade()` restores the prior, wider constraint
+definitions exactly, with no data migration needed in either
+direction since no row with the demoted method has ever existed.
+Manually verified against live Postgres, step by step: empty-table
+upgrade succeeds; a raw-SQL `INSERT` of the demoted method after
+upgrade is correctly rejected (`ck_ncrv_method` constraint
+violation); both permitted `fx58_v2` methods and `MANUAL_REVIEW`
+still insert successfully; downgrade restores the wider constraint
+(proven by successfully re-inserting the demoted method post-
+downgrade); a second upgrade attempt while an unsafe row is present
+fails loudly with the precheck's own `RuntimeError`, confirmed to
+fire BEFORE any constraint DDL executes; environment was then cleaned
+up and re-confirmed at the correct final head (`3fe8c43841ee`, table
+empty) before any test suite ran against it.
+
+**8. The Section 18 concurrency-reporting bug FX-58 itself left
+behind, now fixed.** `RecordNewsCanonicalRelation` previously decided
+its own return outcome (`CREATED`/`REVISION_ADDED`) from which write
+BRANCH it took (first-creation vs. revision-addition) rather than
+from the actual result of the insert -- so when two writers raced an
+identical payload for the same revision and the repository's
+conflict-safe insert correctly let only ONE of them durably win, the
+LOSING writer still reported `CREATED` (or `REVISION_ADDED`) even
+though nothing of its own was actually inserted. Both write branches
+now inspect `RelationVintageWriteResult.inserted` returned by
+`add_relation_vintage` and report `UNCHANGED` whenever the row that
+ended up durable was not the caller's own row. Counters now describe
+durable effects, never pre-insert expectations.
+
+**9. The fix is proved under REAL concurrent Postgres sessions at the
+APPLICATION/use-case level -- not merely the repository's own
+`add_relation_vintage` in isolation, which FX-58 already covered.**
+New `tests/integration/test_canonical_relation_concurrency.py`, three
+tests, each using `asyncio.gather` across two independent sessions/
+repositories: identical-first-creation race through `Record
+NewsCanonicalRelation` itself (`[CREATED, UNCHANGED]` every run,
+exactly one durable row); differing-payload race for the same
+revision 0 -- one method vs. another -- (one side `CREATED`, the
+other raises `NewsCanonicalRelationConflictError`, exactly one
+durable row, no silent winner selection anywhere in the code); and
+`CanonicalizeNewsOnce.relations_created`'s own counter accuracy under
+a real two-session race on the same underlying pair (`[0, 1]` every
+run, never `[1, 1]`, no invented distributed locking). Ran the full
+file 5 times consecutively to confirm the outcome pattern is
+deterministic, not merely accidentally correct once.
+
+**Verification, reported separately:**
+
+- 19 net new test functions, verified via per-file `grep -cE
+  '^(async )?def test_'` run before and after on every changed file
+  (never inferred from added-line counts): 3 brand-new files --
+  `test_migration_narrow_canonical_relation_method.py` unit (mocked
+  `alembic.op`, mirroring the existing `test_migration_news_evidence_
+  tables_downgrade_guard.py` precedent exactly) (4 tests); the
+  Postgres integration counterpart of the same filename (3 tests);
+  `test_canonical_relation_concurrency.py` (3 tests) -- plus net
+  additions to 4 existing files: `test_news_canonicalization_
+  matching.py` (+3, including the three Section 15 regressions
+  below), `test_news_canonical_relation_vintage.py` (+1, "`EXACT_
+  HEADLINE_AND_SUMMARY` no longer exists as a method"), `test_
+  canonicalize_news_once.py` (+3), `test_record_news_canonical_
+  relation.py` (+2, the lost-race-reports-`UNCHANGED` regressions for
+  both first-creation and revision-addition). **110 focused FX-58/
+  FX-58H tests total, all passing** (91 pre-existing + 19 net new; an
+  initial draft miscount of "29" was self-caught via `echo
+  "3+1+3+2+4+3+3" | bc` = 19 and corrected before this entry was
+  finalized).
+- **Pinned real false-positive regressions, using the actual BoC/
+  Fed/GOV.UK shapes FX-58's own dry-run surfaced** (Section 15):
+  three BoC-rate-decision-shaped items (identical headline, identical
+  >= 80-char summary, three distinct publication dates) correctly
+  produce `classify_candidate_pair -> None` for every pairwise
+  combination (never automatic) and `detect_review_candidate ->
+  EXACT_HEADLINE_AND_SUMMARY` (review-only); three Fed-testimony-
+  shaped items, identical behavior; the GOV.UK ambiguous duplicate-
+  slug pair is asserted review-only, never automatic, WITHOUT the
+  test itself encoding any same-story/different-story conclusion the
+  stored evidence cannot actually settle.
+- Existing strong-rule regressions re-confirmed unchanged: exact
+  canonical URL -> automatic `EXACT_CANONICAL_URL`; exact body text
+  >= 200 chars -> automatic `EXACT_BODY_TEXT`; body < 200 chars -> no
+  match; headline-only or summary-only alone -> no match; headline +
+  summary together -> review-only, never automatic (the core
+  behavioral change this story makes); same-`pubDate`-only -> no
+  match; fuzzy/near-text -> no match; the ECB decision/account/speech
+  anti-overmerge triple remains correctly non-matching throughout.
+- Full regression of all six source families plus the common news
+  application layer: `412 passed`, unchanged from FX-58.
+- Deterministic default suite (`pytest`): `2244 passed, 7 failed, 10
+  deselected` -- the SAME 7 pre-existing, documented OANDA live-
+  candle-backfill failures (FX-EPIC-06, unrelated to this story),
+  re-established (not merely assumed) and confirmed unchanged.
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the same pre-existing BLS 403 (FX-EPIC-07, unrelated),
+  re-established and confirmed unchanged.
+- `ruff check .`, `ruff format --check .`, `mypy .`, and `pre-commit
+  run --all-files` all pass clean.
+
+**The renewed pre-activation safety gate (Section 25/26), re-run
+against the real, unchanged 358-item dev database, found ZERO
+automatic `fx58_v2` matches** -- 0 via `EXACT_CANONICAL_URL`, 0 via
+`EXACT_BODY_TEXT`. Per the spec's own explicit instruction, zero
+automatic pairs is reported as a fully valid success, not a failure
+requiring any further action -- no relation was manufactured to
+produce a non-empty result either way. The same 7 pairs FX-58's own
+dry-run originally flagged now correctly surface ONLY as review-only
+candidates, never automatic, confirming the demotion actually closed
+the finding rather than merely relabeling it. Zero automatic pairs
+meant zero pairs required the human related-but-distinct inspection
+the spec calls for before proceeding to write mode -- there was
+nothing to inspect.
+
+**First real write-mode run** (`scripts/canonicalize_news.py`, no
+`--dry-run`) against the live dev database reported `relations_
+created=0`, `relations_unchanged=0`, `blocked_by_review_override=0`,
+`exact_url_matches=0`, `exact_body_matches=0`, `headline_summary_
+review_candidates=7`, consistent with the renewed gate -- explicit
+SUCCESS per the spec's own instruction, not an incomplete run.
+**Second real run**, executed immediately after with no changes to
+the underlying data in between, reported the identical `relations_
+created=0`, confirming idempotency. `news_canonical_relation_
+vintages` is now genuinely ACTIVE -- a real write-mode run completes
+without triggering FX-58's own STOP -- while still correctly holding
+zero rows, since no genuine automatic match exists anywhere in the
+current 358-item dataset. Derived canonical groups as of this run:
+358 singleton groups, zero multi-item groups. Source-native data
+(`news_items`/`news_item_vintages`/`news_source_mappings` across all
+six source families) independently re-verified byte-for-byte
+unchanged both before and after this story's full body of work,
+including both live-database write-mode runs. The relation table's
+genuine row count (0) is preserved exactly as FX-58 left it -- the 6
+confirmed false positives inspected during FX-58's own development
+were deliberately NOT inserted as `NOT_SAME_STORY` merely because
+they had been reviewed; they were never actually decided as
+`SAME_STORY`, and the spec's own instruction treats the absence of a
+row as sufficient, not a gap requiring backfill.
+
+**No schema change beyond the one new migration** (`3fe8c43841ee`,
+narrowing two existing `CHECK` constraints on `news_canonical_
+relation_vintages`; no new table, no new column, no change to any
+other FX-56/FX-57/FX-58 table). **ADR 0007 amended with a dated
+addendum** (preserving the original `fx58_v1` body text verbatim
+above it) -- **no new ADR 0008**, since this story's own work
+confirmed the underlying architecture was correct throughout; only
+the matching policy's third rule and one reporting bug required
+correction.
+
+**Explicitly confirmed NOT done in FX-58H**: no source-specific
+exception/blacklist of any kind, for any of BoC/Fed/GOV.UK or any
+other source; no source-key gating (same-source-never-matches
+remains explicitly, structurally forbidden); no time-window/same-day/
+within-N-hours/same-timestamp heuristic rehabilitating the demoted
+signal; no manual-review UI built (the domain model has supported
+`MANUAL_REVIEW` + `SAME_STORY`/`NOT_SAME_STORY` since FX-58,
+unchanged here); no event extraction, semantic classification,
+source-reputation weighting, pair-specific news evidence snapshot
+(FX-60's own future job), or Market Context dashboard change (FX-61's
+own future job); no `EconomicEvent` linkage of any kind (FX-52
+remains DEFER); no network I/O added anywhere; no FX-57 adapter
+touched; no scheduler/daemon of any kind. FX-59/FX-60/FX-61/
+FX-EPIC-09/Decision Engine/Risk Engine not started. FX-49 remains
+DEFER; FX-52 remains DEFER; FX-53 remains BLOCKED.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-58H entry; `docs/
+ARCHITECTURE.md`'s "PIT-safe news canonicalization & conservative
+deduplication" section is updated in place to describe `fx58_v2` and
+carries a new "Canonicalization precision & concurrent-write
+hardening (FX-58H)" subsection; `docs/CURRENT_STATE.md` carries its
+own FX-58H entry immediately after the preserved FX-58 entry; `docs/
+adr/0007-pit-safe-news-canonicalization.md` carries the dated FX-58H
+addendum in full, with the original `fx58_v1` body text preserved
+verbatim above it.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-59, FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work.
+Return FX-58H for architectural review.

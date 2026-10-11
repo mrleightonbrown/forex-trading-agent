@@ -39,6 +39,16 @@ class NewsCanonicalRelationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base)
     not_same_story_is_manual_review` mirror the domain layer's own
     two method/relation_kind cross-field invariants (`NewsCanonical
     RelationVintage.__post_init__`).
+
+    **FX-58H**: `ck_ncrv_method` and `ck_ncrv_automatic_method_is_
+    same_story` were NARROWED by a forward migration (`3fe8c43841ee`)
+    to remove `EXACT_HEADLINE_AND_SUMMARY` from the permitted `method`
+    values entirely -- the real-data dry-run safety gate proved that
+    signal unsafe as independent SAME_STORY evidence (ADR 0007's own
+    "Real-data finding"). This class definition reflects the CURRENT
+    (post-FX-58H) constraint set; the original migration
+    (`274aabcc57dd`) that first created this table is never edited in
+    place.
     """
 
     __tablename__ = "news_canonical_relation_vintages"
@@ -96,13 +106,12 @@ class NewsCanonicalRelationVintageRow(UUIDPrimaryKeyMixin, TimestampMixin, Base)
             name="ck_ncrv_relation_kind",
         ),
         CheckConstraint(
-            "method IN ('EXACT_CANONICAL_URL', 'EXACT_BODY_TEXT', 'EXACT_HEADLINE_AND_SUMMARY', "
-            "'MANUAL_REVIEW')",
+            "method IN ('EXACT_CANONICAL_URL', 'EXACT_BODY_TEXT', 'MANUAL_REVIEW')",
             name="ck_ncrv_method",
         ),
         CheckConstraint(
-            "method NOT IN ('EXACT_CANONICAL_URL', 'EXACT_BODY_TEXT', "
-            "'EXACT_HEADLINE_AND_SUMMARY') OR relation_kind = 'SAME_STORY'",
+            "method NOT IN ('EXACT_CANONICAL_URL', 'EXACT_BODY_TEXT') "
+            "OR relation_kind = 'SAME_STORY'",
             name="ck_ncrv_automatic_method_is_same_story",
         ),
         CheckConstraint(

@@ -78,14 +78,21 @@ def test_blank_algorithm_version_rejected() -> None:
 
 
 def test_automatic_methods_only_valid_with_same_story() -> None:
+    # FX-58H Section 5: EXACT_HEADLINE_AND_SUMMARY no longer exists
+    # as a NewsCanonicalizationMethod member at all -- only the two
+    # remaining automatic methods are exercised here.
     for method in (
         NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
         NewsCanonicalizationMethod.EXACT_BODY_TEXT,
-        NewsCanonicalizationMethod.EXACT_HEADLINE_AND_SUMMARY,
     ):
         _relation(method=method, relation_kind=NewsCanonicalRelationKind.SAME_STORY)
         with pytest.raises(ValueError):
             _relation(method=method, relation_kind=NewsCanonicalRelationKind.NOT_SAME_STORY)
+
+
+def test_exact_headline_and_summary_no_longer_exists_as_a_method() -> None:
+    # FX-58H Section 5: removed entirely, never merely deprecated.
+    assert not hasattr(NewsCanonicalizationMethod, "EXACT_HEADLINE_AND_SUMMARY")
 
 
 def test_not_same_story_requires_manual_review() -> None:

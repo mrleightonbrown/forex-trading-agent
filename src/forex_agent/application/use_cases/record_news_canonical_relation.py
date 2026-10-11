@@ -20,6 +20,15 @@ other than `MANUAL_REVIEW`), this use case returns `BLOCKED_BY_
 REVIEW_OVERRIDE` and writes nothing -- never raises, since this is an
 ordinary, expected outcome for `CanonicalizeNewsOnce` to count and
 report, not a bug.
+
+**FX-58H Section 18: the outcome returned ALWAYS reflects the actual
+durable write, never the pre-insert expectation.** `RelationVintage
+WriteResult.inserted` from `add_relation_vintage` is now checked after
+every real (non-dry-run) write: if a concurrent writer already
+inserted the exact same payload first, `inserted=False` downgrades
+the reported outcome from `CREATED`/`REVISION_ADDED` to `UNCHANGED`
+-- only the session whose insert actually landed durably ever reports
+a creating outcome.
 """
 
 from dataclasses import dataclass
@@ -36,7 +45,6 @@ from forex_agent.domain.timestamps import UtcTimestamp
 _AUTOMATIC_METHODS = (
     NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
     NewsCanonicalizationMethod.EXACT_BODY_TEXT,
-    NewsCanonicalizationMethod.EXACT_HEADLINE_AND_SUMMARY,
 )
 
 
@@ -154,11 +162,23 @@ class RecordNewsCanonicalRelation:
                 right_item_revision_sequence=right_revision,
                 algorithm_version=algorithm_version,
             )
-            if not dry_run:
-                await self._repository.add_relation_vintage(created)
-            return NewsCanonicalRelationRecordResult(
-                left_key, right_key, NewsCanonicalRelationOutcome.CREATED, created
+            if dry_run:
+                return NewsCanonicalRelationRecordResult(
+                    left_key, right_key, NewsCanonicalRelationOutcome.CREATED, created
+                )
+            # FX-58H Section 18: a concurrent writer may have already
+            # inserted this EXACT SAME revision-0 payload first --
+            # `inserted=False` means THIS call's own write was an
+            # idempotent no-op, not a genuine creation, so the outcome
+            # must reflect the actual durable effect, never the
+            # pre-insert expectation.
+            write_result = await self._repository.add_relation_vintage(created)
+            outcome = (
+                NewsCanonicalRelationOutcome.CREATED
+                if write_result.inserted
+                else NewsCanonicalRelationOutcome.UNCHANGED
             )
+            return NewsCanonicalRelationRecordResult(left_key, right_key, outcome, created)
 
         if availability.value < latest.availability.value:
             raise OutOfOrderRelationDecisionError(
@@ -192,8 +212,18 @@ class RecordNewsCanonicalRelation:
             right_item_revision_sequence=right_revision,
             algorithm_version=algorithm_version,
         )
-        if not dry_run:
-            await self._repository.add_relation_vintage(revised)
-        return NewsCanonicalRelationRecordResult(
-            left_key, right_key, NewsCanonicalRelationOutcome.REVISION_ADDED, revised
+        if dry_run:
+            return NewsCanonicalRelationRecordResult(
+                left_key, right_key, NewsCanonicalRelationOutcome.REVISION_ADDED, revised
+            )
+        # FX-58H Section 18: same correction as the CREATED branch
+        # above -- only the writer whose insert actually durably
+        # landed reports REVISION_ADDED; a concurrent loser proposing
+        # the identical new revision reports UNCHANGED.
+        write_result = await self._repository.add_relation_vintage(revised)
+        outcome = (
+            NewsCanonicalRelationOutcome.REVISION_ADDED
+            if write_result.inserted
+            else NewsCanonicalRelationOutcome.UNCHANGED
         )
+        return NewsCanonicalRelationRecordResult(left_key, right_key, outcome, revised)

@@ -1,7 +1,10 @@
-"""FX-58 Section 54: deterministic matcher matrix for `classify_
-candidate_pair` -- the conservative, exact-match-only `fx58_v1`
-policy. Section 26's own critical anti-overmerge regression (ECB
-decision/account, speech/decision) lives here too."""
+"""FX-58/FX-58H Section 54/15/16: deterministic matcher matrix for
+`classify_candidate_pair` (the AUTOMATIC `fx58_v2` policy -- exact
+canonical URL / exact body text ONLY) and `detect_review_candidate`
+(the demoted, non-persisted headline+summary signal). Section 26's
+own critical anti-overmerge regression (ECB decision/account, speech/
+interview) lives here too, alongside FX-58H's own real-data-shaped
+BoC/Fed/GOV.UK regressions (Section 15)."""
 
 from datetime import UTC, datetime
 
@@ -10,8 +13,10 @@ import pytest
 from forex_agent.domain.news_canonicalization_matching import (
     CanonicalizationCandidate,
     classify_candidate_pair,
+    detect_review_candidate,
 )
 from forex_agent.domain.news_canonicalization_method import NewsCanonicalizationMethod
+from forex_agent.domain.news_canonicalization_review import NewsCanonicalizationReviewReason
 from forex_agent.domain.timestamps import UtcTimestamp
 
 _TS = UtcTimestamp(datetime(2026, 1, 1, tzinfo=UTC))
@@ -57,24 +62,33 @@ def test_same_body_under_200_does_not_match() -> None:
     assert classify_candidate_pair(a, b) is None
 
 
-def test_exact_headline_and_summary_over_80_matches() -> None:
+def test_exact_headline_and_summary_over_80_is_review_only_not_automatic() -> None:
+    # FX-58H Section 4/5/10: this signal is NO LONGER an automatic
+    # method -- it is demoted to a review-only candidate, a
+    # genuinely different TYPE (`NewsCanonicalizationReviewReason`),
+    # never a `NewsCanonicalizationMethod`.
     summary = "s" * 80
     a = _candidate("a", headline="Same Headline", summary=summary)
     b = _candidate("b", headline="Same Headline", summary=summary)
-    assert classify_candidate_pair(a, b) is NewsCanonicalizationMethod.EXACT_HEADLINE_AND_SUMMARY
+    assert classify_candidate_pair(a, b) is None
+    assert (
+        detect_review_candidate(a, b) is NewsCanonicalizationReviewReason.EXACT_HEADLINE_AND_SUMMARY
+    )
 
 
-def test_exact_headline_and_short_summary_does_not_match() -> None:
+def test_exact_headline_and_short_summary_does_not_match_either_function() -> None:
     summary = "s" * 79
     a = _candidate("a", headline="Same Headline", summary=summary)
     b = _candidate("b", headline="Same Headline", summary=summary)
     assert classify_candidate_pair(a, b) is None
+    assert detect_review_candidate(a, b) is None
 
 
 def test_exact_headline_only_does_not_match() -> None:
     a = _candidate("a", headline="Same Headline")
     b = _candidate("b", headline="Same Headline")
     assert classify_candidate_pair(a, b) is None
+    assert detect_review_candidate(a, b) is None
 
 
 def test_exact_summary_only_does_not_match() -> None:
@@ -82,6 +96,7 @@ def test_exact_summary_only_does_not_match() -> None:
     a = _candidate("a", headline="Headline A", summary=summary)
     b = _candidate("b", headline="Headline B", summary=summary)
     assert classify_candidate_pair(a, b) is None
+    assert detect_review_candidate(a, b) is None
 
 
 def test_same_pub_date_only_does_not_match() -> None:
@@ -92,6 +107,7 @@ def test_same_pub_date_only_does_not_match() -> None:
     a = _candidate("a", headline="Headline A")
     b = _candidate("b", headline="Headline B")
     assert classify_candidate_pair(a, b) is None
+    assert detect_review_candidate(a, b) is None
 
 
 def test_same_source_content_type_only_does_not_match() -> None:
@@ -105,6 +121,7 @@ def test_fuzzy_looking_title_does_not_match() -> None:
     a = _candidate("a", headline="Bank of Canada increases its policy rate")
     b = _candidate("b", headline="Bank of Canada raises its policy rate")
     assert classify_candidate_pair(a, b) is None
+    assert detect_review_candidate(a, b) is None
 
 
 def test_related_ecb_decision_and_account_do_not_match() -> None:
@@ -130,6 +147,7 @@ def test_related_ecb_decision_and_account_do_not_match() -> None:
         body_text=None,
     )
     assert classify_candidate_pair(decision, account) is None
+    assert detect_review_candidate(decision, account) is None
 
 
 def test_related_speech_and_decision_do_not_match() -> None:
@@ -146,6 +164,7 @@ def test_related_speech_and_decision_do_not_match() -> None:
         ),
     )
     assert classify_candidate_pair(decision, speech) is None
+    assert detect_review_candidate(decision, speech) is None
 
 
 def test_related_statcan_cpi_and_boc_speech_do_not_match() -> None:
@@ -160,6 +179,7 @@ def test_related_statcan_cpi_and_boc_speech_do_not_match() -> None:
         summary="The Bank of Canada discussed recent inflation developments.",
     )
     assert classify_candidate_pair(cpi, speech) is None
+    assert detect_review_candidate(cpi, speech) is None
 
 
 def test_same_pair_matching_multiple_rules_returns_one_strongest_method() -> None:
@@ -179,8 +199,13 @@ def test_same_pair_matching_multiple_rules_returns_one_strongest_method() -> Non
         body_text=body,
         canonical_url="https://example.com/x",
     )
-    # All three rules match -- URL must win (Section 21's own
-    # precedence), and only ONE method is ever returned.
+    # URL, body, AND the (now review-only) headline+summary signal
+    # all independently match -- URL must win (precedence), and only
+    # ONE automatic method is ever returned. The orchestrator
+    # (CanonicalizeNewsOnce), not this pure function, is responsible
+    # for never ALSO reporting this pair as needing review once an
+    # automatic method already matched (FX-58H Section 12; see
+    # test_canonicalize_news_once.py for that control-flow test).
     assert classify_candidate_pair(a, b) is NewsCanonicalizationMethod.EXACT_CANONICAL_URL
 
 
@@ -188,3 +213,98 @@ def test_self_pair_raises() -> None:
     a = _candidate("a")
     with pytest.raises(ValueError):
         classify_candidate_pair(a, a)
+    with pytest.raises(ValueError):
+        detect_review_candidate(a, a)
+
+
+# --- FX-58H Section 15: real-data-shaped false-positive regressions -------
+
+
+def test_a_boc_rate_decision_style_items_are_review_only_not_automatic() -> None:
+    # Three distinct Bank of Canada rate-decision press releases,
+    # different dates/URLs, sharing byte-identical boilerplate
+    # (unchanged-rate outcome) summary text.
+    summary = (
+        "The Bank of Canada today held its target for the overnight rate at 2.25%, "
+        "with the Bank Rate at 2.5% and the deposit rate at 2.20%."
+    )
+    headline = "Bank of Canada maintains the policy rate at 2.25%"
+    june = _candidate(
+        "boc-june",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.bankofcanada.ca/2026/06/fad-press-release-2026-06-10/",
+    )
+    july = _candidate(
+        "boc-july",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.bankofcanada.ca/2026/07/fad-press-release-2026-07-15/",
+    )
+    september = _candidate(
+        "boc-sept",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.bankofcanada.ca/2026/09/fad-press-release-2026-09-02/",
+    )
+    for pair in ((june, july), (june, september), (july, september)):
+        assert classify_candidate_pair(*pair) is None
+        assert (
+            detect_review_candidate(*pair)
+            is NewsCanonicalizationReviewReason.EXACT_HEADLINE_AND_SUMMARY
+        )
+
+
+def test_b_fed_testimony_style_recurring_institutional_text_is_review_only() -> None:
+    # Two distinct Federal Reserve testimony dates sharing a standing
+    # committee-name boilerplate as their own "summary" field.
+    summary = "Testimony Before the Committee on Financial Services, U.S. House of Representatives"
+    headline = "Powell, Semiannual Monetary Policy Report to the Congress"
+    first = _candidate(
+        "fed-2024",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.federalreserve.gov/newsevents/testimony/powell20240306a.htm",
+    )
+    second = _candidate(
+        "fed-2025",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.federalreserve.gov/newsevents/testimony/powell20250624a.htm",
+    )
+    assert classify_candidate_pair(first, second) is None
+    assert (
+        detect_review_candidate(first, second)
+        is NewsCanonicalizationReviewReason.EXACT_HEADLINE_AND_SUMMARY
+    )
+
+
+def test_c_govuk_ambiguous_duplicate_slug_pair_is_review_only_never_automatic() -> None:
+    # Section 15.C: the GOV.UK pair's own real ambiguity (genuinely
+    # the same republished announcement, or two separate ones sharing
+    # identical boilerplate) is deliberately NOT resolved either way
+    # here -- only that it is review-only, never automatic.
+    headline = "More overseas firms enticed to buy British"
+    summary = (
+        "Overseas buyers will be offered a new UK Export Finance loan guarantee to "
+        "incentivise buying goods and services from British companies."
+    )
+    first = _candidate(
+        "govuk-a",
+        headline=headline,
+        summary=summary,
+        canonical_url="https://www.gov.uk/government/news/more-overseas-firms-enticed-to-buy-british",
+    )
+    second = _candidate(
+        "govuk-b",
+        headline=headline,
+        summary=summary,
+        canonical_url=(
+            "https://www.gov.uk/government/news/more-overseas-firms-enticed-to-buy-british--2"
+        ),
+    )
+    assert classify_candidate_pair(first, second) is None
+    assert (
+        detect_review_candidate(first, second)
+        is NewsCanonicalizationReviewReason.EXACT_HEADLINE_AND_SUMMARY
+    )

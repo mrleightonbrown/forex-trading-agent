@@ -2828,10 +2828,10 @@ news_item_key)` pair, `revision_sequence`, `availability` (ALWAYS
 FTA's own decision time, captured exactly once per `CanonicalizeNews
 Once` run, never any source timestamp), `relation_kind` (`SAME_STORY`
 / `NOT_SAME_STORY`), `method` (`EXACT_CANONICAL_URL`/`EXACT_BODY_
-TEXT`/`EXACT_HEADLINE_AND_SUMMARY`/`MANUAL_REVIEW`), the two basis
-`NewsItemVintage.revision_sequence` values actually compared (via
-genuine composite foreign keys, never copying content), and a stable
-`algorithm_version` (`"fx58_v1"`, never a git commit hash). No
+TEXT`/`MANUAL_REVIEW` -- narrowed by FX-58H, see below), the two
+basis `NewsItemVintage.revision_sequence` values actually compared
+(via genuine composite foreign keys, never copying content), and a
+stable `algorithm_version` (`"fx58_v2"`, never a git commit hash). No
 application code path ever issues an `UPDATE` against this table.
 
 **Canonical groups are derived connected components, computed fresh,
@@ -2843,16 +2843,16 @@ STORY` edge would otherwise land inside one component via
 transitivity. Group key: earliest `first_seen_at` member, lexical
 tie-break -- a deterministic label, never an implied "best source."
 
-**The v1 automatic matcher (`CanonicalizeNewsOnce`, `fx58_v1`) is
-deliberately exact, high-precision, low-recall.** Three rules, fixed
-precedence (`EXACT_CANONICAL_URL` > `EXACT_BODY_TEXT` > `EXACT_
-HEADLINE_AND_SUMMARY`), each requiring byte-for-byte equality after a
-minimal, non-fuzzy normalization (`domain.news_text_normalization`)
-plus a minimum length (body >= 200 chars, summary >= 80 chars). No
-fuzzy/ML/LLM matching of any kind. The matcher NEVER writes `NOT_
-SAME_STORY`; that relation kind may only ever be written with
-`method=MANUAL_REVIEW` (enforced by the domain type itself) -- no
-manual UI exists yet, but the schema already supports a future
+**The automatic matcher (`CanonicalizeNewsOnce`, `fx58_v2` as of
+FX-58H) is deliberately exact, high-precision, low-recall.** Two
+automatic rules, fixed precedence (`EXACT_CANONICAL_URL` > `EXACT_
+BODY_TEXT`), each requiring byte-for-byte equality after a minimal,
+non-fuzzy normalization (`domain.news_text_normalization`) plus a
+minimum length for body (>= 200 chars). No fuzzy/ML/LLM matching of
+any kind. The matcher NEVER writes `NOT_SAME_STORY`; that relation
+kind may only ever be written with `method=MANUAL_REVIEW` (enforced
+by the domain type itself) -- no manual UI exists yet, but the schema
+already supports a future
 audited correction without redesign. An existing `NOT_SAME_STORY`
 blocks the automatic matcher from overturning it (`BLOCKED_BY_
 REVIEW_OVERRIDE`, counted, never raised as an error).
@@ -2865,24 +2865,74 @@ already-shipped fallback behavior (an item whose CURRENT latest
 vintage is quarantined still uses an EARLIER evidence-eligible
 vintage, if one exists, rather than being excluded outright).
 
-**Real-data activation is currently BLOCKED, by design, pending
-architecture review** -- the required pre-persistence dry-run against
-the real 358-item dev database found that `EXACT_HEADLINE_AND_
-SUMMARY` produces confirmed false-positive proposals for sources
-whose own "summary" field is itself recurring institutional
-boilerplate (Bank of Canada rate-decision outcome text; Federal
-Reserve committee-hearing titles) rather than genuinely per-event
-text. Per this story's own explicit safety-gate instruction, ZERO
-relations were persisted; `news_canonical_relation_vintages` remains
-empty. See ADR 0007's own "Real-data finding" section for the full
-evidence and the deferred correction options.
+**Real-data activation, under the corrected `fx58_v2` policy (FX-58H),
+is now LIVE.** The original `fx58_v1` policy's own required pre-
+persistence dry-run against the real 358-item dev database found
+that its `EXACT_HEADLINE_AND_SUMMARY` rule produced confirmed false-
+positive proposals for sources whose own "summary" field is itself
+recurring institutional boilerplate (Bank of Canada rate-decision
+outcome text; Federal Reserve committee-hearing titles) rather than
+genuinely per-event text, so `fx58_v1` never persisted a single
+relation. See ADR 0007's own "Real-data finding" section (preserved
+exactly as written) and its FX-58H addendum for the full correction
+record.
 
-**Explicitly NOT built in FX-58**: no `EconomicEvent` linkage of any
-kind (FX-52 remains DEFER); no entities/countries/currencies/topics/
-relevance/sentiment/hawkish-dovish/bullish-bearish (FX-59's own
-future job); no source-reputation weighting (FX-EPIC-09); no pair-
-specific news snapshot (FX-60); no Market Context visualization
-change (FX-61); no network I/O of any kind; no scheduler/daemon.
+### Canonicalization precision & concurrent-write hardening (FX-58H)
+
+**`EXACT_HEADLINE_AND_SUMMARY` is demoted to a non-persisted review
+signal, never removed from the codebase.** It survives as `domain.
+news_canonicalization_review.NewsCanonicalizationReviewReason.EXACT_
+HEADLINE_AND_SUMMARY` -- a genuinely DIFFERENT type from `NewsCanon
+icalizationMethod`, detected by a SEPARATE pure function (`detect_
+review_candidate`) that `CanonicalizeNewsOnce` consults ONLY when the
+automatic matcher already returned `None` for that pair, so a pair
+satisfying a stronger automatic rule is never ALSO flagged for
+review. `RecordNewsCanonicalRelation` is never called for a review
+candidate -- it is a reporting artifact only, for a future, still-
+unbuilt, human-audited `MANUAL_REVIEW` workflow. `NewsCanonicaliz
+ationMethod.EXACT_HEADLINE_AND_SUMMARY` was removed from that enum
+entirely; `classify_candidate_pair` (the automatic matcher, `fx58_
+v2`) now returns only `EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT`/`None`.
+
+**The schema was narrowed via a NEW forward migration
+(`3fe8c43841ee`), never editing `274aabcc57dd` in place** -- guarded
+by a precheck that fails loudly (`RuntimeError`) if any persisted row
+ever used the demoted method before any constraint DDL runs (none
+did; `fx58_v1` never persisted anything). `downgrade()` restores the
+wider constraint unconditionally, since widening a `CHECK` constraint
+can never be violated by existing data.
+
+**A real concurrency-reporting bug was fixed.** `RecordNewsCanonical
+Relation` previously called `add_relation_vintage` but never checked
+its own `RelationVintageWriteResult.inserted` return value -- so a
+caller whose own insert attempt lost a race to an identical concurrent
+write (reported `inserted=False`) was still told `CREATED`/`REVISION_
+ADDED`, contradicting the actual durable effect. The outcome now
+always reflects reality: `inserted=False` downgrades the reported
+outcome to `UNCHANGED`, proven both at the fake-repository unit level
+and against two genuinely concurrent real Postgres sessions going
+through the use case itself (not merely the repository in isolation).
+
+**No source-specific exception, source-key gating, or time-based
+heuristic was introduced anywhere** -- the GENERAL rule was what the
+real data disproved, so the general rule is what was corrected;
+`EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT` both remain fully capable of
+linking two different external identities regardless of source. The
+renewed dry-run against the SAME real 358-item dataset found ZERO
+automatic `fx58_v2` matches -- a fully valid success; the same 7
+pairs now correctly surface only as review-only candidates, and both
+a real write-mode run and its immediate repeat reported `relations_
+created=0`, confirming idempotency with zero rows persisted because
+none currently exist in the real data, not because activation is
+blocked.
+
+**Explicitly NOT built in FX-58/FX-58H**: no `EconomicEvent` linkage
+of any kind (FX-52 remains DEFER); no entities/countries/currencies/
+topics/relevance/sentiment/hawkish-dovish/bullish-bearish (FX-59's
+own future job); no source-reputation weighting (FX-EPIC-09); no
+pair-specific news snapshot (FX-60); no Market Context visualization
+change (FX-61); no network I/O of any kind; no scheduler/daemon; no
+`MANUAL_REVIEW` UI (the domain model supports it; nothing uses it yet).
 
 ## Current state
 

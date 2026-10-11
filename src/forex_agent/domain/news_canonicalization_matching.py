@@ -1,16 +1,32 @@
-"""FX-58: the conservative, deterministic, exact-match-only matching
-policy (`fx58_v1`) -- Sections 16-24. Every rule here compares
-NORMALIZED (never fuzzy) text/URLs and requires EXACT equality plus a
-minimum length where specified; there is no scoring, no confidence
-percentage, no time-window heuristic, and no headline-only or
-summary-only rule. False equivalence (a merge of two genuinely
-distinct stories) is considered far worse than a missed duplicate, so
-every rule here is deliberately high-precision, low-recall.
+"""FX-58/FX-58H: the conservative, deterministic matching policy
+(`fx58_v2`) -- Sections 16-24 of FX-58, narrowed by FX-58H Sections
+3-12. Every rule here compares NORMALIZED (never fuzzy) text/URLs and
+requires EXACT equality plus a minimum length where specified; there
+is no scoring, no confidence percentage, no time-window heuristic,
+and no headline-only or summary-only rule. False equivalence (a merge
+of two genuinely distinct stories) is considered far worse than a
+missed duplicate.
+
+**`classify_candidate_pair` (the AUTOMATIC matcher) can return ONLY
+`EXACT_CANONICAL_URL`, `EXACT_BODY_TEXT`, or `None` (FX-58H Section
+10).** `EXACT_HEADLINE_AND_SUMMARY` was REMOVED from the automatic
+matcher entirely -- real Bank of Canada/Federal Reserve data proved
+it unsafe (see `news_canonicalization_method`'s own module docstring
+and ADR 0007's "Real-data finding"). The underlying signal survives
+ONLY as `detect_review_candidate`'s own separate, non-persisted
+`NewsCanonicalizationReviewReason` -- a genuinely different return
+TYPE, so a caller cannot accidentally feed a review reason into
+`RecordNewsCanonicalRelation` without a type error forcing a second
+look. `CanonicalizeNewsOnce` is responsible for calling `detect_
+review_candidate` ONLY when `classify_candidate_pair` returns `None`
+(FX-58H Section 12: a pair that already satisfies a stronger
+automatic rule is never ALSO reported as needing review).
 """
 
 from dataclasses import dataclass
 
 from forex_agent.domain.news_canonicalization_method import NewsCanonicalizationMethod
+from forex_agent.domain.news_canonicalization_review import NewsCanonicalizationReviewReason
 from forex_agent.domain.news_text_normalization import normalize_canonical_url, normalize_text
 from forex_agent.domain.timestamps import UtcTimestamp
 
@@ -61,11 +77,13 @@ class CanonicalizationCandidate:
 def classify_candidate_pair(
     a: CanonicalizationCandidate, b: CanonicalizationCandidate
 ) -> NewsCanonicalizationMethod | None:
-    """Returns the STRONGEST automatic method this pair satisfies, in
-    fixed precedence order (Section 21: `EXACT_CANONICAL_URL` >
-    `EXACT_BODY_TEXT` > `EXACT_HEADLINE_AND_SUMMARY`), or `None` if
-    none applies. Deliberately pure and side-effect-free: no I/O, no
-    randomness, fully reproducible for the same two candidates."""
+    """Returns the STRONGEST AUTOMATIC method this pair satisfies, in
+    fixed precedence order (`EXACT_CANONICAL_URL` > `EXACT_BODY_TEXT`),
+    or `None` if neither applies (FX-58H Section 10). Deliberately
+    pure and side-effect-free: no I/O, no randomness, fully
+    reproducible for the same two candidates. Never returns a value
+    for the demoted headline+summary signal -- see `detect_review_
+    candidate` for that."""
     if a.news_item_key == b.news_item_key:
         raise ValueError("cannot classify a candidate pair against itself")
 
@@ -81,6 +99,24 @@ def classify_candidate_pair(
         if normalized_body_a == normalized_body_b and len(normalized_body_a) >= _MIN_BODY_LENGTH:
             return NewsCanonicalizationMethod.EXACT_BODY_TEXT
 
+    return None
+
+
+def detect_review_candidate(
+    a: CanonicalizationCandidate, b: CanonicalizationCandidate
+) -> NewsCanonicalizationReviewReason | None:
+    """A SEPARATE pure detector (FX-58H Section 11) for the demoted
+    exact-headline+summary signal -- returns a `NewsCanonicalization
+    ReviewReason`, a genuinely different type from `NewsCanonicaliz
+    ationMethod`, never persistable via `RecordNewsCanonicalRelation`
+    by construction. Diagnostics/reporting ONLY. Callers are expected
+    to call this ONLY when `classify_candidate_pair` already returned
+    `None` for the same pair (Section 12) -- this function itself
+    does not re-check the automatic rules, to keep it a narrow,
+    single-purpose detector."""
+    if a.news_item_key == b.news_item_key:
+        raise ValueError("cannot classify a candidate pair against itself")
+
     if a.summary and b.summary:
         normalized_summary_a = normalize_text(a.summary)
         normalized_summary_b = normalize_text(b.summary)
@@ -89,6 +125,6 @@ def classify_candidate_pair(
             and len(normalized_summary_a) >= _MIN_SUMMARY_LENGTH
             and normalize_text(a.headline) == normalize_text(b.headline)
         ):
-            return NewsCanonicalizationMethod.EXACT_HEADLINE_AND_SUMMARY
+            return NewsCanonicalizationReviewReason.EXACT_HEADLINE_AND_SUMMARY
 
     return None

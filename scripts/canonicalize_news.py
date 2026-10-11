@@ -1,8 +1,9 @@
-"""FX-58: runs one canonicalization pass against the already-ingested
-news evidence in a live Postgres -- zero network I/O (FX-58 Section
-64), no scheduler/daemon (Section 65).
+"""FX-58/FX-58H: runs one canonicalization pass against the already-
+ingested news evidence in a live Postgres -- zero network I/O (FX-58
+Section 64), no scheduler/daemon (Section 65).
 
-Run (write mode -- persists any newly-discovered SAME_STORY relations):
+Run (write mode -- persists any newly-discovered automatic SAME_STORY
+relations under the `fx58_v2` policy):
 
     uv run python scripts/canonicalize_news.py
 
@@ -10,6 +11,14 @@ Run (dry-run -- previews real decisions, persists nothing; uses the
 EXACT SAME matcher/decision logic as write mode, Section 65):
 
     uv run python scripts/canonicalize_news.py --dry-run
+
+**FX-58H Section 14: output clearly separates two genuinely different
+things.** "AUTOMATIC RELATIONS" are safe-to-write candidates under
+`fx58_v2` (`EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT`) -- these are what
+write mode actually persists. "REVIEW-ONLY CANDIDATES" are the
+demoted exact-headline+summary signal -- weak evidence that will
+NEVER be persisted by this script, printed purely for a human
+reviewer's own inspection. Never described as "proposed relations."
 
 Requires:
     - `docker compose up -d db` (and `alembic upgrade head` already applied)
@@ -60,9 +69,15 @@ def _print_result(result: NewsCanonicalizationRunResult, *, dry_run: bool) -> No
     print(f"blocked_by_review_override: {result.blocked_by_review_override}")
     print(f"exact_url_matches: {result.exact_url_matches}")
     print(f"exact_body_matches: {result.exact_body_matches}")
-    print(f"exact_headline_summary_matches: {result.exact_headline_summary_matches}")
+    print(f"headline_summary_review_candidates: {result.headline_summary_review_candidates}")
     if result.blocked_pairs:
         print(f"blocked_pairs: {result.blocked_pairs}")
+
+    print()
+    print(
+        "=== AUTOMATIC RELATIONS (safe-to-write under fx58_v2) -- "
+        f"{len(result.created_relations)} ==="
+    )
     for relation in result.created_relations:
         print(
             f"  [{relation.method.value}] "
@@ -70,6 +85,18 @@ def _print_result(result: NewsCanonicalizationRunResult, *, dry_run: bool) -> No
             f"{relation.left_canonical_url!r}) <-> "
             f"{relation.right_news_item_key} ({relation.right_headline!r}, "
             f"{relation.right_canonical_url!r})"
+        )
+
+    print()
+    print(
+        "=== REVIEW-ONLY CANDIDATES (weak signal -- will NEVER be persisted by this "
+        f"script) -- {len(result.review_candidates)} ==="
+    )
+    for candidate in result.review_candidates:
+        print(
+            f"  [{candidate.reason.value}] "
+            f"{candidate.left_news_item_key} ({candidate.left_headline!r}) <-> "
+            f"{candidate.right_news_item_key} ({candidate.right_headline!r})"
         )
 
 

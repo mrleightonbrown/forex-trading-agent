@@ -2639,6 +2639,60 @@ _Last updated: 2026-09-27 (FX-54V)_
   FX-61/FX-EPIC-09, or any Decision/Risk Engine work, and do not
   attempt a real write-mode canonicalization run until the `EXACT_
   HEADLINE_AND_SUMMARY` finding above is explicitly resolved.**
+- **FX-58H: canonicalization precision & concurrent-write hardening
+  (complete — real-data activation now LIVE under `fx58_v2`, ADR
+  0007's own addendum)**. The authorized correction FX-58's own
+  "Real-data finding" called for. `fx58_v1` is preserved as closed
+  history — it never reached activation, never persisted a row. Two
+  fixes: (1) **matching policy** — `NewsCanonicalizationMethod.EXACT_
+  HEADLINE_AND_SUMMARY` removed from the enum entirely (narrowed via
+  a NEW forward migration, `3fe8c43841ee`, never editing
+  `274aabcc57dd` in place — guarded by a precheck that fails loudly
+  if any row ever used the demoted method; none did). The underlying
+  signal survives ONLY as a genuinely different, non-persisted type
+  (`domain.news_canonicalization_review.NewsCanonicalizationReview
+  Reason.EXACT_HEADLINE_AND_SUMMARY`), detected by a separate pure
+  function (`detect_review_candidate`) `CanonicalizeNewsOnce` consults
+  ONLY when the automatic matcher already returned `None` for that
+  pair — so a stronger automatic match is never ALSO flagged for
+  review. `RecordNewsCanonicalRelation` is never called for a review
+  candidate. The automatic matcher (`fx58_v2`, `classify_candidate_
+  pair`) now returns only `EXACT_CANONICAL_URL`/`EXACT_BODY_TEXT`/
+  `None`. No source-specific blacklist, no source-key gating, no
+  time-based corroboration was introduced anywhere — the GENERAL
+  rule was fixed, not patched around. (2) **concurrency bug** —
+  `RecordNewsCanonicalRelation` previously ignored `RelationVintage
+  WriteResult.inserted` after writing; a concurrent writer whose
+  identical payload landed first is now correctly reported as
+  `UNCHANGED`, never `CREATED`/`REVISION_ADDED`. 19 net new test
+  functions (verified via per-file `grep -c` before/after, no rename-
+  miscounting risk): 3 brand-new files (migration-logic unit tests
+  (4), Postgres migration-constraint tests (3), Postgres concurrency-
+  through-the-use-case tests (3)) plus net additions to 4 existing
+  files (matcher +3, relation vintage +1, canonicalizer +3, record-
+  relation +2) — 110 focused FX-58/FX-58H tests total, all passing
+  (91 pre-existing + 19 net new). Full regression
+  (412 tests) passes; full deterministic default suite `2244 passed,
+  7 failed (same pre-existing OANDA gap), 10 deselected`; full
+  `live_source` suite `9 passed, 1 failed` (same pre-existing BLS
+  403). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean. **The
+  renewed pre-activation dry-run against the real, unchanged 358-item
+  dataset found ZERO automatic `fx58_v2` matches** (0 exact-URL, 0
+  exact-body) — a fully valid success, not a failure; the same 7
+  pairs now correctly surface only as review-only candidates. Zero
+  automatic pairs needed human inspection. Both real write-mode runs
+  (first and immediately-repeated second) reported `relations_
+  created=0`, confirming idempotency; `news_canonical_relation_
+  vintages` is now genuinely ACTIVE (a real run succeeds without the
+  FX-58 STOP) while still holding zero rows, since no real automatic
+  match exists in the current data. Derived groups: 358 singleton
+  groups, zero multi-item groups. All 358 pre-existing source rows
+  across six sources confirmed exactly untouched throughout. No
+  `NewsCanonicalRelationVintage` row ever needed migration/conversion
+  (`fx58_v1` persisted nothing). **ADR 0007 addendum added** — no new
+  ADR 0008 (the underlying architecture was never in question). **Stop
+  after FX-58H — do not start FX-59/FX-60/FX-61/FX-EPIC-09, or any
+  Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

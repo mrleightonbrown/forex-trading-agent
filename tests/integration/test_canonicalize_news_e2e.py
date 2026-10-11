@@ -220,7 +220,7 @@ async def test_transitive_grouping_a_b_and_b_c(
         availability=_ts(10),
         relation_kind=NewsCanonicalRelationKind.SAME_STORY,
         method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
     await record(
         (b, 0),
@@ -228,7 +228,7 @@ async def test_transitive_grouping_a_b_and_b_c(
         availability=_ts(10),
         relation_kind=NewsCanonicalRelationKind.SAME_STORY,
         method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
 
     get_groups = GetCanonicalNewsGroupsAsOf(canon_repo)
@@ -259,7 +259,7 @@ async def test_contradictory_graph_fails_closed(
         availability=_ts(10),
         relation_kind=NewsCanonicalRelationKind.SAME_STORY,
         method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
     await record(
         (b, 0),
@@ -267,7 +267,7 @@ async def test_contradictory_graph_fails_closed(
         availability=_ts(10),
         relation_kind=NewsCanonicalRelationKind.SAME_STORY,
         method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
     await record(
         (a, 0),
@@ -275,7 +275,7 @@ async def test_contradictory_graph_fails_closed(
         availability=_ts(11),
         relation_kind=NewsCanonicalRelationKind.NOT_SAME_STORY,
         method=NewsCanonicalizationMethod.MANUAL_REVIEW,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
 
     get_groups = GetCanonicalNewsGroupsAsOf(canon_repo)

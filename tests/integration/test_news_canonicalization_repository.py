@@ -143,7 +143,7 @@ def _relation(
     method: NewsCanonicalizationMethod = NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
     left_item_revision_sequence: int = 0,
     right_item_revision_sequence: int = 0,
-    algorithm_version: str = "fx58_v1",
+    algorithm_version: str = "fx58_v2",
 ) -> NewsCanonicalRelationVintage:
     left_key, right_key = sorted((left, right))
     return NewsCanonicalRelationVintage(
@@ -272,7 +272,7 @@ async def test_fk_rejects_unknown_news_item(
         method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
         left_item_revision_sequence=0,
         right_item_revision_sequence=0,
-        algorithm_version="fx58_v1",
+        algorithm_version="fx58_v2",
     )
     with pytest.raises(IntegrityError):
         await canon_repo.add_relation_vintage(relation)
