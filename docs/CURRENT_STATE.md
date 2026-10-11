@@ -2462,6 +2462,69 @@ _Last updated: 2026-09-27 (FX-54V)_
   not start FX-58/FX-59/FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk
   Engine, and do not start an ECB "accounts" hardening story unless
   separately assigned.**
+- **FX-57FH: Bank of Canada timestamp/source-drift guard hardening
+  (complete)**. A narrow BoC source-contract hardening pass, before
+  FX-58 was authorized — `source_key`/`source_channel`/feed endpoint/
+  RSS 1.0/RDF architecture/`rdf:about` identity/`source_content_type`/
+  the America/Toronto remediation algorithm/PROSPECTIVE mode/the
+  common ingestion model/`observed_source_channels`/the existing 351
+  genuine rows all explicitly unchanged. Four fixes: (1) `dc:date` is
+  now extracted via a new `_raw_text_of` helper that preserves the
+  exact XML element text with NO `.strip()` normalization — every
+  other field keeps ordinary trimming; only this one field carries
+  the strict raw-provenance contract, since it is the one field this
+  epic's own remediation need applies to. (2) `dc:language` is now
+  parsed and validated (`_EXPECTED_LANGUAGE = "en"`) rather than
+  hardcoded by the adapter — missing/blank/unexpected (e.g. a French
+  feed's `"fr"`) is now an item-level invalid, never silently accepted
+  or language-detected; `BocSource` maps `language` from the parsed,
+  validated field. (3) A new whole-response fail-closed guard
+  (`_reject_future_dated_observations` in `boc_source.py`) raises
+  `NewsSourceUnavailableError` — with a diagnostic naming the
+  offending `external_item_id`, raw `dc:date`, remediated
+  `source_published_at`, and the response's own `retrieved_at` —
+  whenever ANY successfully-remediated `source_published_at` lands
+  strictly AFTER that response's own `retrieved_at`; `IngestNewsSourceOnce`
+  already treats this exception as an ordinary whole-response error
+  (the same precedent as a malformed feed), so nothing from that
+  response — not even an otherwise-valid sibling item — is ever
+  persisted. No tolerance; exact equality is still accepted (`<=`,
+  not `<`). (4) The `live_source` test now asserts the FULL dc:date
+  contract (exactly one provenance fact, non-blank raw, the known
+  malformed shape, non-`None` `normalized_at`, `source_published_at
+  == normalized_at`) for EVERY accepted observation — not merely "at
+  least one," and no longer `continue`s past an item with no
+  provenance — plus new PIT/mode assertions (`PROSPECTIVE`/`ACTIVE`/
+  `EVIDENCE_ELIGIBLE`/`source_published_at <= retrieved_at`) on every
+  item. The remediation ALGORITHM itself (exact-shape regex,
+  `ZoneInfo`, DST ambiguous/nonexistent refusal, unexpected-offset
+  refusal) is completely unchanged — this hardening is around the
+  contract, not the conversion. 14 new test functions across five
+  already-tracked files (verified via per-file `grep -c`: parser
+  21→27, adapter unit 13→19, Postgres integration 10→12; remediation
+  unit and the live test both unchanged in COUNT, the live test
+  strengthened internally). Full regression (Fed/ECB/BoE/GOV.UK/
+  StatCan + common layer, 360 tests) passes; focused BoC suite (73
+  tests) passes; full deterministic default suite `2098 passed, 7
+  failed (the same pre-existing, unrelated OANDA live-candle-backfill
+  gap), 10 deselected`; `live_source` suite `8 passed, 2 failed` — the
+  same pre-existing BLS 403 and the same incidental ECB "accounts"
+  finding from FX-57F, both confirmed unchanged and NOT touched in
+  this pass (`ecb_rss_source.py` untouched). `ruff`/`ruff format`/
+  `mypy`/`pre-commit` all clean. Manual runner re-run live once
+  against unchanged real data: `created=0, revisions_added=0,
+  unchanged=10, channel_memberships_added=0`, exactly as expected; the
+  existing 351 rows across all six sources confirmed untouched (45
+  FED + 15 ECB + 150 BOE + 20 GOVUK_HMT + 111 STATCAN + 10 BOC). No
+  schema/migration change. No ADR 0005 or ADR 0006 update — this is a
+  pure application-layer contract-hardening pass; the four core docs
+  record the narrow new facts this pass pins (every current accepted
+  item carries dc:date; remediated publication time may never exceed
+  retrieval time; dc:date raw text is preserved unstripped; `en` is a
+  pinned provider-language contract), none of which change ADR 0005's
+  own existing source-feasibility text. **Stop after FX-57FH — do not
+  start the ECB "accounts" hardening story, FX-58/FX-59/FX-60/FX-61/
+  FX-EPIC-09, or any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

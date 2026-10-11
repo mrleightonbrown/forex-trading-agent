@@ -13575,3 +13575,239 @@ story's own explicit stop instruction: do not start FX-58/FX-59/
 FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work. Do not start
 an ECB "accounts" hardening story unless separately assigned. Return
 FX-57F for review.
+
+## 2026-10-10 — FX-57FH: Bank of Canada timestamp/source-drift guard hardening
+
+A narrow BoC source-contract hardening pass on FX-57F, before FX-58
+was authorized. Git HEAD at this pass's own start: `8ce4002` (the
+FX-57F commit), clean working tree except `.claude/`.
+
+**Scope discipline, confirmed unchanged by full regression**: `source_
+key="BOC"`, `source_channel="boc_press_releases"`, the feed endpoint
+(`/content_type/press-releases/feed/`), the RSS 1.0/RDF architecture,
+`rdf:about` identity, `source_content_type="press_release"`, the
+America/Toronto remediation ALGORITHM (the exact-shape regex,
+`ZoneInfo`, DST-ambiguous/nonexistent refusal, unexpected-offset
+refusal), `PROSPECTIVE` mode, the common ingestion/model layer,
+`observed_source_channels`, and the existing 351 genuine `NewsItem`s.
+No schema or migration change.
+
+**1. `dc:date` raw-value preservation is now exact, byte-for-byte --
+previously silently `.strip()`d (Section 5/6).** `boc_rdf_parsing.py`
+extracted every field, `dc:date` included, through the same `_text_
+of` helper, which trims surrounding whitespace before returning it.
+This is a genuine, if subtle, violation of this epic's own strict
+raw-provenance contract for a remediated timestamp (FX-55H's "preserve
+the raw value unconditionally" rule, re-applied here for the first
+time to a field whose OWN raw text -- not merely its presence/absence
+-- matters for exact reproducibility). Fixed by adding `_raw_text_of`,
+a new helper used ONLY for `dc:date`, which returns the element's
+`.text` with zero trimming -- `None` only for a genuinely missing
+element or one with no text at all; a present-but-whitespace-only
+value is returned as-is, not collapsed to `None`. Every other field
+(`title`/`link`/`description`/`dc:language`) keeps the ordinary
+`_text_of` trimming, unchanged. `remediate_boc_dc_date` itself still
+calls `.strip()` internally, but now purely for SHAPE RECOGNITION --
+the STORED raw value (`NewsSourceTimestampProvenance.raw_value`) and
+the value actually PARSED for remediation are now two genuinely
+separate operations on two genuinely separate copies of the string.
+Pinned at three levels: a parser-level fixture (`<dc:date>  2026-09-
+02T09:47:53+00:00  </dc:date>` preserved exactly, including both the
+leading and trailing double-space, as `BocPressReleaseEntry.dc_date_
+raw`), an adapter-level fixture proving the SAME padded string reaches
+`NewsSourceTimestampProvenance.raw_value` unchanged while remediation
+still succeeds to the correct Toronto-remediated UTC instant, and a
+Postgres integration fixture proving the padded raw value round-trips
+through the full persisted chain unchanged.
+
+**2. `dc:language` is now a parsed, validated, pinned provider
+contract -- previously a hardcoded adapter-level constant that could
+never detect source drift (Section 7/8).** `BocSource` previously set
+every observation's `language` field to a module-level `_LANGUAGE =
+"en"` constant, regardless of what the feed itself actually said --
+meaning a live change in the Bank's OWN `<dc:language>` value (e.g. a
+hypothetical French variant of this feed, or a malformed/missing
+value) could never be detected by anything, ever, since the adapter
+never looked at the field at all. Fixed by adding a new, validated
+`language: str` field to `BocPressReleaseEntry`: `boc_rdf_parsing.py`
+now reads `<dc:language>` and validates it against a new, narrow,
+exact constant (`_EXPECTED_LANGUAGE = "en"`) -- missing, blank, or any
+value other than exactly `"en"` (e.g. a French feed's own `"fr"`) is
+now an item-level invalid, with a diagnostic naming the unexpected
+value, never silently accepted and never general-purpose language-
+DETECTED (per the spec's own explicit instruction: this is a narrow
+pin against the one adopted feed's own known shape, not a detector).
+`BocSource._to_observation` now maps `language=entry.language` -- the
+parsed, validated field -- instead of the removed hardcoded constant.
+
+**3. A successfully-remediated `source_published_at` strictly AFTER
+the response's own `retrieved_at` now fails the WHOLE response
+closed, with zero tolerance, before any observation from it is ever
+returned (Section 3/4).** Until this pass, nothing checked whether a
+remediated timestamp was even plausible relative to when FTA actually
+observed the response -- a future-dated press release (whether from a
+genuine Bank clock/scheduling anomaly, or a remediation bug this
+story's own test suite failed to catch) would have been silently
+ingested exactly like any other item, with no signal that something
+had gone wrong. Fixed by a new `_reject_future_dated_observations`
+function in `boc_source.py`, called from `fetch_press_releases` after
+every observation in the response has been built but BEFORE the
+`NewsSourceFetchOutcome` is constructed and returned: it walks `zip
+(parsed.entries, observations, strict=True)` (the two tuples are
+index-aligned, built from the SAME iteration) and raises `NewsSource
+UnavailableError` -- the SAME exception already used for a malformed
+feed response, per the spec's own explicit "translate to it" option,
+rather than inventing a new exception type -- the moment any
+observation's `source_published_at` is strictly greater than that
+response's own `retrieved_at`. The diagnostic embeds the offending
+`external_item_id`, the raw `dc:date` (pulled from the matching
+`BocPressReleaseEntry`, not the observation itself, since the raw
+value is source-of-truth provenance), the remediated `source_
+published_at`, and the response's own `retrieved_at` -- all four
+fields the spec's own Section 3 explicitly required. `IngestNews
+SourceOnce` already treats `NewsSourceUnavailableError` as an ordinary
+whole-response failure (the EXACT precedent `test_one_malformed_
+response_writes_zero_news_evidence` already pinned for a malformed
+feed, FX-57F) -- so nothing from that response, including an
+otherwise-valid SIBLING item in the very same response, is ever
+persisted; proven directly by a new Postgres integration test
+(`test_future_dated_item_among_other_valid_items_discards_the_whole_
+response`) that places one valid and one future-dated item in the
+SAME feed and confirms neither is ever persisted. A second integration
+test (`test_source_published_at_exactly_equal_to_retrieved_at_does_
+not_raise`) pins the exact boundary: the guard uses `<=`, never `<` --
+an exactly-equal instant is accepted without raising, consistent with
+the spec's own "no tolerance" wording meaning no tolerance for
+EXCEEDING `retrieved_at`, not a ban on exact equality.
+
+**4. The `live_source` test's own dc:date expectation is now
+unconditional for every accepted observation, not merely "at least
+one sampled item" (Section 2).** FX-57F's own live research
+established that every CURRENTLY accepted press-release item carries
+`dc:date` in the known malformed shape -- but the original test only
+asserted this for at least one item, and silently `continue`d past
+any observation carrying no timestamp provenance at all. This is
+precisely the failure mode a drift test exists to catch, defeated by
+its own over-permissive acceptance criterion: a future poll where the
+Bank began omitting `dc:date` from SOME items (perhaps a new content
+sub-type, perhaps a genuine regression) would pass this test exactly
+as cleanly as today's full-coverage reality. Fixed by removing the
+`continue` entirely and asserting the FULL dc:date contract --
+exactly one provenance fact, a non-blank raw value, the known
+malformed shape, a non-`None` `normalized_at`, and `source_
+published_at == normalized_at` -- for EVERY observation in the
+response, with a final cross-check (`items_with_dc_date == len
+(outcome.observations)`) that a partial-coverage future would fail
+loudly rather than silently. New PIT/mode assertions were added
+alongside (Section 9): `observation_mode == PROSPECTIVE`, `source_
+status == ACTIVE`, `evidence_disposition == EVIDENCE_ELIGIBLE`, and
+`source_published_at <= retrieved_at` (the last a redundant,
+defense-in-depth re-check of an invariant point 3 above should
+already make impossible to violate against real live data). Per the
+spec's own explicit instruction, `boc_source.py`'s own PRODUCTION
+fail-soft handling of a genuinely missing `dc:date` (in a synthetic
+fixture, or a real future change) is intentionally UNCHANGED -- only
+this live test's own expectation was tightened; this is a live DRIFT
+assertion, not a parser/adapter behavior change.
+
+**Explicitly unchanged, confirmed by full regression**: every prior
+FX-57 adapter's own feeds/identity/mapping/timestamp semantics (Fed/
+ECB/BoE/GOV.UK/StatCan); the multi-channel cumulative-provenance model
+(ADR 0006); the common `IngestNewsSourceOnce`/`RecordNewsObservation`/
+`SqlAlchemyNewsRepository` chain; the BoC remediation algorithm
+itself; the existing 351 genuine rows across six sources.
+
+**Verification, reported separately:**
+
+- BoC RDF parser unit (`test_boc_rdf_parsing.py`): `27 passed` (21 ->
+  27, +6: the dc:date raw-preservation regression, a trimmed-field
+  contrast proving only dc:date gets the new treatment, and four
+  dc:language validation cases -- missing/blank/unexpected-`"fr"`/
+  valid-`"en"`).
+- BoC timestamp remediation unit (`test_boc_timestamp_remediation.py`):
+  `15 passed` (unchanged count -- the remediation algorithm itself was
+  explicitly not touched by this pass).
+- BoC adapter unit (`test_boc_source.py`): `19 passed` (13 -> 19, +6:
+  raw-preservation through the full adapter, language-from-parsed-
+  field, an unexpected-language-item-skipped-not-ingested regression,
+  the future-dated raise-with-diagnostic test, the exactly-equal-
+  does-not-raise boundary test, and the future-item-among-valid-
+  siblings whole-response-discard test).
+- BoC Postgres integration (`test_boc_news_ingestion.py`): `12
+  passed` (10 -> 12, +2: the future-dated whole-response-discard
+  regression and the raw-preservation-through-Postgres regression).
+- BoC's own `live_source` test (`test_boc_source_live.py`): `1
+  passed` (unchanged test COUNT, fully rewritten internal
+  assertions) -- live-reconfirmed, this run: all 10 current items
+  carry `dc:date`, all remediate successfully to the expected 4/5-hour
+  EDT/EST shift, zero invalid items, zero future-dated items (the new
+  production guard never triggered against real current data, exactly
+  as expected since the Bank's own items are not future-dated).
+- Full regression of every prior FX-57 adapter plus the common
+  application layer: `360 passed` (up from 348 by the BoC net test
+  delta), zero new failures.
+- Deterministic default suite (`pytest`): `2098 passed, 7 failed, 10
+  deselected` -- the SAME 7 pre-existing, documented OANDA live-
+  candle-backfill failures as immediately before this pass (FX-EPIC-06,
+  unrelated to news intelligence), confirmed unchanged.
+- Full `live_source` suite (`pytest -m live_source`): `8 passed, 2
+  failed` -- BoC's own live test passes. The 2 failures are the SAME
+  pre-existing BLS 403 (FX-EPIC-07, unrelated) and the SAME incidental
+  ECB "accounts" content-class finding FX-57F already discovered and
+  documented, both confirmed unchanged by this pass. **`ecb_rss_
+  source.py` was NOT touched in FX-57FH** -- per the spec's own
+  explicit instruction not to fix that finding in this story.
+- `ruff check .`, `ruff format --check .`, `mypy .` (453 source
+  files), and `pre-commit run --all-files` all pass clean.
+- Manual runner (`scripts/ingest_boc_news.py`) re-run live once
+  against the real feed and dev Postgres, after the hardening:
+  `created=0, revisions_added=0, unchanged=10, channel_memberships_
+  added=0, items_invalid=0` -- the expected "no behavioral drift
+  against unchanged live data" result, reported as actually observed.
+  Database spot-check: all 351 rows across six sources (45 FED + 15
+  ECB + 150 BOE + 20 GOVUK_HMT + 111 STATCAN + 10 BOC) confirmed
+  exactly untouched -- no deletion, no reseed.
+
+**Test counts, verified via per-file BEFORE/AFTER `grep -cE '^(async
+)?def test_'` net totals** (every touched file was already tracked,
+so a plain net-count sufficed with no rename-miscounting risk): **14
+new test functions** -- 6 in `test_boc_rdf_parsing.py` (21 -> 27), 6
+in `test_boc_source.py` (13 -> 19), 2 in `test_boc_news_ingestion.py`
+(10 -> 12). `test_boc_timestamp_remediation.py` (15) and `test_boc_
+source_live.py` (1) both kept their existing counts -- the former
+because the remediation algorithm was untouched, the latter because
+its internals were strengthened without adding a second test function.
+
+**No schema or migration change.**
+
+**No ADR 0005 or ADR 0006 update** -- every change in this pass is a
+pure application-layer contract-hardening pass inside `boc_rdf_
+parsing.py`/`boc_source.py` and their own test coverage. The four core
+docs now narrowly record the new pinned facts this pass establishes
+(every current accepted item carries `dc:date`; remediated
+publication time may never exceed retrieval time; `dc:date` raw text
+is preserved unstripped; `dc:language="en"` is now a pinned provider
+contract) -- none of these rise to the level of an ADR-worthy new
+source fact, since no endpoint, rights, or dialect change was found;
+they are application-layer validation tightenings around facts ADR
+0005 already established.
+
+**Explicitly confirmed NOT done in FX-57FH**: no change to the
+remediation algorithm itself; no change to `source_key`/`source_
+channel`/the feed endpoint/the RSS 1.0/RDF architecture/`rdf:about`
+identity/`source_content_type`/`PROSPECTIVE` mode/the common
+ingestion model/`observed_source_channels`; no deletion or reseed of
+the existing 351 genuine rows; no fix to the incidentally-discovered
+ECB "accounts" content-class gap (`ecb_rss_source.py` untouched,
+exactly as instructed); FX-58/FX-59/FX-60/FX-61/FX-EPIC-09 not
+started; no Decision/Risk Engine work. FX-49 remains DEFER; FX-52
+remains DEFER; FX-53 remains BLOCKED.
+
+Full details in `docs/ARCHITECTURE.md`'s new "Bank of Canada
+timestamp/source-drift guard hardening (FX-57FH)" section; `docs/
+CURRENT_STATE.md` carries its own FX-57FH entry; `docs/NEXT_STEPS.md`
+carries the full narrative.
+
+Per this story's own explicit stop instruction: do not start the ECB
+"accounts" hardening story, FX-58, FX-59, FX-60, FX-61, FX-EPIC-09, or
+any Decision/Risk Engine work. Return FX-57FH for review.

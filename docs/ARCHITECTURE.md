@@ -2682,6 +2682,91 @@ numeric policy-rate extraction or Economic-Event-table writes; CAD/
 sentiment/classification interpretation; cross-source dedup; any
 scheduler/daemon.
 
+## Bank of Canada timestamp/source-drift guard hardening (FX-57FH)
+
+A narrow source-contract hardening pass on FX-57F, before FX-58 was
+authorized. `source_key`/`source_channel`/the feed endpoint/the RSS
+1.0/RDF architecture/`rdf:about` identity/`source_content_type`/the
+America/Toronto remediation ALGORITHM/`PROSPECTIVE` mode/the common
+ingestion model/`observed_source_channels`/the existing 351 genuine
+rows are all explicitly unchanged.
+
+**`dc:date` raw-value preservation is now exact, byte-for-byte.** The
+parser previously extracted every field (including `dc:date`) through
+the same `_text_of` helper, which `.strip()`s whitespace -- a subtle
+violation of the strict raw-provenance contract this epic established
+for remediated timestamps (FX-55H's own "preserve the raw value
+unconditionally" rule). A new `_raw_text_of` helper extracts `dc:date`
+with NO trimming at all; every other field (`title`/`link`/
+`description`/`dc:language`) keeps the ordinary trimmed extraction,
+since the strict contract applies only to the one field this epic
+found a live-remediation need for. `remediate_boc_dc_date` itself may
+still call `.strip()` internally for recognition -- the raw STORED
+value and the value actually PARSED are now two genuinely separate
+things, proven by a dedicated regression fixture (a `dc:date` padded
+with leading/trailing whitespace, asserted preserved exactly in
+`NewsSourceTimestampProvenance.raw_value` while remediation still
+succeeds to the correct Toronto-remediated instant).
+
+**`dc:language` is now a parsed, validated, pinned provider contract
+-- never a hardcoded adapter-level constant.** Every live-sampled item
+on this adopted English feed carries `dc:language="en"`; the parser
+now validates this exactly (`_EXPECTED_LANGUAGE`), with a missing,
+blank, or unexpected value (e.g. a French feed's own `"fr"`) becoming
+an item-level invalid, never silently accepted or language-detected.
+`BocSource` maps `language` from this parsed, validated field, so a
+live drift in the Bank's own `dc:language` value -- not merely a
+drift in `dc:date` -- now fails the `live_source` test loudly instead
+of passing through a hardcoded `"en"` unnoticed.
+
+**A successfully-remediated `source_published_at` strictly AFTER the
+response's own `retrieved_at` now fails the WHOLE response closed,
+before any observation from it is returned.** A future-dated press
+release is a new, unreviewed source condition -- never clamped to
+`retrieved_at`, never silently dropped, never quarantined
+automatically, and never handled by copying the already-excluded
+speeches feed's own exclusion policy. `boc_source._reject_future_
+dated_observations` raises `NewsSourceUnavailableError` (the SAME
+exception already used for a malformed feed response) with a
+diagnostic naming the offending `external_item_id`, its raw `dc:date`,
+the remediated `source_published_at`, and the response's own
+`retrieved_at`. `IngestNewsSourceOnce` already treats this exception
+as an ordinary whole-response failure (the same precedent a malformed
+feed response already established), so nothing from that response --
+not even an otherwise-valid sibling item in the SAME response -- is
+ever persisted. No tolerance for a violation, but exact equality is
+still accepted (`<=`, never `<`) -- a remediated instant landing
+EXACTLY at `retrieved_at` is not itself suspicious.
+
+**The `live_source` test's own dc:date expectation is now unconditional,
+not merely "at least one sampled item."** FX-57F's own live research
+established every currently-accepted item carries `dc:date` in the
+known malformed shape; the original test only asserted this for at
+least one item and `continue`d past any observation with no timestamp
+provenance at all -- too weak to catch the Bank beginning to
+legitimately omit `dc:date` from some items. The test now asserts the
+full contract (exactly one provenance fact, non-blank raw value, the
+known malformed shape, a non-`None` `normalized_at`, `source_
+published_at == normalized_at`) for EVERY accepted observation, plus
+new PIT/mode assertions (`observation_mode == PROSPECTIVE`,
+`source_status == ACTIVE`, `evidence_disposition ==
+EVIDENCE_ELIGIBLE`, `source_published_at <= retrieved_at`) on every
+item -- this is a live DRIFT assertion only; `boc_source.py`'s own
+fail-soft handling of a genuinely missing `dc:date` in a synthetic/
+future fixture remains intentionally unchanged.
+
+No schema or migration change. No ADR 0005 or ADR 0006 update -- a
+pure application-layer contract-hardening pass; no new source fact
+beyond what the four core docs now record narrowly (every current
+accepted item carries `dc:date`; remediated publication time may
+never exceed retrieval time; `dc:date` raw text is preserved
+unstripped; `"en"` is now a pinned provider-language contract).
+
+**Explicitly NOT done in FX-57FH**: no change to the remediation
+algorithm itself; no fix to the incidentally-discovered ECB
+"accounts" content-class gap (`ecb_rss_source.py` untouched); no
+FX-58+ work.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

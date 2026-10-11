@@ -21,13 +21,40 @@ string. If the Bank of Canada has since fixed its own feed's offset,
 this assertion fails LOUDLY rather than silently continuing to apply
 an now-unnecessary (or actively wrong) reinterpretation -- exactly the
 behavior Section 23 of this story's own spec required before writing
-any remediation code at all, now re-checked on every live run."""
+any remediation code at all, now re-checked on every live run.
+
+**FX-57FH Section 2: EVERY accepted live observation, not merely "at
+least one," must carry a dc:date and remediate successfully.** FX-57F's
+own live research established that every accepted current press-
+release item carries `dc:date` in the exact known malformed shape --
+the original version of this test only asserted that fact for at
+least one sampled item, and silently `continue`d past any observation
+with no timestamp provenance at all. That was too weak to catch the
+Bank legitimately beginning to omit `dc:date` from some items: this
+test now asserts the full dc:date contract (exactly one provenance
+fact, non-blank raw value, the known malformed shape, a non-`None`
+`normalized_at`, `source_published_at == normalized_at`) for EVERY
+observation, with no skip -- if the Bank begins omitting `dc:date`,
+this fails loudly for review, rather than passing through unnoticed.
+This is a live DRIFT assertion only; `boc_source.py`'s own fail-soft
+handling of a genuinely missing `dc:date` in a synthetic/future
+fixture is intentionally UNCHANGED (Section 2's own explicit
+instruction) -- only this live test's own expectation was tightened.
+
+**FX-57FH Section 9: strengthened PIT/mode assertions**, re-checked on
+every live run alongside every assertion already present before this
+hardening pass (exact malformed raw shape, successful remediation, the
+4/5-hour EDT/EST shift, identity/link equality, `source_content_type`,
+one channel)."""
 
 import re
 from datetime import UTC, datetime
 
 import pytest
 
+from forex_agent.domain.news_evidence_disposition import NewsEvidenceDisposition
+from forex_agent.domain.news_observation_mode import NewsObservationMode
+from forex_agent.domain.news_source_status import NewsSourceStatus
 from forex_agent.infrastructure.news_sources.boc_source import CHANNEL, SOURCE_KEY, BocSource
 
 _KNOWN_MALFORMED_SHAPE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$")
@@ -67,13 +94,30 @@ async def test_boc_press_releases_feed_is_reachable_and_yields_valid_items() -> 
             # Live-confirmed identity shape: rdf:about always equals <link>.
             assert observation.canonical_url == observation.external_item_id
 
-            if not observation.source_timestamp_provenance:
-                continue
+            # FX-57FH Section 9: PIT/mode assertions, every item.
+            assert observation.observation_mode == NewsObservationMode.PROSPECTIVE
+            assert observation.source_status == NewsSourceStatus.ACTIVE
+            assert observation.evidence_disposition == NewsEvidenceDisposition.EVIDENCE_ELIGIBLE
+
+            # FX-57FH Section 2: EVERY accepted live observation must
+            # carry exactly one dc:date provenance fact that remediates
+            # successfully -- no longer merely "at least one sampled
+            # item," and no longer skipped via `continue` when absent.
+            assert observation.source_timestamp_provenance, (
+                f"live BoC item {observation.external_item_id!r} has NO dc:date timestamp "
+                "provenance at all -- this contradicts this story's own live-validation "
+                "finding that every currently-accepted press-release item carries dc:date; "
+                "if the Bank has begun legitimately omitting it, this needs review before "
+                "assuming the existing 'every item has dc:date' assumption still holds"
+            )
             items_with_dc_date += 1
             assert len(observation.source_timestamp_provenance) == 1
             provenance = observation.source_timestamp_provenance[0]
             assert provenance.field_name == "dc:date"
             raw = provenance.raw_value
+            assert raw.strip(), (
+                f"live BoC item {observation.external_item_id!r} has a blank dc:date raw value"
+            )
 
             assert _KNOWN_MALFORMED_SHAPE_RE.match(raw), (
                 f"live BoC item {observation.external_item_id!r} has a dc:date "
@@ -92,12 +136,23 @@ async def test_boc_press_releases_feed_is_reachable_and_yields_valid_items() -> 
             )
             assert observation.source_published_at == provenance.normalized_at
 
+            # FX-57FH Section 3/9: the production fail-closed guard
+            # already refuses to return a future-dated observation at
+            # all, so this must always hold for anything reaching here
+            # -- re-asserted directly as a redundant live PIT check.
+            assert observation.source_published_at.value <= outcome.retrieved_at.value, (
+                f"live BoC item {observation.external_item_id!r} has source_published_at "
+                f"({observation.source_published_at.value!r}) AFTER this response's own "
+                f"retrieved_at ({outcome.retrieved_at.value!r}) -- the production fail-"
+                "closed guard should have already rejected this response entirely"
+            )
+
             # Re-confirms the defect ACTUALLY matters: the literal-UTC
             # reading of the raw string must differ from the remediated
             # instant by exactly 4 or 5 hours (EDT or EST) -- proving
             # ZoneInfo-driven DST reinterpretation genuinely ran, not a
             # no-op that happened to pass the regex above.
-            literal_utc_reading = datetime.fromisoformat(raw.replace("+00:00", "")).replace(
+            literal_utc_reading = datetime.fromisoformat(raw.strip().replace("+00:00", "")).replace(
                 tzinfo=UTC
             )
             shift_hours = (
@@ -110,9 +165,9 @@ async def test_boc_press_releases_feed_is_reachable_and_yields_valid_items() -> 
             )
 
         print(f"[live] items with a dc:date provenance entry: {items_with_dc_date}")
-        assert items_with_dc_date > 0, (
-            "expected at least one live BoC item with a dc:date value to re-verify the "
-            "known malformed-offset defect against"
+        assert items_with_dc_date == len(outcome.observations), (
+            "expected EVERY live BoC observation to carry a dc:date provenance fact "
+            f"({items_with_dc_date} of {len(outcome.observations)} did)"
         )
     finally:
         await source.aclose()

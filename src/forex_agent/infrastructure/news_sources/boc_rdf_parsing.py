@@ -38,7 +38,20 @@ like `rss_item_parsing.py`/`statcan_atom_parsing.py`, this parser
 returns every valid entry as-is; same-identity dedupe-or-conflict
 remains the COMMON `IngestNewsSourceOnce` layer's own job, applied
 uniformly.
-"""
+
+**FX-57FH hardening**: `dc:date` is raw SOURCE provenance (see
+`boc_timestamp_remediation.py`) and is now extracted via `_raw_text_
+of`, which preserves the exact XML element text with no `.strip()`
+normalization -- every other field (`title`/`link`/`description`/
+`dc:language`) keeps the ordinary `_text_of` trimming, since the
+strict raw-preservation contract applies only to the one field this
+story found a live-remediation need for. `dc:language` is also now
+parsed and validated, not silently hardcoded by the adapter: every
+live-sampled item on this adopted English feed carries `dc:language=
+"en"`, pinned here as an exact, narrow shape check (`_EXPECTED_
+LANGUAGE`) -- a missing, blank, or unexpected value (e.g. a French
+feed's own `"fr"`) is an item-level invalid, never silently accepted
+or language-detected."""
 
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -48,6 +61,7 @@ _RDF_NS = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
 _RSS1_NS = "{http://purl.org/rss/1.0/}"
 _DC_NS = "{http://purl.org/dc/elements/1.1/}"
 _BOC_HOST = "www.bankofcanada.ca"
+_EXPECTED_LANGUAGE = "en"
 
 
 class MalformedBocFeedError(ValueError):
@@ -69,13 +83,19 @@ class BocPressReleaseEntry:
     title, even though, for every entry accepted here, `entry_id` and
     `canonical_url` happen to be the identical string (live-confirmed:
     `rdf:about` and `<link>` always coincide for this source's own
-    items)."""
+    items). `dc_date_raw` preserves the exact `<dc:date>` element text
+    with no `.strip()` normalization (FX-57FH Section 5) -- unlike
+    every other field here, which is ordinarily trimmed. `language`
+    is the parsed, validated `<dc:language>` value -- always `"en"`
+    for an entry accepted by this parser (FX-57FH Section 7); never
+    hardcoded by a caller."""
 
     entry_id: str
     title: str
     canonical_url: str
     dc_date_raw: str | None
     summary: str | None
+    language: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +110,9 @@ def parse_boc_press_releases_rdf(text: str) -> BocFeedParseResult:
     `MalformedBocFeedError` if `text` does not parse as XML or its
     root is not an RDF root. An entry is invalid (counted, not
     raising) for a missing/blank `rdf:about` identity, a missing/
-    off-host/malformed `<link>`, or a missing/blank `<title>`. A
+    off-host/malformed `<link>`, a missing/blank `<title>`, or a
+    missing/blank/unexpected `<dc:language>` (FX-57FH: this adopted
+    feed is pinned to exactly `"en"`, never language-detected). A
     missing `<dc:date>` is NOT an item-level invalidity (Section 31) --
     it simply means no source publication provenance is available for
     that entry."""
@@ -137,8 +159,19 @@ def _parse_one_item(
     if title is None:
         return None, "missing or blank title"
 
+    language = _text_of(item_element, f"{_DC_NS}language")
+    if language is None:
+        return None, "missing or blank dc:language"
+    if language != _EXPECTED_LANGUAGE:
+        return (
+            None,
+            f"unexpected dc:language {language!r} -- this adopted endpoint is pinned to "
+            f"{_EXPECTED_LANGUAGE!r} only; a different value is out of this story's own "
+            "adopted scope, not language-detected or silently accepted",
+        )
+
     summary = _text_of(item_element, f"{_RSS1_NS}description")
-    dc_date_raw = _text_of(item_element, f"{_DC_NS}date")
+    dc_date_raw = _raw_text_of(item_element, f"{_DC_NS}date")
 
     return (
         BocPressReleaseEntry(
@@ -147,6 +180,7 @@ def _parse_one_item(
             canonical_url=canonical_url,
             dc_date_raw=dc_date_raw,
             summary=summary,
+            language=language,
         ),
         None,
     )
@@ -170,3 +204,16 @@ def _text_of(element: ElementTree.Element, tag: str) -> str | None:
         return None
     stripped = child.text.strip()
     return stripped or None
+
+
+def _raw_text_of(element: ElementTree.Element, tag: str) -> str | None:
+    """Like `_text_of`, but preserves the exact XML element text with
+    NO `.strip()` normalization (FX-57FH Section 5) -- `dc:date` is
+    raw source provenance and must be stored byte-for-byte as the
+    provider supplied it. Only a genuinely missing element (or one
+    with no text content at all) collapses to `None`; a present-but-
+    whitespace-only value is returned as-is, not treated as absent."""
+    child = element.find(tag)
+    if child is None or child.text is None:
+        return None
+    return child.text

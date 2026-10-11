@@ -109,14 +109,17 @@ def _feed_xml(*items_xml: str) -> str:
 def _item_xml(
     suffix: str,
     title: str = "Example press release",
-    dc_date: str | None = "2026-10-05T09:47:00+00:00",
+    dc_date: str | None = "2026-10-05T05:47:00+00:00",
     summary: str = "Example summary.",
+    language: str | None = "en",
 ) -> str:
     entry_id = _entry_id(suffix)
     parts = [f"<title>{title}</title>", f"<link>{entry_id}</link>"]
     if dc_date is not None:
         parts.append(f"<dc:date>{dc_date}</dc:date>")
     parts.append(f"<description>{summary}</description>")
+    if language is not None:
+        parts.append(f"<dc:language>{language}</dc:language>")
     return f"<item rdf:about='{entry_id}'>{''.join(parts)}</item>"
 
 
@@ -312,6 +315,67 @@ async def test_one_malformed_response_writes_zero_news_evidence(session: AsyncSe
     assert result.created == 0
     assert result.items_processed == 0
     assert len(result.errors) == 1
+
+
+# --- FX-57FH Section 3/4: future-dated remediated observation --------------
+
+
+@pytest.mark.asyncio
+async def test_future_dated_remediated_item_persists_nothing_from_that_response(
+    session: AsyncSession,
+) -> None:
+    # Section 4: pins whole-response fail-closed behavior end-to-end --
+    # a successfully-remediated source_published_at strictly AFTER
+    # this response's own retrieved_at must make fetch_press_releases
+    # itself raise (never returning a NewsSourceFetchOutcome), which
+    # IngestNewsSourceOnce then treats as an ordinary whole-response
+    # error -- exactly like test_one_malformed_response above -- so
+    # NOTHING from this response (not even an otherwise-valid sibling
+    # item in the same response) is ever persisted.
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    retrieved_at = _ts(10)  # 2026-10-05T10:00:00 UTC
+    # 09:47:00 Toronto-local (EDT, UTC-4) remediates to 13:47:00 UTC --
+    # strictly AFTER the 10:00:00 UTC retrieved_at above.
+    body = _feed_xml(
+        _item_xml("future-good", dc_date="2026-10-05T05:30:00+00:00"),
+        _item_xml("future-dated", dc_date="2026-10-05T09:47:00+00:00"),
+    )
+    result = await ingest((_fetcher(body, retrieved_at),))
+    await session.commit()
+
+    assert result.created == 0
+    assert result.items_processed == 0
+    assert len(result.errors) == 1
+
+    good_identity = NewsSourceIdentity(SOURCE_KEY, _entry_id("future-good"))
+    future_identity = NewsSourceIdentity(SOURCE_KEY, _entry_id("future-dated"))
+    assert await repository.get_item_by_source_identity(good_identity) is None
+    assert await repository.get_item_by_source_identity(future_identity) is None
+
+
+# --- FX-57FH Section 5/6: dc:date raw preservation, end-to-end -------------
+
+
+@pytest.mark.asyncio
+async def test_dc_date_raw_value_preserves_whitespace_end_to_end_through_postgres(
+    session: AsyncSession,
+) -> None:
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    body = _feed_xml(_item_xml("raw-preserved", dc_date="  2026-10-05T05:47:00+00:00  "))
+    result = await ingest((_fetcher(body, _ts(12)),))
+    await session.commit()
+
+    assert result.created == 1
+    identity = NewsSourceIdentity(SOURCE_KEY, _entry_id("raw-preserved"))
+    item = await repository.get_item_by_source_identity(identity)
+    assert item is not None
+    vintage = (await repository.list_vintages(item.news_item_key))[0]
+    assert vintage.source_timestamp_provenance[0].raw_value == "  2026-10-05T05:47:00+00:00  "
+    assert vintage.source_published_at == UtcTimestamp(datetime(2026, 10, 5, 9, 47, 0, tzinfo=UTC))
 
 
 @pytest.mark.asyncio

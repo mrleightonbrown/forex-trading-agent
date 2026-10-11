@@ -46,6 +46,7 @@ def _item(
     description: str | None = "Example press release summary.",
     host: str = _HOST,
     include_cb_news: bool = True,
+    language: str | None = "en",
 ) -> str:
     if about is None:
         about = f"{host}{path}" if path else None
@@ -64,7 +65,8 @@ def _item(
         parts.append(f"<description>{description}</description>")
     if dc_date is not None:
         parts.append(f"<dc:date>{dc_date}</dc:date>")
-    parts.append("<dc:language>en</dc:language>")
+    if language is not None:
+        parts.append(f"<dc:language>{language}</dc:language>")
     if include_cb_news:
         parts.append(
             "<cb:news rdf:parseType='Resource'>"
@@ -86,6 +88,7 @@ def test_normal_item_parses() -> None:
     assert entry.title == "Bank of Canada increases its policy rate"
     assert entry.dc_date_raw == "2026-09-02T09:47:53+00:00"
     assert entry.summary == "Example press release summary."
+    assert entry.language == "en"
 
 
 def test_multiple_items_all_parse() -> None:
@@ -157,6 +160,53 @@ def test_dc_date_absent_is_not_invalid() -> None:
     result = parse_boc_press_releases_rdf(_feed(_item(dc_date=None)))
     assert result.invalid_count == 0
     assert result.entries[0].dc_date_raw is None
+
+
+# --- FX-57FH Section 5/6: dc:date raw preservation, NOT trimmed ------------
+
+
+def test_dc_date_raw_preserves_exact_text_including_surrounding_whitespace() -> None:
+    result = parse_boc_press_releases_rdf(_feed(_item(dc_date="  2026-09-02T09:47:53+00:00  ")))
+    assert result.invalid_count == 0
+    assert result.entries[0].dc_date_raw == "  2026-09-02T09:47:53+00:00  "
+
+
+def test_title_and_link_remain_trimmed_unlike_dc_date() -> None:
+    # Only dc:date gets the raw-preservation treatment -- every other
+    # field keeps its ordinary trimming behavior, unchanged.
+    result = parse_boc_press_releases_rdf(_feed(_item(title="  Padded title  ")))
+    assert result.entries[0].title == "Padded title"
+
+
+# --- FX-57FH Section 7/8: dc:language is parsed and validated -------------
+
+
+def test_missing_dc_language_is_invalid() -> None:
+    result = parse_boc_press_releases_rdf(_feed(_item(language=None)))
+    assert result.invalid_count == 1
+    assert "missing or blank dc:language" in result.invalid_reasons[0]
+    assert result.entries == ()
+
+
+def test_blank_dc_language_is_invalid() -> None:
+    result = parse_boc_press_releases_rdf(_feed(_item(language="   ")))
+    assert result.invalid_count == 1
+    assert "missing or blank dc:language" in result.invalid_reasons[0]
+    assert result.entries == ()
+
+
+def test_unexpected_dc_language_fr_is_invalid() -> None:
+    result = parse_boc_press_releases_rdf(_feed(_item(language="fr")))
+    assert result.invalid_count == 1
+    assert "unexpected dc:language" in result.invalid_reasons[0]
+    assert "'fr'" in result.invalid_reasons[0]
+    assert result.entries == ()
+
+
+def test_dc_language_en_succeeds_and_is_mapped_onto_the_entry() -> None:
+    result = parse_boc_press_releases_rdf(_feed(_item(language="en")))
+    assert result.invalid_count == 0
+    assert result.entries[0].language == "en"
 
 
 def test_description_present() -> None:
