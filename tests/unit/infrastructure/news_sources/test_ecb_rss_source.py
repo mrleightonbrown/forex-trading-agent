@@ -61,6 +61,10 @@ _SP_URL = "https://www.ecb.europa.eu//press/key/date/2026/html/ecb.sp261002_1~de
 _IN_URL = "https://www.ecb.europa.eu//press/inter/date/2026/html/ecb.in260930~ghi789.en.html"
 _GC_URL = "https://www.ecb.europa.eu//press/govcdec/otherdec/2026/html/ecb.gc261002~jkl012.en.html"
 _UNKNOWN_URL = "https://www.ecb.europa.eu//press/wp/date/2026/html/ecb.wp261002~mno345.en.pdf"
+_MG_URL = "https://www.ecb.europa.eu//press/accounts/2026/html/ecb.mg261008~a10153d090.en.html"
+_MG_OUTSIDE_NAMESPACE_URL = (
+    "https://www.ecb.europa.eu//press/pr/date/2026/html/ecb.mg261008~a10153d090.en.html"
+)
 
 
 @pytest.mark.asyncio
@@ -246,6 +250,203 @@ async def test_valid_empty_feed_returns_zero_observations_no_error() -> None:
 
     assert outcome.observations == ()
     assert outcome.items_invalid == 0
+
+
+# --- FX-57BH.1: `mg` ("Monetary policy accounts") -------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_mg_under_press_accounts_maps_to_monetary_policy_account() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_MG_URL, title="Meeting of 9-10 September 2026"))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    assert len(outcome.observations) == 1
+    assert outcome.observations[0].source_content_type == "monetary_policy_account"
+
+
+@pytest.mark.asyncio
+async def test_b_mg_item_remains_source_channel_ecb_press() -> None:
+    source = _source_returning(200, _feed_xml(_item_xml(url=_MG_URL)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.observations[0].source_channel == "ecb_press"
+
+
+@pytest.mark.asyncio
+async def test_c_mg_guid_remains_external_item_id() -> None:
+    source = _source_returning(200, _feed_xml(_item_xml(url=_MG_URL, guid=_MG_URL)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.observations[0].external_item_id == _MG_URL
+
+
+@pytest.mark.asyncio
+async def test_d_mg_link_remains_canonical_url() -> None:
+    source = _source_returning(200, _feed_xml(_item_xml(url=_MG_URL)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.observations[0].canonical_url == _MG_URL
+
+
+@pytest.mark.asyncio
+async def test_e_mg_title_maps_to_headline() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_MG_URL, title="Meeting of 9-10 September 2026"))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.observations[0].headline == "Meeting of 9-10 September 2026"
+
+
+@pytest.mark.asyncio
+async def test_f_mg_pub_date_uses_existing_source_timestamp_mapping() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_MG_URL, pub_date="Thu, 08 Oct 2026 13:30:00 +0200"))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    observation = outcome.observations[0]
+    assert observation.source_published_at == UtcTimestamp(
+        datetime(2026, 10, 8, 11, 30, 0, tzinfo=UTC)
+    )
+    provenance = observation.source_timestamp_provenance[0]
+    assert provenance.raw_value == "Thu, 08 Oct 2026 13:30:00 +0200"
+    assert provenance.normalized_at == observation.source_published_at
+
+
+@pytest.mark.asyncio
+async def test_g_mg_observed_at_remains_retrieved_at() -> None:
+    source = _source_returning(200, _feed_xml(_item_xml(url=_MG_URL)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    observation = outcome.observations[0]
+    assert observation.observed_at == _RETRIEVED_AT
+    assert observation.observed_at.value != observation.source_published_at.value  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_h_existing_pr_mapping_unchanged_alongside_mg() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_PR_URL, guid=_PR_URL), _item_xml(url=_MG_URL, guid=_MG_URL))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    by_url = {o.canonical_url: o for o in outcome.observations}
+    assert by_url[_PR_URL].source_content_type == "press_release"
+
+
+@pytest.mark.asyncio
+async def test_i_existing_sp_mapping_unchanged_alongside_mg() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_SP_URL, guid=_SP_URL), _item_xml(url=_MG_URL, guid=_MG_URL))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    by_url = {o.canonical_url: o for o in outcome.observations}
+    assert by_url[_SP_URL].source_content_type == "speech"
+
+
+@pytest.mark.asyncio
+async def test_j_existing_in_mapping_unchanged_alongside_mg() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_IN_URL, guid=_IN_URL), _item_xml(url=_MG_URL, guid=_MG_URL))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    by_url = {o.canonical_url: o for o in outcome.observations}
+    assert by_url[_IN_URL].source_content_type == "interview"
+
+
+@pytest.mark.asyncio
+async def test_k_existing_gc_mapping_unchanged_alongside_mg() -> None:
+    source = _source_returning(
+        200, _feed_xml(_item_xml(url=_GC_URL, guid=_GC_URL), _item_xml(url=_MG_URL, guid=_MG_URL))
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    by_url = {o.canonical_url: o for o in outcome.observations}
+    assert by_url[_GC_URL].source_content_type == "press_release"
+
+
+@pytest.mark.asyncio
+async def test_l_unknown_wp_remains_invalid_alongside_mg() -> None:
+    # Section 17: the working-paper guard must survive mg's own
+    # admission unchanged -- wp must NOT become accepted merely
+    # because mg now is.
+    source = _source_returning(
+        200,
+        _feed_xml(
+            _item_xml(url=_UNKNOWN_URL, guid=_UNKNOWN_URL), _item_xml(url=_MG_URL, guid=_MG_URL)
+        ),
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 1
+    assert len(outcome.observations) == 1
+    assert outcome.observations[0].canonical_url == _MG_URL
+    assert "unrecognized" in outcome.invalid_reasons[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_m_arbitrary_unknown_code_remains_invalid() -> None:
+    arbitrary_url = "https://www.ecb.europa.eu//press/xx/date/2026/html/ecb.xx261008~zzz.en.html"
+    source = _source_returning(200, _feed_xml(_item_xml(url=arbitrary_url, guid=arbitrary_url)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 1
+    assert outcome.observations == ()
+
+
+# --- FX-57BH.1 Section 19: the mg-specific namespace guard -----------------
+
+
+@pytest.mark.asyncio
+async def test_mg_outside_press_accounts_namespace_is_invalid_not_guessed() -> None:
+    source = _source_returning(
+        200,
+        _feed_xml(_item_xml(url=_MG_OUTSIDE_NAMESPACE_URL, guid=_MG_OUTSIDE_NAMESPACE_URL)),
+    )
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 1
+    assert outcome.observations == ()
+    assert "structural drift" in outcome.invalid_reasons[0]
+
+
+@pytest.mark.asyncio
+async def test_pr_sp_in_gc_have_no_namespace_guard_unlike_mg() -> None:
+    # Section 19/20: the narrow mg-specific guard must NOT be
+    # generalized to the other three classes -- a pr-coded item
+    # living outside /press/pr/ (however unlikely in practice) is
+    # still accepted purely on its own code, exactly as before.
+    unusual_pr_url = "https://www.ecb.europa.eu//press/somewhere-else/ecb.pr261002~xyz.en.html"
+    source = _source_returning(200, _feed_xml(_item_xml(url=unusual_pr_url, guid=unusual_pr_url)))
+    outcome = await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert outcome.items_invalid == 0
+    assert outcome.observations[0].source_content_type == "press_release"
 
 
 @pytest.mark.asyncio

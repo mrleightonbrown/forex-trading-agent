@@ -26,11 +26,25 @@ relax the production adapter's own fail-closed behavior in any way
 (an unrecognized content class still fails closed as an invalid item,
 never silently admitted) -- it only makes THIS live-drift detector
 surface that fact loudly instead of swallowing it.
-"""
+
+**FX-57BH.1 (2026-10-11)**: this test's own `items_invalid == 0`
+assertion is exactly what caught the `mg` ("Monetary policy accounts")
+content class this story adopted -- a live
+`/press/accounts/.../ecb.mg...` item the adapter correctly, fail-
+closed refused as unrecognized. With `mg` now admitted, `content_
+types_seen` is extended to include `"monetary_policy_account"`, and a
+new conditional structural assertion fires for any observation whose
+own URL lives under `/press/accounts/`: it must carry exactly that
+content type. This assertion is intentionally conditional, not
+required every run -- the feed is shallow and accounts are periodic,
+so a run with no current account present must still pass cleanly
+(Section 22)."""
 
 import pytest
 
 from forex_agent.infrastructure.news_sources.ecb_rss_source import ECB_FEEDS, EcbRssSource
+
+_ACCOUNTS_PATH_SEGMENT = "/press/accounts/"
 
 
 @pytest.mark.live_source
@@ -71,7 +85,25 @@ async def test_ecb_press_feed_is_reachable_and_yields_valid_items() -> None:
             if observation.source_published_at is not None:
                 assert observation.source_timestamp_provenance
 
+            # FX-57BH.1 Section 22: conditional, not required every
+            # run -- fires only for an observation whose own URL is
+            # actually under /press/accounts/ (periodic, shallow feed).
+            if observation.canonical_url is not None and (
+                _ACCOUNTS_PATH_SEGMENT in observation.canonical_url
+            ):
+                assert observation.source_content_type == "monetary_policy_account", (
+                    f"live ECB item under {_ACCOUNTS_PATH_SEGMENT!r} "
+                    f"({observation.canonical_url!r}) has source_content_type="
+                    f"{observation.source_content_type!r}, not 'monetary_policy_account' -- "
+                    "this contradicts this story's own live-validation finding"
+                )
+
         print(f"[live] content types seen: {sorted(content_types_seen)}")
-        assert content_types_seen <= {"press_release", "speech", "interview"}
+        assert content_types_seen <= {
+            "press_release",
+            "speech",
+            "interview",
+            "monetary_policy_account",
+        }
     finally:
         await source.aclose()

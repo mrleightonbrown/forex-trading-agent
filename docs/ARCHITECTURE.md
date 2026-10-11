@@ -1949,6 +1949,50 @@ No schema or migration change -- migration `a95058f88727`, its
 `NOT NULL` `source_channel` persistence, and the existing 45 Fed +
 15 ECB rows are all exactly as FX-57B left them.
 
+**FX-57BH.1 admitted a FIFTH URL-slug code, `mg`, after FX-57F's own
+full `live_source` suite surfaced it as a live-drift failure.** A real
+ECB item under `/press/accounts/.../ecb.mg...` ("Meeting of 9-10
+September 2026") was correctly, fail-closed refused as an unrecognized
+content class -- exactly the production behavior `_CONTENT_CLASS_TO_
+TYPE`'s own whitelist design was built to produce. Live research
+confirmed the ECB's own document title: "Account of the monetary
+policy meeting of the Governing Council of the European Central Bank
+held in Berlin on Wednesday and Thursday, 9-10 September 2026,"
+published roughly four weeks after the meeting it records. Admitted
+as a NEW, distinct `source_content_type`, `"monetary_policy_
+account"` -- never collapsed into `"press_release"` the way `gc` was,
+since the ECB itself distinguishes "Monetary policy accounts" from
+monetary policy decisions/statements/speeches/interviews as its own
+named document family, and `source_content_type` preserves the
+publisher's own document-family terminology rather than discarding it
+merely because the item arrives through the same `/rss/press.html`
+feed. Like `gc`, this is an institutional document (attributed to the
+Governing Council collectively, individual members named only within
+the meeting-proceedings narrative, never as the document's own
+author) and so does not fall inside the Working/Occasional-Paper
+written-authorisation carve-out re-verified directly against the
+ECB's own disclaimer page for this addendum.
+
+**A narrow, `mg`-specific structural consistency guard was added --
+deliberately NOT generalized to `pr`/`sp`/`in`/`gc`.** `_content_type_
+for` now additionally requires the literal path segment `/press/
+accounts/` be present in an `mg`-coded item's own URL before accepting
+it; an `mg` code found outside that namespace fails closed as a
+distinct, specifically-worded structural-drift invalid (`"'mg'
+content code found OUTSIDE its own reviewed... namespace"`), never
+silently accepted purely on the two-letter code. Every other admitted
+code keeps its own prior behavior exactly -- classified purely by its
+own URL-embedded code, no path check -- since generalizing the guard
+to all four for symmetry alone was explicitly out of this pass's own
+scope.
+
+No schema or migration change. `scripts/ingest_ecb_news.py`, its
+identity semantics, its timestamp mapping, and the existing pre-pass
+rows are all unchanged -- live re-ingestion after this change
+persisted the real `mg` item (and six other genuinely new items the
+shallow, 15-item feed had rotated in since the last ECB poll) without
+disturbing any pre-existing row.
+
 ## Bank of England news/speeches/publications RSS ingestion (FX-57C)
 
 FX-57's third incremental sub-story. Implements exactly the three

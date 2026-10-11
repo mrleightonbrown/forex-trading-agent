@@ -295,6 +295,43 @@ with different semantics even at a source FX-52A already adopted.
   single adopted feed URL. Any OTHER, still-unrecognized code
   continues to fail closed as an invalid item, never guessed -- see
   `docs/DECISIONS.md`'s FX-57B entry for the reasoning in full.
+  **FX-57BH.1 addendum (2026-10-11, live-reconfirmed)**: the full
+  `live_source` suite surfaced a FIFTH URL-slug code beyond the `pr`/
+  `sp`/`in`/`gc` quartet above: `mg`, under the URL namespace `/press/
+  accounts/` (e.g. `ecb.mg261008~a10153d090.en.html`, "Meeting of
+  9-10 September 2026"). Live research against the account page
+  itself confirmed the ECB's own document title: "Account of the
+  monetary policy meeting of the Governing Council of the European
+  Central Bank held in Berlin on Wednesday and Thursday, 9-10
+  September 2026," published 8 October 2026 -- roughly four weeks
+  after the meeting it records. Admitted as `monetary_policy_account`
+  (a new, distinct `source_content_type`, never collapsed into
+  `press_release`): like `gc`, this is an INSTITUTIONAL document
+  attributed to the Governing Council collectively -- individual
+  members are named only within the narrative describing meeting
+  proceedings (e.g. "Ms Schnabel started her presentation..."), never
+  as the document's own author byline -- so it does not fall inside
+  the Working/Occasional-Paper written-authorisation carve-out above;
+  this was re-verified directly against the ECB's own disclaimer page
+  (re-read in full for this addendum, text unchanged from the
+  original finding). A narrow, `mg`-specific structural guard
+  requires the `/press/accounts/` path segment be present before
+  accepting this code -- an `mg` code found outside that namespace
+  fails closed as structural drift, never accepted purely on the
+  two-letter code; this guard was NOT generalized to `pr`/`sp`/`in`/
+  `gc`, which remain classified purely by their own URL-embedded code.
+  Multiple independent historical examples of `mg` could not be
+  directly enumerated (the ECB's own "Monetary policy accounts" index
+  page renders its listing via client-side JavaScript, not present in
+  a plain HTTP GET response -- the same class of limitation this
+  epic's own BoC/StatCan research already hit with other providers'
+  dynamic pages) -- this addendum rests on ONE directly-verified live
+  example plus strong indirect pattern consistency (the identical
+  `ecb.<code><date>~<hash>.en.<ext>` filename convention observed
+  across all five now-admitted codes within the SAME live feed
+  response), stated transparently rather than glossed over. Any OTHER,
+  still-unrecognized code continues to fail closed exactly as before
+  -- see `docs/DECISIONS.md`'s FX-57BH.1 entry for the full reasoning.
 
 - **ECB bulk speeches CSV** (`all_ECB_speeches.csv`) -- the single best
   historical full-text asset found across the entire official-source
@@ -1045,7 +1082,7 @@ granting any source's own timestamp anchor status.
 | US Treasury | A | -- | -- | -- | -- | **REJECT** (no feed exists) |
 | BLS | A | News releases | UNKNOWN (access blocked) | UNKNOWN | UNKNOWN | **DEFER** (retest from prod IP) |
 | BEA (`rss.xml`) | A | Data-release news | VERIFIED | PARTIALLY_VERIFIED (named-zone hazard) | UNKNOWN | **DEFER** (corrected by FX-55H; reuse rights unresolved) |
-| ECB (`/rss/press.html`) | A | Press/speeches/interviews | VERIFIED | PARTIALLY_VERIFIED | VERIFIED (Working/Occasional Papers carved out) | **ADOPT_PROSPECTIVE** |
+| ECB (`/rss/press.html`) | A | Press/speeches/interviews/monetary policy accounts | VERIFIED | PARTIALLY_VERIFIED | VERIFIED (Working/Occasional Papers carved out) | **ADOPT_PROSPECTIVE** |
 | ECB (`all_ECB_speeches.csv`) | A | Speeches, full text, historical | PARTIALLY_VERIFIED | UNSUITABLE (date-only) | PARTIALLY_VERIFIED (author-carve-out ambiguity) | **DEFER_HISTORICAL** (corrected by FX-55H) |
 | Eurostat (legacy feed) | A | -- | -- | -- | -- | **REJECT** (dead since 2021) |
 | Eurostat (portlet Atom) | A | Euro-indicator releases | PARTIALLY_VERIFIED | VERIFIED (best UTC structure) | VERIFIED (CC BY 4.0) | **DEFER** (undocumented endpoint) |

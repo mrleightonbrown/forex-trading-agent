@@ -2525,6 +2525,66 @@ _Last updated: 2026-09-27 (FX-54V)_
   own existing source-feasibility text. **Stop after FX-57FH — do not
   start the ECB "accounts" hardening story, FX-58/FX-59/FX-60/FX-61/
   FX-EPIC-09, or any Decision/Risk Engine work.**
+- **FX-57BH.1: ECB monetary-policy accounts content-class drift
+  hardening (complete)**. The full `live_source` suite (run as part of
+  FX-57FH's own verification) surfaced a genuinely new ECB content
+  class as a live-drift failure: a real item under `/press/accounts/
+  .../ecb.mg...` ("Meeting of 9-10 September 2026") that the already-
+  approved adapter correctly, fail-closed refused as unrecognized.
+  Live research confirmed the ECB's own document title ("Account of
+  the monetary policy meeting of the Governing Council of the
+  European Central Bank held in Berlin on Wednesday and Thursday,
+  9-10 September 2026," published 8 October 2026, ~4 weeks after the
+  meeting) and re-verified the ECB's own disclaimer page in full —
+  confirming this is an institutional Governing Council document
+  (individual members named only within meeting-proceedings
+  narrative, never as document authorship), so it does NOT fall
+  inside the Working/Occasional-Paper written-authorisation carve-out.
+  `_CONTENT_CLASS_TO_TYPE["mg"] = "monetary_policy_account"` — a NEW,
+  distinct `source_content_type`, never collapsed into `press_
+  release` (unlike `gc`), since the ECB itself names this a separate
+  document family. A narrow, `mg`-specific structural guard
+  (`_MG_EXPECTED_PATH_SEGMENT = "/press/accounts/"`) was added
+  alongside — an `mg` code found outside that namespace fails closed
+  as structural drift rather than being accepted purely on the two-
+  letter code; this guard was deliberately NOT generalized to `pr`/
+  `sp`/`in`/`gc`, which keep their own prior behavior exactly (no path
+  check). `source_key="ECB"`/`source_channel="ecb_press"`/identity
+  (GUID)/timestamp mapping (pubDate → source_published_at, retrieved_
+  at → observed_at)/`authors=()`/`language="en"`/`body_text=None` all
+  unchanged for `mg`, exactly like every other ECB content class. 18
+  new test functions across three already-tracked files (verified via
+  per-file `grep -c`: adapter unit 16→31, Postgres integration 5→8;
+  the live test's internals were strengthened with no new test
+  function). Focused ECB suite (39 tests) passes; full regression
+  (common layer + Fed/BoE/GOV.UK/StatCan/BoC, 382 tests) passes; full
+  deterministic default suite `2116 passed, 7 failed (the same pre-
+  existing, unrelated OANDA live-candle-backfill gap), 10 deselected`;
+  full `live_source` suite `9 passed, 1 failed` — the ECB failure is
+  GONE, for the right reason (explicit recognition, not relaxed
+  validation); the one remaining failure is the same pre-existing,
+  unrelated BLS 403. `ruff`/`ruff format`/`mypy`/`pre-commit` all
+  clean. Manual runner run live twice: first run `created=7,
+  unchanged=8` (the shallow 15-item feed had rotated in six other
+  genuinely new items since the last ECB poll, plus the `mg` item
+  itself, now persisted with `source_content_type=monetary_policy_
+  account`, confirmed via direct SQL query); second run immediately
+  after, fully idempotent: `created=0, unchanged=15`. ECB now holds 22
+  genuine rows (was 15); every other source's own row count confirmed
+  untouched (45 FED + 150 BOE + 20 GOVUK_HMT + 111 STATCAN + 10 BOC).
+  No schema/migration change. **ADR 0005 addendum added** (a genuine
+  new source fact: the fifth URL-slug code, its document-family
+  identity, its cadence, its rights re-verification, and the honestly-
+  stated limitation that the ECB's own "Monetary policy accounts"
+  index page renders via client-side JavaScript, so multiple
+  historical `mg` examples could not be directly enumerated — this
+  addendum rests on one directly-verified live example plus strong
+  indirect filename-convention consistency across all five admitted
+  codes). No ADR 0006 change — this stays a single-channel source, no
+  multi-channel concept involved. **This closes the operational FX-57
+  source-ingestion sequence and clears FX-58 — do not start FX-58/
+  FX-59/FX-60/FX-61/FX-EPIC-09, or any Decision/Risk Engine work,
+  without separate authorization.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

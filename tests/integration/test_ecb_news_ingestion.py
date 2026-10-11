@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from forex_agent.application.ports.news_source import (
@@ -28,6 +28,7 @@ from forex_agent.application.ports.news_source import (
 )
 from forex_agent.application.use_cases.ingest_news_source_once import IngestNewsSourceOnce
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
+from forex_agent.domain.news_observation_mode import NewsObservationMode
 from forex_agent.domain.news_source_identity import NewsSourceIdentity
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.news_item import NewsItemRow
@@ -42,6 +43,11 @@ from forex_agent.infrastructure.news_sources.ecb_rss_source import (
 )
 
 _TEST_URL_PREFIX = "https://www.ecb.europa.eu//press/fx57b-integration-test"
+# FX-57BH.1: `mg` items are rejected by the production namespace guard
+# unless their own URL carries `/press/accounts/` -- this prefix
+# satisfies that guard, and is NOT a sub-path of `_TEST_URL_PREFIX`
+# above, so the cleanup query below must match EITHER prefix.
+_ACCOUNTS_TEST_URL_PREFIX = "https://www.ecb.europa.eu//press/accounts/fx57bh1-integration-test"
 _PRESS_FEED = ECB_FEEDS[0]
 
 
@@ -58,7 +64,12 @@ async def session() -> AsyncIterator[AsyncSession]:
                     delete(NewsSourceMappingRow)
                     .where(
                         NewsSourceMappingRow.source_key == SOURCE_KEY,
-                        NewsSourceMappingRow.external_item_id.startswith(_TEST_URL_PREFIX),
+                        or_(
+                            NewsSourceMappingRow.external_item_id.startswith(_TEST_URL_PREFIX),
+                            NewsSourceMappingRow.external_item_id.startswith(
+                                _ACCOUNTS_TEST_URL_PREFIX
+                            ),
+                        ),
                     )
                     .returning(NewsSourceMappingRow.news_item_key)
                 )
@@ -96,6 +107,22 @@ def _item_xml(
 
 def _url_for(code: str, guid_suffix: str) -> str:
     return f"{_TEST_URL_PREFIX}/ecb.{code}261002~{guid_suffix}.en.html"
+
+
+def _mg_item_xml(
+    guid_suffix: str,
+    title: str,
+    pub_date: str = "Thu, 08 Oct 2026 13:30:00 +0200",
+) -> str:
+    url = _mg_url_for(guid_suffix)
+    return (
+        f"<item><title>{title}</title><link>{url}</link><guid>{url}</guid>"
+        f"<pubDate>{pub_date}</pubDate></item>"
+    )
+
+
+def _mg_url_for(guid_suffix: str) -> str:
+    return f"{_ACCOUNTS_TEST_URL_PREFIX}/ecb.mg261008~{guid_suffix}.en.html"
 
 
 class _ScriptedEcbSource:
@@ -301,3 +328,102 @@ async def test_channel_vs_content_type_matrix_same_channel_distinct_types(
 
     # All three remain separate NewsItems despite sharing one channel.
     assert len(news_item_keys) == 3
+
+
+# --- FX-57BH.1: `mg` ("Monetary policy accounts") end-to-end --------------
+
+
+@pytest.mark.asyncio
+async def test_mg_item_persists_with_monetary_policy_account_content_type(
+    session: AsyncSession,
+) -> None:
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    scripted = _ScriptedEcbSource()
+    scripted.script(
+        _feed_xml(_mg_item_xml("single-poll", "Meeting of 9-10 September 2026")), _ts(10)
+    )
+
+    result = await ingest((scripted.fetcher(),))
+    await session.commit()
+
+    assert result.created == 1
+    assert result.items_processed == 1
+
+    identity = NewsSourceIdentity(SOURCE_KEY, _mg_url_for("single-poll"))
+    item = await repository.get_item_by_source_identity(identity)
+    assert item is not None
+    vintages = await repository.list_vintages(item.news_item_key)
+    assert len(vintages) == 1
+    vintage = vintages[0]
+    assert vintage.headline == "Meeting of 9-10 September 2026"
+    assert vintage.source_channel == "ecb_press"
+    assert vintage.observed_source_channels == ("ecb_press",)
+    assert vintage.source_content_type == "monetary_policy_account"
+    assert vintage.canonical_url == _mg_url_for("single-poll")
+    assert vintage.availability == _ts(10)
+    assert vintage.source_published_at == UtcTimestamp(datetime(2026, 10, 8, 11, 30, 0, tzinfo=UTC))
+    assert vintage.observation_mode is NewsObservationMode.PROSPECTIVE
+
+
+@pytest.mark.asyncio
+async def test_mg_repeated_identical_poll_is_unchanged(session: AsyncSession) -> None:
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    feed_body = _feed_xml(_mg_item_xml("idempotent", "Meeting of 9-10 September 2026"))
+    scripted = _ScriptedEcbSource()
+    scripted.script(feed_body, _ts(11))
+    scripted.script(feed_body, _ts(12))
+
+    first = await ingest((scripted.fetcher(),))
+    second = await ingest((scripted.fetcher(),))
+    await session.commit()
+
+    assert first.created == 1
+    assert second.created == 0
+    assert second.unchanged == 1
+
+    identity = NewsSourceIdentity(SOURCE_KEY, _mg_url_for("idempotent"))
+    item = await repository.get_item_by_source_identity(identity)
+    assert item is not None
+    assert len(await repository.list_vintages(item.news_item_key)) == 1
+
+
+@pytest.mark.asyncio
+async def test_mg_same_guid_changed_content_creates_a_second_vintage(
+    session: AsyncSession,
+) -> None:
+    # Section 21: no provider correction metadata is invented -- a
+    # genuine content change for the SAME mg GUID is an ordinary
+    # new vintage at a later retrieved_at, exactly like every other
+    # ECB content class.
+    repository = SqlAlchemyNewsRepository(session)
+    ingest = IngestNewsSourceOnce(SOURCE_KEY, RecordNewsObservation(repository))
+
+    scripted = _ScriptedEcbSource()
+    scripted.script(_feed_xml(_mg_item_xml("revised", "Meeting of 9-10 September 2026")), _ts(12))
+    scripted.script(
+        _feed_xml(_mg_item_xml("revised", "Meeting of 9-10 September 2026 (corrected)")), _ts(13)
+    )
+
+    first = await ingest((scripted.fetcher(),))
+    second = await ingest((scripted.fetcher(),))
+    await session.commit()
+
+    assert first.created == 1
+    assert second.revisions_added == 1
+
+    identity = NewsSourceIdentity(SOURCE_KEY, _mg_url_for("revised"))
+    item = await repository.get_item_by_source_identity(identity)
+    assert item is not None
+    vintages = sorted(
+        await repository.list_vintages(item.news_item_key), key=lambda v: v.revision_sequence
+    )
+    assert len(vintages) == 2
+    assert vintages[0].headline == "Meeting of 9-10 September 2026"
+    assert vintages[1].headline == "Meeting of 9-10 September 2026 (corrected)"
+    assert vintages[1].availability == _ts(13)
+    assert vintages[0].source_revision_metadata == ()
+    assert vintages[1].source_revision_metadata == ()

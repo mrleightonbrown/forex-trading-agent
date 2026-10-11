@@ -57,6 +57,41 @@ Section 21/23/24)**: every live-sampled ECB item carries only `title`/
 the feed's own declared, static channel-level value (`"en"`), not a
 per-item field. `body_text` is always `None` -- this adapter never
 fetches the linked ECB article page (Section 22/52).
+
+**FX-57BH.1 addendum (2026-10-11, live-reconfirmed): a FIFTH URL-slug
+code, `mg`, is now admitted -- "Monetary policy accounts"
+(`source_content_type="monetary_policy_account"`).** The full
+live_source suite surfaced a genuinely new content class that the
+adapter had correctly, fail-closed refused as invalid
+(`https://www.ecb.europa.eu//press/accounts/2026/html/ecb.mg261008~
+a10153d090.en.html`, "Meeting of 9-10 September 2026"). Live
+verification against the account page itself confirmed the ECB's own
+document title: "Account of the monetary policy meeting of the
+Governing Council of the European Central Bank held in Berlin on
+Wednesday and Thursday, 9-10 September 2026," published 8 October
+2026 -- roughly four weeks after the meeting, matching this document
+family's own known publication cadence. Like `gc`, this is an
+INSTITUTIONAL document attributed to the Governing Council
+collectively (individual members are named only within the narrative
+text describing meeting proceedings, e.g. "Ms Schnabel started her
+presentation..." -- not as the document's own author byline), so it
+does NOT fall inside the ECB's Working/Occasional-Paper written-
+authorisation carve-out re-verified on the same disclaimer page this
+story's own research pass re-read in full. **A narrow, `mg`-specific
+structural consistency guard** (`_MG_EXPECTED_PATH_SEGMENT`) was added
+alongside the mapping -- unlike `pr`/`sp`/`in`/`gc`, which stay
+classified purely by their own URL-embedded code with no extra path
+check, an `mg`-coded item is additionally required to carry the
+`/press/accounts/` path segment the one live-verified example (and
+every other admitted code's own analogous namespace) consistently
+uses; an `mg` code appearing OUTSIDE that namespace fails closed as a
+structural-drift invalid, rather than being accepted purely on the
+two-letter code. This guard is deliberately narrow and NOT applied
+to `pr`/`sp`/`in`/`gc` -- no symmetry refactor was made merely for
+consistency, per this story's own explicit scope limit. Any OTHER,
+still-unrecognized code continues to fail closed exactly as before --
+see `docs/DECISIONS.md`'s FX-57BH.1 entry and the ADR 0005 addendum
+for the full reasoning and live-research record.
 """
 
 import re
@@ -97,7 +132,20 @@ _CONTENT_CLASS_TO_TYPE: dict[str, str] = {
     # docstring and docs/DECISIONS.md's FX-57B entry for the full
     # reasoning behind admitting this undocumented-by-ADR-0005 code.
     "gc": "press_release",
+    # "Monetary policy accounts" -- institutional Governing Council
+    # meeting accounts, never author-named -- see this module's own
+    # docstring and docs/DECISIONS.md's FX-57BH.1 entry. Unlike the
+    # three classes above, this one carries an additional namespace
+    # guard (`_MG_EXPECTED_PATH_SEGMENT`) below.
+    "mg": "monetary_policy_account",
 }
+
+# FX-57BH.1: the one live-verified `mg` example (and every other
+# admitted code's own analogous namespace) consistently carries this
+# path segment -- an `mg` code appearing OUTSIDE it is structural
+# drift, not a Monetary policy account, and must not be silently
+# accepted purely on the two-letter code.
+_MG_EXPECTED_PATH_SEGMENT = "/press/accounts/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,12 +201,15 @@ class EcbRssSource:
         invalid_reasons: list[str] = list(parsed.invalid_reasons)
         invalid_count = parsed.invalid_count
         for item in parsed.items:
-            content_type = _content_type_for(item.link or item.guid)
+            content_type, rejection_reason = _content_type_for(item.link or item.guid)
             if content_type is None:
                 invalid_count += 1
                 invalid_reasons.append(
-                    f"guid={item.guid!r}: unrecognized ECB content class in URL -- "
-                    "refusing to guess (FX-57B Section 17)"
+                    rejection_reason
+                    or (
+                        f"guid={item.guid!r}: unrecognized ECB content class in URL -- "
+                        "refusing to guess (FX-57B Section 17)"
+                    )
                 )
                 continue
             observations.append(_to_observation(item, feed, content_type, fetched.retrieved_at))
@@ -172,13 +223,30 @@ class EcbRssSource:
         )
 
 
-def _content_type_for(url: str | None) -> str | None:
+def _content_type_for(url: str | None) -> tuple[str | None, str | None]:
+    """Returns `(content_type, rejection_reason)` -- `rejection_reason`
+    is `None` on success; otherwise it is EITHER a generic "unrecognized
+    class" message (built by the caller) when `rejection_reason` itself
+    is `None` but `content_type` is also `None`, OR a specific,
+    structural-drift message here when the `mg` namespace guard
+    (FX-57BH.1) itself is what rejected an otherwise-recognized code."""
     if url is None:
-        return None
+        return None, None
     match = _CONTENT_CLASS_PATTERN.search(url)
     if match is None:
-        return None
-    return _CONTENT_CLASS_TO_TYPE.get(match.group(1))
+        return None, None
+    code = match.group(1)
+    content_type = _CONTENT_CLASS_TO_TYPE.get(code)
+    if content_type is None:
+        return None, None
+    if code == "mg" and _MG_EXPECTED_PATH_SEGMENT not in url:
+        return None, (
+            f"url={url!r}: 'mg' content code found OUTSIDE its own reviewed "
+            f"{_MG_EXPECTED_PATH_SEGMENT!r} namespace -- this is structural drift, not a "
+            "verified Monetary policy account, and is refused rather than guessed "
+            "(FX-57BH.1)"
+        )
+    return content_type, None
 
 
 def _to_observation(

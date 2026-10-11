@@ -13811,3 +13811,266 @@ carries the full narrative.
 Per this story's own explicit stop instruction: do not start the ECB
 "accounts" hardening story, FX-58, FX-59, FX-60, FX-61, FX-EPIC-09, or
 any Decision/Risk Engine work. Return FX-57FH for review.
+
+## 2026-10-11 — FX-57BH.1: ECB monetary-policy accounts content-class drift hardening
+
+A narrow follow-up to FX-57B/FX-57BH, triggered by the full `live_
+source` suite (run during FX-57FH's own verification) surfacing a
+genuinely new ECB content class as a live-drift failure. Git HEAD at
+this pass's own start: `6e640ea` (the FX-57FH commit), clean working
+tree except `.claude/`.
+
+**1. The current live failure was re-verified first, per the spec's
+own explicit instruction not to assume it was still present.** The
+real `/rss/press.html` feed was fetched live: 15 items, the ORIGINAL
+offending item still present, unchanged --
+`https://www.ecb.europa.eu//press/accounts/2026/html/ecb.mg261008~
+a10153d090.en.html`, title "Meeting of 9-10 September 2026," pubDate
+"Thu, 08 Oct 2026 13:30:00 +0200," URL path `/press/accounts/2026/
+html/`. Every other sampled item parsed cleanly under the existing
+`pr`/`sp`/`in`/`gc` codes.
+
+**2. `/press/accounts/` was verified, via ECB primary sources, to be
+exactly the "Monetary policy accounts" document family.** The
+account page itself was fetched live: its own heading reads "Account
+of the monetary policy meeting of the Governing Council of the
+European Central Bank held in Berlin on Wednesday and Thursday, 9-10
+September 2026," with a visible publication date of 8 October 2026 --
+the meeting itself was held 9-10 September, so publication lands
+roughly FOUR WEEKS (28 days) after the meeting it records, confirming
+the expected cadence finding. No individual author byline exists on
+the page; Governing Council members are named only within the
+narrative describing meeting proceedings (e.g. "Ms Schnabel started
+her presentation with the observation that..."), never as the
+document's own authorship attribution -- the SAME institutional-
+attribution shape already accepted for `gc` decision notices in
+FX-57B. It is not a speech, not an interview, and not a Working/
+Occasional Paper.
+
+**3. `mg` was confirmed as the provider's own structural code for
+this document family, via the one directly-observed live example --
+a SECOND independent sample could not be obtained, and this
+limitation is stated transparently rather than glossed over.** The
+ECB's own "Monetary policy accounts" index page
+(`/press/accounts/html/index.en.html`) was fetched live and found to
+render its actual listing via client-side JavaScript -- a plain HTTP
+GET returns only a "Search Results" page shell containing zero static
+links to individual accounts (confirmed via direct regex search for
+both `ecb.mg` and `/press/accounts/` hrefs: zero matches on both). The
+ECB's own "Monetary policy decisions" index page was also checked as
+an alternative route to a second example and found to have the
+identical rendering limitation. This is the SAME class of dynamic-
+page-rendering limitation this epic has already hit with other
+providers' own index/search pages (directly comparable to the BoC
+WordPress REST API 401 in FX-57F). Given this, production code treats
+`"mg"` as an OPAQUE provider content-class code whose meaning has been
+empirically associated with the official document family via the ONE
+directly-verified live example -- no claim is made about what the
+letters "mg" themselves stand for, since the ECB itself does not say.
+Confidence that this one example generalizes rests on the identical
+`ecb.<code><date>~<hash>.en.<ext>` filename convention observed
+across ALL FIVE now-admitted codes (`pr`/`sp`/`in`/`gc`/`mg`) within
+the SAME live feed response -- a site-wide naming convention, not
+something `mg` does differently from the others.
+
+**4. Identity remains unchanged for `mg` -- no redesign.**
+`external_item_id` is still the RSS `<guid>`, exactly like every other
+ECB content class; it is never reconstructed from `"mg"`, the title,
+the meeting date, the publication date, the `/press/accounts/` path,
+or a content hash.
+
+**5. `_CONTENT_CLASS_TO_TYPE["mg"] = "monetary_policy_account"` -- a
+NEW, distinct `source_content_type`, deliberately never collapsed
+into `"press_release"`.** Unlike `gc` (an undifferentiated
+institutional announcement, reasonably folded into the generic
+`press_release` bucket in FX-57B), the ECB itself names "Monetary
+policy accounts" as its own separate, named document family, distinct
+from monetary policy decisions, monetary policy statements, speeches,
+and interviews. `source_content_type` is source PROVENANCE -- it
+preserves the publisher's own document-family terminology rather than
+collapsing it merely because the item arrives through the same
+`/rss/press.html` feed as everything else; this is explicitly NOT
+FX-59 semantic classification (no hawkish/dovish, no EUR relevance, no
+policy-stance interpretation was added anywhere). `source_channel`
+remains `"ecb_press"` for `mg`, exactly like every other code --
+continuing to demonstrate `source_channel != source_content_type`,
+the exact point FX-57B's own ECB adoption was chosen to prove.
+
+**6. Rights were rechecked directly against the ECB's own disclaimer
+page, not assumed to transfer automatically from the `gc` reasoning.**
+The full "Disclaimer & copyright" page (`https://www.ecb.europa.eu/
+home/disclaimer/html/index.en.html`) was re-fetched and re-read in
+full for this pass. The free-use-with-attribution grant and the
+Working/Occasional-Paper author-carve-out ("any reproduction,
+publication or reprint... of documents that bear the name of their
+authors, such as ECB Working Papers and ECB Occasional Papers... is
+permitted only with the explicit prior written authorisation") are
+both unchanged, word-for-word, from ADR 0005's own original
+description. The sampled `mg` account is confirmed an institutional
+Governing Council document, not an individually-authored paper (per
+finding 2 above), so it does not trigger this carve-out -- the same
+conclusion `gc` already reached, independently re-derived here for
+`mg` rather than assumed to transfer.
+
+**7. A narrow, `mg`-specific structural consistency guard was added
+to `ecb_rss_source._content_type_for` -- deliberately NOT generalized
+to `pr`/`sp`/`in`/`gc` (Section 19/20).** The function now returns a
+`(content_type, rejection_reason)` tuple; when the matched code is
+exactly `"mg"`, it additionally requires the literal path segment
+`"/press/accounts/"` (a new `_MG_EXPECTED_PATH_SEGMENT` constant) be
+present in the item's own URL before accepting it -- an `mg` code
+found OUTSIDE that namespace is rejected with its own specific
+diagnostic ("`'mg' content code found OUTSIDE its own reviewed...
+namespace -- this is structural drift, not a verified Monetary policy
+account`"), never silently accepted purely on the two-letter code.
+Every other admitted code (`pr`/`sp`/`in`/`gc`) keeps its own prior
+behavior EXACTLY -- classified purely by URL-embedded code, with no
+path check at all -- a dedicated regression test
+(`test_pr_sp_in_gc_have_no_namespace_guard_unlike_mg`) proves a
+`pr`-coded item living outside its own usual `/press/pr/` namespace is
+still accepted purely on its own code, pinning that no symmetry
+refactor was made across all four classes merely for consistency, per
+the spec's own explicit scope limit. The pre-existing "Working Paper
+guard" (an unknown `wp` code failing closed) is unaffected and
+re-pinned by a dedicated regression
+(`test_l_unknown_wp_remains_invalid_alongside_mg`) proving `wp` did
+not become accepted merely because `mg` now is -- particularly
+important since Working Papers are precisely one of the ECB's own
+rights-carve-out examples.
+
+**8. No production fetching change, no timestamp-semantics change, no
+author extraction, no language change -- all four explicitly
+reconfirmed unchanged for `mg`.** `source_published_at` is still
+mapped from RSS `pubDate` via the SAME shared RFC-822 parser
+(`email.utils.parsedate_to_datetime`) every other ECB content class
+uses, preserved raw via `NewsSourceTimestampProvenance` regardless of
+parse outcome, never promoted to `observed_at`; `observed_at` remains
+the response's own `retrieved_at`, never the meeting date, the
+account-page publication date, or `pubDate` itself. No account-page
+HTML fetching was added to `EcbRssSource`, `scripts/ingest_ecb_
+news.py`, or any scheduler -- `summary`/`body_text` remain exactly
+what the bare RSS item itself supplies (`None` for both, live-
+reconfirmed). `authors` stays `()` -- no Governing Council member
+names are extracted from the account page as authors. `language`
+stays the feed's own static, declared `"en"` -- no French/German
+variant ingestion, no multilingual crawling.
+
+**Explicitly unchanged, confirmed by full regression**: `source_key=
+"ECB"`; the one configured feed (`/rss/press.html`); the single
+`source_channel="ecb_press"`; the existing `pr`/`sp`/`in`/`gc`
+mappings and their own lack of a namespace guard; the common `rss_
+item_parsing.py`/`http_fetch.py`/`IngestNewsSourceOnce`/`RecordNews
+Observation` layer (none of which needed any change -- no genuine
+current-contract gap was found there); every other source family's
+own feeds/identity/mapping (Fed/BoE/GOV.UK/StatCan/BoC); the existing
+351 genuine rows across six sources pre-dating this pass.
+
+**Verification, reported separately:**
+
+- ECB adapter unit (`test_ecb_rss_source.py`): `31 passed` (16 -> 31,
+  +15: test matrix A-M from the spec's own Section 18, plus the
+  mg-outside-namespace-is-invalid regression and the pr/sp/in/gc-
+  have-no-namespace-guard contrast from Section 19).
+- ECB Postgres integration (`test_ecb_news_ingestion.py`): `8 passed`
+  (5 -> 8, +3: single-poll persistence with `source_content_type=
+  monetary_policy_account`, an idempotent repeated-poll regression,
+  and a same-GUID-changed-content revision regression -- all for
+  `mg`, using a dedicated `_ACCOUNTS_TEST_URL_PREFIX` that satisfies
+  the new namespace guard, with the cleanup fixture widened via `or_`
+  to delete test rows under either URL prefix).
+- ECB's own `live_source` test (`test_ecb_rss_source_live.py`): `1
+  passed` (unchanged count, strengthened internals) -- live-
+  reconfirmed, this run: `items_invalid == 0` (the ORIGINAL failure is
+  GONE, because `mg` is now explicitly, narrowly recognized -- NOT
+  because `items_invalid == 0` was weakened, NOT because unknown items
+  were globally allowed, NOT because invalid reasons were ignored, and
+  NOT because all ECB content was defaulted to `press_release`),
+  `"monetary_policy_account"` present in `content_types_seen`, and the
+  new conditional `/press/accounts/` structural assertion fired
+  correctly against the real live `mg` item.
+- Focused ECB suite (adapter unit + Postgres integration): `39
+  passed`.
+- Full regression of every other source family plus the common
+  application layer (`tests/unit/infrastructure/news_sources/`,
+  `test_ingest_news_source_once.py`, `test_record_news_observation.py`,
+  and every other source's own Postgres integration suite): `382
+  passed`, zero new failures -- the narrow ECB change did not affect
+  any other adapter.
+- Deterministic default suite (`pytest`): `2116 passed, 7 failed, 10
+  deselected` -- the SAME 7 pre-existing, documented OANDA live-
+  candle-backfill failures as immediately before this pass (FX-EPIC-06,
+  unrelated to news intelligence), confirmed unchanged.
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the ECB failure is GONE; the one remaining failure is the
+  SAME pre-existing BLS 403 (FX-EPIC-07, unrelated), confirmed
+  unchanged. Reported honestly as `9 passed, 1 failed`, never claimed
+  as a fully green live suite, per the spec's own explicit Section 33
+  instruction.
+- `ruff check .`, `ruff format --check .`, `mypy .` (453 source
+  files), and `pre-commit run --all-files` all pass clean.
+- Manual runner (`scripts/ingest_ecb_news.py`) run live TWICE against
+  the real feed and dev Postgres: first run `created=7, revisions_
+  added=0, unchanged=8, items_invalid=0` -- the shallow, 15-item feed
+  had rotated in six genuinely new items since this adapter's own
+  last poll earlier in this project, plus the `mg` item itself; a
+  direct SQL query confirmed it persisted with `source_content_type=
+  monetary_policy_account`. Second run, immediately after, fully
+  idempotent: `created=0, revisions_added=0, unchanged=15`. No
+  expected total was forced, per the spec's own explicit Section 24
+  instruction -- the actual observed counts are reported as-is for a
+  shallow, actively-rotating feed.
+
+**Database**: ECB now holds 22 genuine rows (was 15 pre-story); every
+other source's own row count confirmed exactly untouched (45 FED +
+150 BOE + 20 GOVUK_HMT + 111 STATCAN + 10 BOC) -- 358 genuine rows
+total across six sources.
+
+**No schema or migration change.**
+
+**ADR 0005 addendum added** -- this IS a genuine new source fact
+(Section 26's own explicit judgment, not merely an implementation
+milestone): the fifth URL-slug code, its document-family identity
+("Monetary policy accounts"), its ~4-week publication cadence, the
+re-verified rights finding (institutional, not author-named), the
+`mg -> monetary_policy_account` mapping, the honestly-stated
+JavaScript-rendered-index-page limitation on obtaining a second
+independent example, and the reconfirmation that any OTHER,
+still-unrecognized ECB code continues to fail closed exactly as
+before. The ADR's own summary matrix row for `/rss/press.html` was
+also updated to name "monetary policy accounts" among the feed's
+content types.
+
+**No ADR 0006 update** -- `ecb_press` remains a genuine single-
+channel source; nothing about the multi-channel provenance model was
+touched, reopened, or needed.
+
+**Explicitly confirmed NOT done in FX-57BH.1**: no event extraction
+of any kind (policy-rate level, rate vote, inflation/growth forecast,
+balance-sheet policy, member positions, forward guidance, surprise --
+none parsed from the account's own highly valuable macro content, per
+the spec's own explicit Section 28 prohibition); no semantic
+classification (EUR relevance, hawkish/dovish, bullish/bearish,
+inflation topic, policy stance, high impact -- none added, per
+Section 29); no cross-source deduplication against monetary-policy
+decision releases, speeches, external media coverage, or
+EconomicEvent records (FX-58's own future job, per Section 30); no
+account-page body-text fetching added anywhere; no generalization of
+the `mg` namespace guard to `pr`/`sp`/`in`/`gc`; no change to
+`source_key`/the single configured feed/`source_channel`/the common
+ingestion/model layer; no deletion or reseed of any pre-existing row;
+FX-58/FX-59/FX-60/FX-61/FX-EPIC-09 not started; no Decision/Risk
+Engine work. FX-49 remains DEFER; FX-52 remains DEFER; FX-53 remains
+BLOCKED.
+
+Full details in `docs/ARCHITECTURE.md`'s new addendum inside the
+existing "ECB combined press/speech/interview RSS ingestion (FX-57B)"
+section; `docs/CURRENT_STATE.md` carries its own FX-57BH.1 entry;
+`docs/NEXT_STEPS.md` carries the full narrative; `docs/adr/0005-
+news-intelligence-source-feasibility.md` carries the FX-57BH.1
+addendum in full.
+
+**This closes the operational FX-57 source-ingestion sequence and
+clears FX-58.** Per this story's own explicit stop instruction: do
+not start FX-58, FX-59, FX-60, FX-61, FX-EPIC-09, or any Decision/
+Risk Engine work without separate authorization. Return FX-57BH.1 for
+review.
