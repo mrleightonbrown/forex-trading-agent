@@ -2891,6 +2891,76 @@ _Last updated: 2026-09-27 (FX-54V)_
   network I/O anywhere; no FX-56/57/58/58H/59/59H file touched; no
   new schema/migration/persistence repository. **Stop after FX-60 —
   do not start FX-61/FX-EPIC-09, or any Decision/Risk Engine work.**
+- **FX-60H: pair news snapshot contract hardening (complete, ADR
+  0009 addendum)**. Closed three architectural-review findings in
+  `GetPairNewsEvidenceSnapshot` without changing `fx60_v1`'s own PIT,
+  canonical grouping, window, relevance, or semantic-eligibility
+  rules. **H1**: new `NewsPairSnapshotAccounting` (additive `accounting`
+  field on `NewsPairEvidenceSnapshot`) gives every one of `groups_
+  total` canonical groups EXACTLY ONE of 7 mutually-exclusive
+  dispositions, structurally reconciled in `__post_init__` — closing a
+  real gap where a group with an unresolved semantic gap and no
+  confirmed-relevant member was previously counted in NONE of the
+  original four counters (`groups_incomplete_semantics` now names
+  that bucket explicitly; a group with unresolved relevance is never
+  counted as confirmed irrelevant). **H2**: new `relation_provenance:
+  tuple[NewsCanonicalRelationVintage, ...]` field on `NewsPairEvidence
+  Group` — the REAL FX-58 `SAME_STORY` relation rows connecting a
+  group's own members, reused directly from the SAME `list_latest_
+  relation_states_as_of(as_of)` call already made for grouping (no
+  new query, no new DTO, no new persistence); empty for a singleton,
+  exactly the real edges (never a synthesized one) for a transitive
+  group; proven PIT-filtered against real Postgres (a relation added
+  after a requested `as_of` cannot appear in an earlier snapshot's own
+  provenance). **H3**: replaced the original N+1 per-item/per-group
+  repository access pattern with exactly TWO new batch repository
+  methods (`latest_evidence_eligible_vintages_as_of`/`latest_
+  annotations_as_of`, added to `SqlAlchemyNewsRepository`/`SqlAlchemy
+  NewsSemanticRepository`), declared via two narrow LOCAL `Protocol`s
+  in the use case's own module rather than widening the global `News
+  Repository`/`NewsSemanticRepository` ports every other caller and
+  fake still uses unchanged; semantic-state classification is now
+  resolved locally against the SAME already-batch-fetched vintage (new
+  pure `_resolve_semantic_state`), eliminating a redundant second
+  fetch the original code had. `GetNewsSemanticStateAsOf`/`GetNewsSe
+  manticStatesAsOf` (FX-59's own files) are completely untouched —
+  zero bytes of either file changed. **Measured directly against the
+  real 358-item corpus** (SQLAlchemy `before_cursor_execute` event
+  counting, no mocking): **1076 SQL round trips before, 4 after** —
+  confirmed again at a smaller real 110-item population cut (**222
+  before, 4 after**), demonstrating linear growth in the original path
+  and constant cost in the hardened one; a parametrized synthetic test
+  (1/10/50/200 items) independently confirms exactly 4 repository
+  calls at every population size. 29 net new tests across 3 files (2
+  modified, 1 new; verified via actual pytest collection) — unit
+  (`test_get_pair_news_evidence_snapshot.py` 18→37, +19: accounting
+  reconciliation across singleton/duplicate/mixed/out-of-window/no-
+  eligible-evidence/confirmed-irrelevant/incomplete-semantics group
+  shapes plus two direct construction-rejection tests; relation-
+  provenance for singleton/pair/transitive groups; the O(1) round-trip
+  parametrized test), integration (`test_pair_news_evidence_snapshot.
+  py` 13→16, +3: real-Postgres relation-provenance PIT proof,
+  transitive-edges-only proof, and a real-Postgres accounting
+  reconciliation across every group disposition at once; new file
+  `test_news_repository_batch_lookups.py` with 6 tests proving the two
+  new batch methods byte-identical to looping their existing single-
+  item counterparts across `CURRENT`/`STALE`/`UNCLASSIFIED`/revision/
+  historical-`as_of` cases) — all passing. Every pre-existing FX-60
+  PIT worked example re-verified unchanged against both fakes and real
+  Postgres. Full deterministic suite (2530 tests), `ruff`/`ruff
+  format`/`mypy`/`pre-commit` all clean (one known, unrelated OANDA
+  practice-API 401 auth failure outside News Intelligence scope,
+  documented separately). Real EUR/USD (289 irrelevant + 23 base-only
+  + 46 quote-only + 0 both = 358), GBP/USD (143 + 169 + 45 + 1 = 358),
+  and USD/CAD (191 + 46 + 121 + 0 = 358) accounting totals each
+  reconcile exactly; the 358/358/0 real corpus confirmed unchanged.
+  `scripts/show_pair_news_snapshot.py` updated to print the new
+  `accounting`/`relation_provenance` fields. **No EconomicEvent
+  linkage, Market Context change, FX-61 visualization, source
+  reputation, sentiment, directional logic, importance scoring,
+  Decision/Risk Engine integration, or FX-58/58H/59/59H historical
+  semantic change — none introduced.** **Stop after FX-60H — do not
+  start FX-61.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

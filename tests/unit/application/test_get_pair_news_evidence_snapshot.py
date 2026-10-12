@@ -20,6 +20,7 @@ from forex_agent.application.use_cases.get_pair_news_evidence_snapshot import (
     NewsPairEvidenceMember,
     NewsPairEvidenceSnapshot,
     NewsPairSemanticCoverage,
+    NewsPairSnapshotAccounting,
     NewsPairSnapshotConstructionError,
 )
 from forex_agent.domain.instrument import Instrument
@@ -90,6 +91,11 @@ class FakeWorld:
             observed_source_channels=("test_channel",),
             source_status=source_status,
             evidence_disposition=evidence_disposition,
+            quarantine_reason=(
+                "test fixture"
+                if evidence_disposition is NewsEvidenceDisposition.QUARANTINED
+                else None
+            ),
         )
         self.vintages.setdefault(news_item_key, []).append(vintage)
 
@@ -211,6 +217,29 @@ class FakeNewsRepository:
             return None
         return max(candidates, key=lambda v: (v.availability.value, v.revision_sequence))
 
+    async def latest_evidence_eligible_vintages_as_of(
+        self,
+        news_item_keys: tuple[str, ...],
+        as_of: UtcTimestamp,
+        *,
+        include_backfill: bool = False,
+    ) -> dict[str, NewsItemVintage]:
+        # Deliberately a NAIVE, obviously-correct implementation
+        # calling the single-item method once per key -- this fake's
+        # own job is only to prove `GetPairNewsEvidenceSnapshot`'s own
+        # orchestration logic; batch-vs-single-item EQUIVALENCE for
+        # the REAL SQL implementation is proven separately, against
+        # real Postgres, in `tests/integration/test_news_repository_
+        # batch_lookups.py`.
+        result: dict[str, NewsItemVintage] = {}
+        for key in news_item_keys:
+            vintage = await self.latest_evidence_eligible_vintage_as_of(
+                key, as_of, include_backfill=include_backfill
+            )
+            if vintage is not None:
+                result[key] = vintage
+        return result
+
 
 class FakeNewsCanonicalizationRepository:
     def __init__(self, world: FakeWorld) -> None:
@@ -273,6 +302,18 @@ class FakeNewsSemanticRepository:
             return None
         return max(candidates, key=lambda a: (a.availability.value, a.revision_sequence))
 
+    async def latest_annotations_as_of(
+        self, news_item_keys: tuple[str, ...], as_of: UtcTimestamp
+    ) -> dict[str, NewsSemanticAnnotationVintage]:
+        # Deliberately naive -- see `FakeNewsRepository.latest_
+        # evidence_eligible_vintages_as_of`'s own comment.
+        result: dict[str, NewsSemanticAnnotationVintage] = {}
+        for key in news_item_keys:
+            annotation = await self.latest_annotation_as_of(key, as_of)
+            if annotation is not None:
+                result[key] = annotation
+        return result
+
     async def list_annotation_vintages_for_item(self, news_item_key: str) -> object:
         raise NotImplementedError
 
@@ -285,9 +326,9 @@ class FakeNewsSemanticRepository:
 
 def _make_snapshot_getter(world: FakeWorld) -> GetPairNewsEvidenceSnapshot:
     return GetPairNewsEvidenceSnapshot(
-        FakeNewsRepository(world),  # type: ignore[arg-type]
+        FakeNewsRepository(world),
         FakeNewsCanonicalizationRepository(world),  # type: ignore[arg-type]
-        FakeNewsSemanticRepository(world),  # type: ignore[arg-type]
+        FakeNewsSemanticRepository(world),
     )
 
 
@@ -560,6 +601,571 @@ async def test_group_with_no_gaps_and_no_relevance_counts_as_pair_irrelevant() -
     assert snapshot.semantic_gaps == ()
 
 
+# --- FX-60H H1: complete snapshot accounting --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_accounting_singleton_pair_relevant_group() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_annotation("A", availability=_ts(9, 5), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_pit_visible == 1
+    assert acc.items_snapshot_eligible == 1
+    assert acc.items_window_eligible == 1
+    assert acc.items_current == 1
+    assert acc.items_stale == 0
+    assert acc.items_unclassified == 0
+    assert acc.items_pair_relevant == 1
+    assert acc.groups_total == 1
+    assert acc.groups_outside_window == 0
+    assert acc.groups_without_eligible_evidence == 0
+    assert acc.groups_pair_irrelevant == 0
+    assert acc.groups_incomplete_semantics == 0
+    # Default `classification()` carries USD-only relevance -- for
+    # EUR/USD that is QUOTE_ONLY, not BOTH.
+    assert acc.groups_quote_only == 1
+    assert acc.groups_base_only == 0
+    assert acc.groups_both == 0
+
+
+@pytest.mark.asyncio
+async def test_accounting_duplicate_group_counts_two_items_one_group() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 30))
+    world.add_relation("A", "B", availability=_ts(10))
+    world.add_annotation(
+        "A",
+        availability=_ts(9, 5),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="EUR", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+    world.add_annotation(
+        "B",
+        availability=_ts(9, 35),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="USD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_pit_visible == 2
+    assert acc.items_window_eligible == 2
+    assert acc.items_current == 2
+    assert acc.items_pair_relevant == 2
+    assert acc.groups_total == 1
+    assert acc.groups_both == 1
+
+
+@pytest.mark.asyncio
+async def test_accounting_mixed_active_withdrawn_group_counts_one_group() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9), source_status=NewsSourceStatus.ACTIVE)
+    world.add_item("B", first_seen_at=_ts(9, 10), source_status=NewsSourceStatus.WITHDRAWN)
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_annotation("A", availability=_ts(9, 5), classification=classification())
+    world.add_annotation("B", availability=_ts(9, 15), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_window_eligible == 2
+    assert acc.items_current == 2
+    assert acc.items_pair_relevant == 2
+    assert acc.groups_total == 1
+    # Both members use default `classification()` (USD-only relevance)
+    # -- for EUR/USD that is QUOTE_ONLY, not BOTH.
+    assert acc.groups_quote_only == 1
+    assert acc.groups_both == 0
+    assert acc.groups_outside_window == 0
+
+
+@pytest.mark.asyncio
+async def test_accounting_out_of_window_group_not_counted_in_item_or_relevance_buckets() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(1))
+    world.add_annotation("A", availability=_ts(1, 5), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    # window_start is AFTER A's own first_seen_at -- A's group falls outside the window.
+    snapshot = await get_snapshot(EURUSD, _ts(5), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_pit_visible == 1
+    assert acc.items_snapshot_eligible == 1
+    assert acc.items_window_eligible == 0
+    assert acc.items_current == 0
+    assert acc.items_stale == 0
+    assert acc.items_unclassified == 0
+    assert acc.items_pair_relevant == 0
+    assert acc.groups_total == 1
+    assert acc.groups_outside_window == 1
+    assert acc.groups_without_eligible_evidence == 0
+    assert acc.groups_pair_irrelevant == 0
+    assert acc.groups_incomplete_semantics == 0
+    assert snapshot.active_entries == ()
+    assert snapshot.withdrawn_only_entries == ()
+
+
+@pytest.mark.asyncio
+async def test_accounting_group_without_eligible_evidence_not_counted_elsewhere() -> None:
+    world = FakeWorld()
+    # Quarantined -- never evidence-eligible, so this group has zero
+    # eligible members at all.
+    world.add_item(
+        "A", first_seen_at=_ts(9), evidence_disposition=NewsEvidenceDisposition.QUARANTINED
+    )
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_pit_visible == 1
+    assert acc.items_snapshot_eligible == 0
+    assert acc.items_window_eligible == 0
+    assert acc.groups_total == 1
+    assert acc.groups_without_eligible_evidence == 1
+    assert acc.groups_outside_window == 0
+    assert acc.groups_pair_irrelevant == 0
+    assert acc.groups_incomplete_semantics == 0
+
+
+@pytest.mark.asyncio
+async def test_accounting_semantically_incomplete_group_not_counted_as_pair_irrelevant() -> None:
+    """The real FX-60 accounting gap this hardening pass closes: a
+    group with a semantic gap and NO confirmed-relevant member must
+    land in `groups_incomplete_semantics`, never `groups_pair_
+    irrelevant` -- relevance here is genuinely UNRESOLVED, not
+    confirmed absent."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    # A: CURRENT, CAD-only (irrelevant to EUR/USD).
+    world.add_annotation(
+        "A",
+        availability=_ts(9, 5),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="CAD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+    # B: no annotation at all -> UNCLASSIFIED (unresolved).
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_window_eligible == 2
+    assert acc.items_current == 1
+    assert acc.items_unclassified == 1
+    assert acc.items_pair_relevant == 0
+    assert acc.groups_total == 1
+    assert acc.groups_incomplete_semantics == 1
+    assert acc.groups_pair_irrelevant == 0
+    assert acc.groups_base_only == acc.groups_quote_only == acc.groups_both == 0
+
+
+@pytest.mark.asyncio
+async def test_accounting_fully_resolved_irrelevant_group_counts_separately_from_incomplete() -> (
+    None
+):
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_annotation(
+        "A",
+        availability=_ts(9, 5),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="CAD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_current == 1
+    assert acc.items_pair_relevant == 0
+    assert acc.groups_pair_irrelevant == 1
+    assert acc.groups_incomplete_semantics == 0
+
+
+@pytest.mark.asyncio
+async def test_accounting_reconciles_across_many_mixed_groups() -> None:
+    """A single snapshot combining every group disposition at once --
+    singleton, duplicate, mixed active/withdrawn, out-of-window,
+    without-eligible-evidence, pair-irrelevant, and incomplete-
+    semantics -- still reconciles exactly; `NewsPairSnapshotAccounting.
+    __post_init__` would already fail closed on any arithmetic drift,
+    so a successful construction plus these explicit per-bucket
+    assertions together prove the invariant end-to-end."""
+    world = FakeWorld()
+
+    # Group 1: singleton, pair-relevant (BOTH side via two annotations
+    # is not needed -- use base+quote on one member for BOTH).
+    world.add_item("G1", first_seen_at=_ts(9))
+    world.add_annotation(
+        "G1",
+        availability=_ts(9, 1),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="EUR", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+                NewsCurrencyRelevance(
+                    currency_code="USD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+
+    # Group 2: duplicate (two members), quote-only.
+    world.add_item("G2A", first_seen_at=_ts(9, 10))
+    world.add_item("G2B", first_seen_at=_ts(9, 15))
+    world.add_relation("G2A", "G2B", availability=_ts(9, 20))
+    for key, ts in (("G2A", _ts(9, 11)), ("G2B", _ts(9, 16))):
+        world.add_annotation(
+            key,
+            availability=ts,
+            classification=classification(
+                currency_relevance=(
+                    NewsCurrencyRelevance(
+                        currency_code="USD",
+                        reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),
+                    ),
+                )
+            ),
+        )
+
+    # Group 3: out-of-window (first_seen_at before window_start).
+    world.add_item("G3", first_seen_at=_ts(1))
+    world.add_annotation("G3", availability=_ts(1, 1), classification=classification())
+
+    # Group 4: no eligible evidence (quarantined).
+    world.add_item(
+        "G4", first_seen_at=_ts(9, 25), evidence_disposition=NewsEvidenceDisposition.QUARANTINED
+    )
+
+    # Group 5: fully resolved, confirmed pair-irrelevant.
+    world.add_item("G5", first_seen_at=_ts(9, 30))
+    world.add_annotation(
+        "G5",
+        availability=_ts(9, 31),
+        classification=classification(
+            currency_relevance=(
+                NewsCurrencyRelevance(
+                    currency_code="CAD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+                ),
+            )
+        ),
+    )
+
+    # Group 6: semantically incomplete (gap, no confirmed relevance).
+    world.add_item("G6", first_seen_at=_ts(9, 40))
+    # No annotation at all -> UNCLASSIFIED.
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(5), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.groups_total == 6
+    assert acc.groups_outside_window == 1  # G3
+    assert acc.groups_without_eligible_evidence == 1  # G4
+    assert acc.groups_pair_irrelevant == 1  # G5
+    assert acc.groups_incomplete_semantics == 1  # G6
+    assert acc.groups_both == 1  # G1
+    assert acc.groups_quote_only == 1  # G2
+    assert acc.groups_base_only == 0
+    assert isinstance(snapshot.accounting, NewsPairSnapshotAccounting)
+
+
+def test_accounting_rejects_group_disposition_sum_mismatch() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive group dispositions"):
+        NewsPairSnapshotAccounting(
+            items_pit_visible=1,
+            items_snapshot_eligible=1,
+            items_window_eligible=1,
+            items_current=1,
+            items_stale=0,
+            items_unclassified=0,
+            items_pair_relevant=0,
+            groups_total=2,
+            groups_outside_window=0,
+            groups_without_eligible_evidence=0,
+            groups_pair_irrelevant=0,
+            groups_incomplete_semantics=0,
+            groups_base_only=0,
+            groups_quote_only=0,
+            groups_both=0,
+        )
+
+
+def test_accounting_rejects_item_semantic_breakdown_mismatch() -> None:
+    with pytest.raises(ValueError, match="must equal items_window_eligible"):
+        NewsPairSnapshotAccounting(
+            items_pit_visible=1,
+            items_snapshot_eligible=1,
+            items_window_eligible=1,
+            items_current=0,
+            items_stale=0,
+            items_unclassified=0,
+            items_pair_relevant=0,
+            groups_total=0,
+            groups_outside_window=0,
+            groups_without_eligible_evidence=0,
+            groups_pair_irrelevant=0,
+            groups_incomplete_semantics=0,
+            groups_base_only=0,
+            groups_quote_only=0,
+            groups_both=0,
+        )
+
+
+# --- FX-60H H2: canonical relation provenance --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_relation_provenance_empty_for_singleton_group() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_annotation("A", availability=_ts(9, 5), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert snapshot.active_entries[0].relation_provenance == ()
+
+
+@pytest.mark.asyncio
+async def test_relation_provenance_lists_the_direct_edge_for_a_pair() -> None:
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_annotation("A", availability=_ts(9, 5), classification=classification())
+    world.add_annotation("B", availability=_ts(9, 15), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    provenance = snapshot.active_entries[0].relation_provenance
+    assert len(provenance) == 1
+    assert (provenance[0].left_news_item_key, provenance[0].right_news_item_key) == ("A", "B")
+
+
+@pytest.mark.asyncio
+async def test_relation_provenance_lists_real_transitive_edges_not_a_phantom_edge() -> None:
+    """A-SAME-B, B-SAME-C, NO direct A-C edge -- all three canonicalize
+    into one group, but provenance must list exactly the two REAL
+    edges, never a synthesized A-C edge."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 10))
+    world.add_item("C", first_seen_at=_ts(9, 20))
+    world.add_relation("A", "B", availability=_ts(9, 30))
+    world.add_relation("B", "C", availability=_ts(9, 40))
+    for key, ts in (("A", _ts(9, 5)), ("B", _ts(9, 15)), ("C", _ts(9, 25))):
+        world.add_annotation(key, availability=ts, classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert set(snapshot.active_entries[0].member_news_item_keys) == {"A", "B", "C"}
+    provenance_pairs = {
+        (r.left_news_item_key, r.right_news_item_key)
+        for r in snapshot.active_entries[0].relation_provenance
+    }
+    assert provenance_pairs == {("A", "B"), ("B", "C")}
+    assert ("A", "C") not in provenance_pairs
+
+
+@pytest.mark.asyncio
+async def test_relation_provenance_pit_filtered_relation_after_as_of_excluded() -> None:
+    """A relation whose own `availability` is AFTER the requested
+    `as_of` must not appear in an earlier snapshot's own provenance --
+    the group still canonicalizes as two singletons at the earlier
+    instant, since `list_latest_relation_states_as_of` itself is
+    PIT-filtered (Section 8), and provenance reuses that same call."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 50))
+    world.add_annotation("A", availability=_ts(9, 5), classification=classification())
+    world.add_annotation("B", availability=_ts(9, 15), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+
+    earlier_snapshot = await get_snapshot(EURUSD, _ts(0), _ts(9, 20))
+    assert len(earlier_snapshot.active_entries) == 2
+    for entry in earlier_snapshot.active_entries:
+        assert entry.relation_provenance == ()
+
+    later_snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+    assert len(later_snapshot.active_entries) == 1
+    assert len(later_snapshot.active_entries[0].relation_provenance) == 1
+
+
+def test_group_rejects_relation_provenance_edge_outside_membership() -> None:
+    relation = NewsCanonicalRelationVintage(
+        left_news_item_key="A",
+        right_news_item_key="Z",
+        revision_sequence=0,
+        availability=_ts(9),
+        relation_kind=NewsCanonicalRelationKind.SAME_STORY,
+        method=NewsCanonicalizationMethod.EXACT_CANONICAL_URL,
+        left_item_revision_sequence=0,
+        right_item_revision_sequence=0,
+        algorithm_version="fx58_v2",
+    )
+    member = NewsPairEvidenceMember(
+        news_item_key="A",
+        first_seen_at=_ts(9),
+        basis_news_item_revision_sequence=0,
+        news_vintage_availability=_ts(9),
+        semantic_annotation_revision_sequence=0,
+        semantic_annotation_availability=_ts(9),
+        semantic_algorithm_version="fx59_v1",
+        headline="H",
+        summary=None,
+        canonical_url=None,
+        source_content_type=None,
+        source_channel="test_channel",
+        source_published_at=None,
+        source_status=NewsSourceStatus.ACTIVE,
+        classification=classification(),
+        publisher_institution_entity_key="FEDERAL_RESERVE",
+        publisher_jurisdiction_entity_key="UNITED_STATES",
+    )
+    with pytest.raises(ValueError, match="relation_provenance edges must connect"):
+        NewsPairEvidenceGroup(
+            canonical_group_key="A",
+            story_first_seen_at=_ts(9),
+            display_member_news_item_key="A",
+            member_news_item_keys=("A",),
+            pair_relevance_side=NewsPairRelevanceSide.BOTH,
+            base_relevance_reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),
+            quote_relevance_reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),
+            topics=(),
+            entities=(),
+            active_relevant_member_keys=("A",),
+            withdrawn_relevant_member_keys=(),
+            semantic_gap_member_keys=(),
+            members=(member,),
+            relation_provenance=(relation,),
+        )
+
+
+# --- FX-60H H3: query efficiency ---------------------------------------------
+
+
+class _CountingNewsRepository:
+    """Counts calls the production use case actually makes against
+    its `_VintageLookup` dependency, delegating to a real
+    `FakeNewsRepository` for behavior -- proves round trips stay O(1)
+    regardless of how many items/groups exist."""
+
+    def __init__(self, delegate: FakeNewsRepository) -> None:
+        self._delegate = delegate
+        self.batch_calls = 0
+
+    async def latest_evidence_eligible_vintages_as_of(
+        self,
+        news_item_keys: tuple[str, ...],
+        as_of: UtcTimestamp,
+        *,
+        include_backfill: bool = False,
+    ) -> dict[str, NewsItemVintage]:
+        self.batch_calls += 1
+        return await self._delegate.latest_evidence_eligible_vintages_as_of(
+            news_item_keys, as_of, include_backfill=include_backfill
+        )
+
+
+class _CountingSemanticRepository:
+    def __init__(self, delegate: FakeNewsSemanticRepository) -> None:
+        self._delegate = delegate
+        self.batch_calls = 0
+
+    async def latest_annotations_as_of(
+        self, news_item_keys: tuple[str, ...], as_of: UtcTimestamp
+    ) -> dict[str, NewsSemanticAnnotationVintage]:
+        self.batch_calls += 1
+        return await self._delegate.latest_annotations_as_of(news_item_keys, as_of)
+
+
+class _CountingCanonicalizationRepository:
+    def __init__(self, delegate: FakeNewsCanonicalizationRepository) -> None:
+        self._delegate = delegate
+        self.list_items_calls = 0
+        self.list_relations_calls = 0
+
+    async def list_items_seen_as_of(self, as_of: UtcTimestamp) -> tuple[NewsItem, ...]:
+        self.list_items_calls += 1
+        return await self._delegate.list_items_seen_as_of(as_of)
+
+    async def list_latest_relation_states_as_of(
+        self, as_of: UtcTimestamp
+    ) -> tuple[NewsCanonicalRelationVintage, ...]:
+        self.list_relations_calls += 1
+        return await self._delegate.list_latest_relation_states_as_of(as_of)
+
+
+def _populate_many_singleton_items(world: FakeWorld, count: int) -> None:
+    for i in range(count):
+        key = f"ITEM-{i:04d}"
+        world.add_item(key, first_seen_at=_ts(9))
+        world.add_annotation(key, availability=_ts(9, 1), classification=classification())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("item_count", [1, 10, 50, 200])
+async def test_round_trips_do_not_grow_with_item_population(item_count: int) -> None:
+    world = FakeWorld()
+    _populate_many_singleton_items(world, item_count)
+
+    news_repo = _CountingNewsRepository(FakeNewsRepository(world))
+    canon_repo = _CountingCanonicalizationRepository(FakeNewsCanonicalizationRepository(world))
+    semantic_repo = _CountingSemanticRepository(FakeNewsSemanticRepository(world))
+    get_snapshot = GetPairNewsEvidenceSnapshot(
+        news_repo,
+        canon_repo,  # type: ignore[arg-type]
+        semantic_repo,
+    )
+
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert snapshot.accounting.items_pit_visible == item_count
+    assert canon_repo.list_items_calls == 1
+    assert canon_repo.list_relations_calls == 1
+    assert news_repo.batch_calls == 1
+    assert semantic_repo.batch_calls == 1
+
+
 # --- No-direction-field regression (Section 75) -----------------------------
 
 
@@ -606,7 +1212,13 @@ def test_use_case_module_defines_no_orm_model_and_makes_no_network_calls() -> No
 
     assert module.__file__ is not None
     source = pathlib.Path(module.__file__).read_text()
-    assert "sqlalchemy" not in source.lower()
+    # A precise check for an actual SQLAlchemy IMPORT/ORM-base-class
+    # usage -- not a bare "sqlalchemy" substring match, which would
+    # also (falsely) trip on this module's own docstrings naming the
+    # concrete `SqlAlchemyNewsRepository`/`SqlAlchemyNewsSemantic
+    # Repository` classes that satisfy its narrow local Protocols.
+    assert "import sqlalchemy" not in source.lower()
+    assert "from sqlalchemy" not in source.lower()
     assert "Base)" not in source
     for forbidden_token in ("httpx", "requests.", "aiohttp", "urllib.request"):
         assert forbidden_token not in source

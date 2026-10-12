@@ -339,6 +339,55 @@ class SqlAlchemyNewsRepository:
         await self._session.commit()
         return None if row is None else _vintage_to_domain(row)
 
+    async def latest_evidence_eligible_vintages_as_of(
+        self,
+        news_item_keys: tuple[str, ...],
+        as_of: UtcTimestamp,
+        *,
+        include_backfill: bool = False,
+    ) -> dict[str, NewsItemVintage]:
+        """FX-60H Section H3: a BATCH equivalent of `latest_evidence_
+        eligible_vintage_as_of` for multiple items in ONE round trip
+        -- never a second, independently-maintained selection rule.
+        Fetches every row that could possibly qualify for ANY of
+        `news_item_keys` with the EXACT SAME `WHERE` conditions the
+        single-item method itself uses (news_item_key membership
+        instead of equality; otherwise byte-identical), then performs
+        the IDENTICAL "latest by (availability, revision_sequence)"
+        reduction per key in Python rather than via a second SQL
+        round trip per key. A key with no qualifying row is simply
+        absent from the returned mapping -- matching the single-item
+        method's own `None` return for that case exactly. Proven
+        equivalent to calling the single-item method once per key by
+        a dedicated test (`tests/integration/test_news_repository_
+        batch_lookups.py`)."""
+        if not news_item_keys:
+            return {}
+        conditions = [
+            NewsItemVintageRow.news_item_key.in_(news_item_keys),
+            NewsItemVintageRow.availability <= as_of.value,
+            NewsItemVintageRow.evidence_disposition
+            == NewsEvidenceDisposition.EVIDENCE_ELIGIBLE.value,
+        ]
+        if not include_backfill:
+            conditions.append(
+                NewsItemVintageRow.observation_mode != NewsObservationMode.BACKFILL.value
+            )
+        stmt = select(NewsItemVintageRow).where(*conditions)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+
+        latest_by_key: dict[str, NewsItemVintageRow] = {}
+        for row in rows:
+            current = latest_by_key.get(row.news_item_key)
+            candidate_sort_key = (row.availability, row.revision_sequence)
+            if current is None or candidate_sort_key > (
+                current.availability,
+                current.revision_sequence,
+            ):
+                latest_by_key[row.news_item_key] = row
+        return {key: _vintage_to_domain(row) for key, row in latest_by_key.items()}
+
 
 # --- First-vintage shape guard (FX-56H) -----------------------------------
 

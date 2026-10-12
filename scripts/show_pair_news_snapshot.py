@@ -72,6 +72,27 @@ def _print_snapshot(snapshot: NewsPairEvidenceSnapshot) -> None:
     print(f"groups_pair_irrelevant: {snapshot.groups_pair_irrelevant}")
 
     print()
+    print("=== ACCOUNTING (FX-60H) ===")
+    acc = snapshot.accounting
+    print(f"  items_pit_visible: {acc.items_pit_visible}")
+    print(f"  items_snapshot_eligible: {acc.items_snapshot_eligible}")
+    print(f"  items_window_eligible: {acc.items_window_eligible}")
+    print(
+        f"  items_current/stale/unclassified: "
+        f"{acc.items_current}/{acc.items_stale}/{acc.items_unclassified}"
+    )
+    print(f"  items_pair_relevant: {acc.items_pair_relevant}")
+    print(f"  groups_total: {acc.groups_total}")
+    print(f"  groups_outside_window: {acc.groups_outside_window}")
+    print(f"  groups_without_eligible_evidence: {acc.groups_without_eligible_evidence}")
+    print(f"  groups_pair_irrelevant: {acc.groups_pair_irrelevant}")
+    print(f"  groups_incomplete_semantics: {acc.groups_incomplete_semantics}")
+    print(
+        f"  groups_base_only/quote_only/both: "
+        f"{acc.groups_base_only}/{acc.groups_quote_only}/{acc.groups_both}"
+    )
+
+    print()
     print(f"=== ACTIVE ENTRIES -- {len(snapshot.active_entries)} ===")
     for entry in snapshot.active_entries:
         _print_entry(entry)
@@ -107,6 +128,13 @@ def _print_entry(entry: NewsPairEvidenceGroup) -> None:
     print(f"  quote_reasons: {quote_reasons}")
     print(f"  canonical_group_key: {entry.canonical_group_key}")
     print(f"  member_count: {len(entry.member_news_item_keys)}")
+    if entry.relation_provenance:
+        edges = ", ".join(
+            f"{r.left_news_item_key}<->{r.right_news_item_key}" for r in entry.relation_provenance
+        )
+        print(f"  relation_provenance: {edges}")
+    else:
+        print("  relation_provenance: (none -- singleton group)")
     print()
 
 

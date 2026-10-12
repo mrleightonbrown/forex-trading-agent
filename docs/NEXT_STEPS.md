@@ -6110,3 +6110,146 @@ full architecture record and the real-data finding in full.
 **Per this story's own explicit stop instruction**: do not start
 FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return FX-60
 for architectural review.
+
+## FX-60H: pair news snapshot contract hardening (complete)
+
+Corrective implementation only, closing three architectural-review
+findings against FX-60's own `GetPairNewsEvidenceSnapshot` without
+changing `fx60_v1`'s own approved PIT, canonical grouping, window,
+relevance, or semantic-eligibility rules. Starting commit: `b514d26`
+(the FX-60 commit), verified via `git log`/`git status` before any
+work began.
+
+**H1 (complete snapshot accounting).** The original implementation
+never counted a canonical group that had a semantic gap (a `STALE`/
+`UNCLASSIFIED` member) but no member anywhere confirming pair
+relevance -- such a group's own disposition was previously implicit,
+visible only via `len(semantic_gaps)`, never reconciled against
+`groups_considered`. New `NewsPairSnapshotAccounting` (an additive
+`accounting` field on `NewsPairEvidenceSnapshot`) gives every one of
+`groups_total` canonical groups EXACTLY ONE of 7 mutually-exclusive
+dispositions -- `groups_outside_window`/`groups_without_eligible_
+evidence`/`groups_pair_irrelevant`/`groups_incomplete_semantics`/
+`groups_base_only`/`groups_quote_only`/`groups_both` -- with the sum
+structurally enforced to equal `groups_total` in `__post_init__`.
+`groups_incomplete_semantics` is the new bucket this closes: a group
+with unresolved semantic relevance is never counted as confirmed
+irrelevant. Item-level counters (`items_pit_visible`/`items_snapshot_
+eligible`/`items_window_eligible`/`items_current`/`items_stale`/
+`items_unclassified`/`items_pair_relevant`) are similarly cross-
+checked for internal consistency.
+
+**H2 (canonical relation provenance).** `NewsPairEvidenceGroup` gains
+a new `relation_provenance: tuple[NewsCanonicalRelationVintage, ...]`
+field -- the REAL FX-58 `SAME_STORY` relation rows connecting a
+group's own members, reused directly from the SAME `list_latest_
+relation_states_as_of(as_of)` call this use case already makes for
+grouping itself (no new query, no new DTO, no new persisted
+relationship). Empty for a singleton group; for a transitive
+3-member group (A-SAME-B, B-SAME-C, no direct A-C edge) it lists
+exactly the two real edges that justify the merge, never a
+synthesized phantom edge. Proven PIT-filtered against real Postgres:
+a relation added after a requested `as_of` cannot appear in an
+earlier snapshot's own provenance, confirmed by re-querying the SAME
+earlier `as_of` after the relation was added and observing no change.
+
+**H3 (query efficiency).** The original per-group loop called
+`latest_evidence_eligible_vintage_as_of` once per member, PLUS one
+`GetNewsSemanticStatesAsOf` call per eligible group, which itself
+issued `latest_annotation_as_of` AND a REDUNDANT second `latest_
+evidence_eligible_vintage_as_of` call per member -- an N+1-shaped
+access pattern. Measured directly against the real 358-item corpus
+via SQLAlchemy `before_cursor_execute` event counting (no mocking,
+no estimation): **1076 SQL round trips before this story, 4 after**;
+confirmed again at a smaller real 110-item population cut (**222
+before, 4 after**), demonstrating growth with population size in the
+original path and a constant cost in the hardened one. The fix: two
+new batch repository methods (`latest_evidence_eligible_vintages_
+as_of`/`latest_annotations_as_of`), added to the existing
+`SqlAlchemyNewsRepository`/`SqlAlchemyNewsSemanticRepository`
+concrete classes and called exactly ONCE each for the entire
+snapshot, declared via two narrow LOCAL `Protocol`s inside the use
+case's own module (`_VintageLookup`/`_SemanticAnnotationLookup`)
+rather than widening the GLOBAL `NewsRepository`/`NewsSemanticRepos
+itory` ports -- every other caller and every other fake implementing
+those global ports across the test suite is untouched. Semantic-
+state classification (`CURRENT`/`STALE`/`UNCLASSIFIED`) is now
+resolved locally, via a new pure function `_resolve_semantic_state`,
+against the SAME already-batch-fetched vintage rather than re-
+fetching it a second time. `GetNewsSemanticStateAsOf`/`GetNewsSeman
+ticStatesAsOf` (FX-59's own files) are completely UNTOUCHED -- zero
+bytes of either file changed; FX-59's own single-item query surface
+remains available unchanged for any other caller. A parametrized
+synthetic-population unit test (1/10/50/200 items, in-memory fakes)
+independently confirms exactly 4 repository-level calls at every
+population size, proving round trips do not grow with item count.
+
+**Regression.** Every pre-existing FX-60 PIT worked example (same-
+story/not-same-story relation PIT, transitive/contradictory grouping,
+the critical late-duplicate window/dedup example, correction-does-
+not-revive, source-published-time independence, semantic-availability
+PIT, stale-semantics PIT, backfill window-anchor exclusion, algorithm-
+version PIT, the full-chain no-mutation proof, pair-side
+classification) passed UNMODIFIED against both the in-memory fakes
+and real Postgres -- not one existing assertion was weakened or
+removed.
+
+**Test outcomes.** 29 net new tests across 3 files (2 modified, 1
+new; verified via actual pytest collection, not merely raw `def
+test_` counts): unit (`test_get_pair_news_evidence_snapshot.py`
+18→37, +19 -- accounting reconciliation across singleton, duplicate,
+mixed active/withdrawn, out-of-window, no-eligible-evidence,
+confirmed-fully-resolved-irrelevant, and incomplete-semantics group
+shapes, plus two direct `NewsPairSnapshotAccounting` construction-
+rejection tests; relation-provenance for singleton/direct-pair/
+transitive groups plus a group-construction rejection test; the
+parametrized O(1) round-trip test), integration (`test_pair_news_
+evidence_snapshot.py` 13→16, +3 -- a real-Postgres relation-
+provenance PIT proof, a transitive-real-edges-only proof, and a
+real-Postgres accounting reconciliation exercising every group
+disposition bucket at once; new file `test_news_repository_batch_
+lookups.py` with 6 tests proving the two new batch repository
+methods produce results byte-identical to calling their existing
+single-item counterparts once per key, across mixed-eligibility,
+revision, and historical-`as_of` scenarios) -- all passing. Full
+deterministic suite: 2530 passed (one known, pre-existing, unrelated
+OANDA practice-API 401 authorization failure in `test_close_channel_
+breakout_live.py`, outside News Intelligence scope entirely --
+broker market-data connectivity, not news evidence). `ruff check .`,
+`ruff format --check .`, `mypy .` (523 source files), and `pre-commit
+run` on every changed file all pass clean.
+
+**Real-data reconciliation.** The real 358-item corpus (`news_items`/
+`news_semantic_annotation_vintages`/`news_canonical_relation_
+vintages` = `358`/`358`/`0`) was confirmed unchanged before and after
+this story. `scripts/show_pair_news_snapshot.py` (updated to print
+the new `accounting`/`relation_provenance` fields) was re-run against
+EUR/USD, GBP/USD, and USD/CAD over the full corpus: EUR/USD's own
+accounting reconciles as `289 (pair_irrelevant) + 23 (base_only) + 46
+(quote_only) + 0 (both) = 358`; GBP/USD as `143 + 169 + 45 + 1 =
+358`; USD/CAD as `191 + 46 + 121 + 0 = 358` -- each matching the
+pre-existing `groups_considered`/active-entry counts FX-60's own ADR
+already recorded, confirming this hardening pass changed no
+observable real-data outcome.
+
+**Scope discipline.** No schema, migration, PIT rule, canonical
+grouping rule, window rule, relevance rule, or semantic-eligibility
+rule changed; `fx60_v1` preserved unchanged. No cache, materialized
+snapshot, or unrelated schema change introduced. No `EconomicEvent`
+linkage, Market Context change, FX-61 visualization, source-
+reputation weighting, sentiment/directional logic, importance
+scoring, or Decision/Risk Engine integration of any kind. No FX-58/
+58H canonicalization file touched; no FX-59/59H semantics file
+touched -- confirmed literally (zero bytes changed in either file),
+not merely "no semantic change."
+
+Full details in `docs/DECISIONS.md`'s FX-60H entry; `docs/
+ARCHITECTURE.md` carries the hardening note under the existing
+FX-60/ADR-0009 section; `docs/CURRENT_STATE.md` carries its own
+FX-60H entry immediately after the preserved FX-60 entry; `docs/
+adr/0009-pit-safe-pair-news-evidence-snapshot.md` carries the full
+FX-60H addendum.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-61. FX-EPIC-09/Decision Engine/Risk Engine remain not started;
+FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED.

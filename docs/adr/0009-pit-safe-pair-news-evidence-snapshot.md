@@ -14,6 +14,10 @@ inspected directly against the underlying FX-59 `currency_relevance`
 output and confirmed genuine -- zero false positives, zero
 aggregation-rule corrections needed.
 
+**FX-60H (contract hardening) accepted, 2026-10-12** -- see the
+addendum below. `fx60_v1` preserved unchanged; no PIT, grouping,
+window, relevance, or semantic-eligibility rule changed.
+
 ## Context
 
 FX-58 answers "do two source-native items represent the SAME
@@ -167,3 +171,105 @@ through the real-Postgres PIT worked examples, not the live corpus.
   canonical_relation_vintages` remain at `358`/`358`/`0` respectively,
   confirmed unchanged before and after every real-data run in this
   story.
+
+## FX-60H addendum (2026-10-12): complete accounting, relation
+provenance, and O(1) query cost
+
+**Finding 1 (incomplete accounting).** FX-60's own original
+implementation never counted a canonical group that had a semantic
+gap (a `STALE`/`UNCLASSIFIED` member) but NO member confirming pair
+relevance anywhere in the group. Such a group's own disposition was
+previously implicit -- visible only via `len(semantic_gaps)`, never
+reconciled against `groups_considered`. An auditor could not verify
+the snapshot's own arithmetic from its headline fields alone.
+
+**Finding 2 (opaque canonical membership).** `NewsPairEvidenceGroup`
+exposed WHICH items belonged to a multi-member group, but not WHY --
+the FX-58 `SAME_STORY` relation vintage(s) that justified the merge
+were not surfaced, so a caller/auditor had to re-query FX-58 directly
+to explain a transitive group's own membership.
+
+**Finding 3 (N+1 query shape).** The original per-group loop called
+`latest_evidence_eligible_vintage_as_of` once per member, and for
+every group that passed the window/eligibility gates, called `GetNews
+SemanticStatesAsOf` once per group -- which itself issued `latest_
+annotation_as_of` AND a REDUNDANT second `latest_evidence_eligible_
+vintage_as_of` call per member. Measured directly against the real
+358-item corpus (`before_cursor_execute` event counting, no mocking):
+**1076 SQL round trips** for the original implementation versus
+**4** for the hardened one -- confirmed again at a smaller, real
+110-item population cut (**222** versus **4**), demonstrating growth
+with population size in the original path and a constant cost in the
+hardened one.
+
+**Correction.**
+
+- `NewsPairSnapshotAccounting` (new, additive-only field `accounting`
+  on `NewsPairEvidenceSnapshot`) gives every one of `groups_total`
+  canonical groups EXACTLY ONE of seven mutually-exclusive
+  dispositions -- `groups_outside_window`/`groups_without_eligible_
+  evidence`/`groups_pair_irrelevant`/`groups_incomplete_semantics`/
+  `groups_base_only`/`groups_quote_only`/`groups_both` -- enforced
+  structurally in `__post_init__`, so the sum reconciling to
+  `groups_total` is an invariant, not a convention. `groups_
+  incomplete_semantics` is the new bucket Finding 1 required: a group
+  with unresolved semantic relevance is never counted as confirmed
+  irrelevant.
+- `NewsPairEvidenceGroup` gains `relation_provenance: tuple[NewsCanon
+  icalRelationVintage, ...]` -- the REAL FX-58 `SAME_STORY` relation
+  rows connecting this group's own members, reused directly from the
+  SAME `list_latest_relation_states_as_of(as_of)` call already made
+  for grouping (no new query, no new DTO, no new persistence). Empty
+  for a singleton group; for a transitive 3-member group it lists
+  exactly the real edges that justify the merge, never a synthesized
+  edge for a pair with no direct relation.
+- The per-item/per-group repository access pattern is replaced with
+  exactly TWO new batch repository methods -- `latest_evidence_
+  eligible_vintages_as_of`/`latest_annotations_as_of`, added to the
+  existing `SqlAlchemyNewsRepository`/`SqlAlchemyNewsSemanticReposi
+  tory` concrete classes -- called ONCE each for the entire snapshot,
+  declared via two LOCAL `Protocol`s in the use case's own module
+  (`_VintageLookup`/`_SemanticAnnotationLookup`) rather than widening
+  the global `NewsRepository`/`NewsSemanticRepository` ports used by
+  every other caller. Semantic-state classification (`CURRENT`/
+  `STALE`/`UNCLASSIFIED`) is now computed locally against the SAME
+  already-fetched vintage via a new pure function (`_resolve_semantic_
+  state`), eliminating the redundant second fetch Finding 3
+  identified. `GetNewsSemanticStateAsOf`/`GetNewsSemanticStatesAsOf`
+  (FX-59's own files) are completely untouched -- this is a new,
+  parallel, more efficient path used only by this use case; FX-59's
+  own single-item query surface is unaffected for any other caller.
+
+**Verification.** Every pre-existing FX-60 PIT worked example (same-
+story/not-same-story relation PIT, transitive/contradictory grouping,
+the critical late-duplicate window/dedup example, correction-does-
+not-revive, source-published-time independence, semantic-availability
+PIT, stale-semantics PIT, backfill window-anchor exclusion, algorithm-
+version PIT, the full-chain no-mutation proof) passed unmodified
+against both the in-memory fakes and real Postgres. New tests added:
+synthetic-fixture accounting reconciliation across singleton,
+duplicate, mixed active/withdrawn, out-of-window, no-eligible-
+evidence, confirmed-irrelevant, and incomplete-semantics group shapes
+(including two direct `NewsPairSnapshotAccounting` construction-
+rejection tests); relation-provenance tests for singleton/pair/
+transitive groups plus an explicit real-Postgres PIT proof that a
+relation added after a requested `as_of` cannot appear in an earlier
+snapshot's own provenance; a dedicated real-Postgres equivalence
+suite (`tests/integration/test_news_repository_batch_lookups.py`)
+proving the two new batch repository methods produce results
+byte-identical to their existing single-item counterparts across
+`CURRENT`/`STALE`/`UNCLASSIFIED`/revision/historical-`as_of` cases;
+and a parametrized synthetic-population test (1/10/50/200 items)
+proving repository round trips stay constant at exactly 4 regardless
+of population size.
+
+**Scope.** No schema, migration, PIT rule, canonical grouping rule,
+window rule, relevance rule, or semantic-eligibility rule changed;
+`fx60_v1` is preserved unchanged. No cache, materialized snapshot, or
+unrelated schema change was introduced. The real 358-item corpus
+(`news_items`/`news_semantic_annotation_vintages`/`news_canonical_
+relation_vintages` = `358`/`358`/`0`) was confirmed unchanged before
+and after this story, and the real EUR/USD (289 irrelevant + 23
+base-only + 46 quote-only + 0 both = 358), GBP/USD (143 + 169 + 45 +
+1 = 358), and USD/CAD (191 + 46 + 121 + 0 = 358) accounting totals
+each reconcile exactly against it.

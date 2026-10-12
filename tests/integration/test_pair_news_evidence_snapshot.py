@@ -162,6 +162,9 @@ async def _make_item(
         source_status=source_status,
         evidence_disposition=evidence_disposition,
         source_published_at=source_published_at,
+        quarantine_reason=(
+            "test fixture" if evidence_disposition is NewsEvidenceDisposition.QUARANTINED else None
+        ),
     )
     await news_repo.add_vintage(vintage)
     return registration.news_item_key
@@ -627,3 +630,145 @@ async def test_pair_side_classification_through_real_postgres(
     snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
 
     assert snapshot.active_entries[0].pair_relevance_side is NewsPairRelevanceSide.BASE_ONLY
+
+
+# --- FX-60H H2: canonical relation provenance, real Postgres -----------------
+
+
+async def test_relation_provenance_pit_against_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    """A relation whose own `availability` is after a requested
+    `as_of` must not appear in that earlier snapshot's own
+    `relation_provenance` -- proven against real Postgres, not just
+    the in-memory fakes, since `relation_provenance` is built from
+    `list_latest_relation_states_as_of(as_of)`, a real SQL query."""
+    a = await _make_item(news_repo, "prov-a", first_seen_at=_ts(9))
+    b = await _make_item(news_repo, "prov-b", first_seen_at=_ts(9, 10))
+    await _add_annotation(semantic_repo, a, availability=_ts(9, 5))
+    await _add_annotation(semantic_repo, b, availability=_ts(9, 15))
+
+    before_relation = await get_snapshot(EURUSD, _ts(0), _ts(9, 20))
+    assert len(before_relation.active_entries) == 2
+    for entry in before_relation.active_entries:
+        assert entry.relation_provenance == ()
+
+    await _add_relation(canon_repo, a, b, availability=_ts(9, 30))
+
+    # Re-querying the SAME earlier `as_of` still shows no provenance --
+    # the relation itself did not exist yet at that instant.
+    still_before = await get_snapshot(EURUSD, _ts(0), _ts(9, 20))
+    assert len(still_before.active_entries) == 2
+    for entry in still_before.active_entries:
+        assert entry.relation_provenance == ()
+
+    after_relation = await get_snapshot(EURUSD, _ts(0), _ts(9, 40))
+    assert len(after_relation.active_entries) == 1
+    provenance = after_relation.active_entries[0].relation_provenance
+    assert len(provenance) == 1
+    # `NewsCanonicalRelationVintage` stores left/right lexicographically
+    # sorted by news_item_key, not by call-argument order (Section 58).
+    assert {provenance[0].left_news_item_key, provenance[0].right_news_item_key} == {a, b}
+
+
+async def test_relation_provenance_transitive_real_edges_only_against_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    a = await _make_item(news_repo, "transprov-a", first_seen_at=_ts(9))
+    b = await _make_item(news_repo, "transprov-b", first_seen_at=_ts(9, 10))
+    c = await _make_item(news_repo, "transprov-c", first_seen_at=_ts(9, 20))
+    for key in (a, b, c):
+        await _add_annotation(semantic_repo, key, availability=_ts(9, 25))
+    await _add_relation(canon_repo, a, b, availability=_ts(9, 30))
+    await _add_relation(canon_repo, b, c, availability=_ts(9, 35))
+
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(9, 40))
+
+    assert len(snapshot.active_entries) == 1
+    group = snapshot.active_entries[0]
+    assert set(group.member_news_item_keys) == {a, b, c}
+    # Compare as orientation-agnostic frozensets -- `NewsCanonicalRelat
+    # ionVintage` stores left/right lexicographically sorted by news_
+    # item_key, not by call-argument order (Section 58).
+    provenance_pairs = {
+        frozenset((r.left_news_item_key, r.right_news_item_key)) for r in group.relation_provenance
+    }
+    assert provenance_pairs == {frozenset((a, b)), frozenset((b, c))}
+    assert frozenset((a, c)) not in provenance_pairs
+
+
+# --- FX-60H H1: real-Postgres accounting reconciliation -----------------------
+
+
+async def test_accounting_reconciles_against_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    """Exercises every group disposition bucket against real Postgres
+    in one snapshot -- construction itself would fail closed on any
+    arithmetic drift (`NewsPairSnapshotAccounting.__post_init__`), so
+    a successful call plus these explicit assertions prove the
+    invariant holds for the real SQL-backed batch repository paths,
+    not merely the in-memory fakes."""
+    singleton = await _make_item(news_repo, "acct-singleton", first_seen_at=_ts(9))
+    await _add_annotation(
+        semantic_repo, singleton, availability=_ts(9, 1), classification=_classification("USD")
+    )
+
+    dup_a = await _make_item(news_repo, "acct-dup-a", first_seen_at=_ts(9, 10))
+    dup_b = await _make_item(news_repo, "acct-dup-b", first_seen_at=_ts(9, 15))
+    await _add_relation(canon_repo, dup_a, dup_b, availability=_ts(9, 20))
+    await _add_annotation(
+        semantic_repo, dup_a, availability=_ts(9, 11), classification=_classification("USD")
+    )
+    await _add_annotation(
+        semantic_repo, dup_b, availability=_ts(9, 16), classification=_classification("USD")
+    )
+
+    out_of_window = await _make_item(news_repo, "acct-outwin", first_seen_at=_ts(1))
+    await _add_annotation(semantic_repo, out_of_window, availability=_ts(1, 1))
+
+    await _make_item(
+        news_repo,
+        "acct-quarantined",
+        first_seen_at=_ts(9, 25),
+        evidence_disposition=NewsEvidenceDisposition.QUARANTINED,
+    )
+
+    irrelevant = await _make_item(news_repo, "acct-irrelevant", first_seen_at=_ts(9, 30))
+    await _add_annotation(
+        semantic_repo, irrelevant, availability=_ts(9, 31), classification=_classification("CAD")
+    )
+
+    await _make_item(news_repo, "acct-incomplete", first_seen_at=_ts(9, 40))
+    # No annotation at all -> UNCLASSIFIED, no confirmed relevance.
+
+    snapshot = await get_snapshot(EURUSD, _ts(5), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.groups_total == 6
+    assert acc.groups_outside_window == 1
+    assert acc.groups_without_eligible_evidence == 1
+    assert acc.groups_pair_irrelevant == 1
+    assert acc.groups_incomplete_semantics == 1
+    assert (
+        acc.groups_base_only + acc.groups_quote_only + acc.groups_both == 2
+    )  # singleton + dup group
+    assert (
+        acc.groups_outside_window
+        + acc.groups_without_eligible_evidence
+        + acc.groups_pair_irrelevant
+        + acc.groups_incomplete_semantics
+        + acc.groups_base_only
+        + acc.groups_quote_only
+        + acc.groups_both
+        == acc.groups_total
+    )

@@ -130,6 +130,38 @@ class SqlAlchemyNewsSemanticRepository:
         await self._session.commit()
         return None if row is None else _annotation_row_to_domain(row)
 
+    async def latest_annotations_as_of(
+        self, news_item_keys: tuple[str, ...], as_of: UtcTimestamp
+    ) -> dict[str, NewsSemanticAnnotationVintage]:
+        """FX-60H Section H3: a BATCH equivalent of `latest_
+        annotation_as_of` for multiple items in ONE round trip --
+        the EXACT SAME `WHERE` conditions as the single-item method
+        (membership instead of equality), with the identical "latest
+        by (availability, revision_sequence)" reduction performed in
+        Python rather than via a second SQL round trip per key. A key
+        with no qualifying annotation is simply absent from the
+        returned mapping, matching the single-item method's own
+        `None` return exactly."""
+        if not news_item_keys:
+            return {}
+        stmt = select(NewsSemanticAnnotationVintageRow).where(
+            NewsSemanticAnnotationVintageRow.news_item_key.in_(news_item_keys),
+            NewsSemanticAnnotationVintageRow.availability <= as_of.value,
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+
+        latest_by_key: dict[str, NewsSemanticAnnotationVintageRow] = {}
+        for row in rows:
+            current = latest_by_key.get(row.news_item_key)
+            candidate_sort_key = (row.availability, row.revision_sequence)
+            if current is None or candidate_sort_key > (
+                current.availability,
+                current.revision_sequence,
+            ):
+                latest_by_key[row.news_item_key] = row
+        return {key: _annotation_row_to_domain(row) for key, row in latest_by_key.items()}
+
     async def list_annotation_vintages_for_item(
         self, news_item_key: str
     ) -> tuple[NewsSemanticAnnotationVintage, ...]:

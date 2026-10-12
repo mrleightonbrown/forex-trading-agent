@@ -3062,7 +3062,7 @@ stance/importance scoring of any kind; no canonical-group-level
 aggregation (FX-60's own job); no network I/O of any kind; no
 scheduler/daemon.
 
-## PIT-safe pair-specific news evidence snapshot (FX-60, ADR 0009)
+## PIT-safe pair-specific news evidence snapshot (FX-60/FX-60H, ADR 0009)
 
 A THIRD derived layer, strictly a presentation-facing PROJECTION over
 FX-56/57 (storage), FX-58 (canonicalization), and FX-59 (semantics) --
@@ -3178,6 +3178,33 @@ generated news summary; no article ranking beyond deterministic
 recency/key ordering; no network I/O of any kind; no FX-56/57/58/
 58H/59/59H file touched; no new schema/migration/persistence
 repository.
+
+**FX-60H hardening (ADR 0009 addendum)**: closed three architectural-
+review findings without touching `fx60_v1`'s own PIT, grouping,
+window, relevance, or semantic-eligibility rules. **Complete
+accounting**: a new, additive `accounting: NewsPairSnapshotAccounting`
+field gives every one of `groups_total` canonical groups EXACTLY ONE
+of 7 mutually-exclusive dispositions, structurally reconciled in its
+own `__post_init__` -- closing a real gap where a group with an
+unresolved semantic gap and no confirmed-relevant member was
+previously counted nowhere. **Relation provenance**: a new, additive
+`relation_provenance: tuple[NewsCanonicalRelationVintage, ...]` field
+on `NewsPairEvidenceGroup` exposes the REAL FX-58 `SAME_STORY`
+relation rows justifying a group's own multi-member membership,
+reused directly from the SAME `list_latest_relation_states_as_of`
+call already made for grouping -- no new query, no new persistence,
+proven PIT-filtered against real Postgres. **Query efficiency**: the
+original per-item/per-group repository access pattern (measured at
+1076 SQL round trips against the real 358-item corpus) is replaced
+with exactly TWO new batch repository methods called once each (4
+round trips total, confirmed constant regardless of population size)
+-- declared via narrow LOCAL `Protocol`s inside the use case's own
+module rather than widening the global `NewsRepository`/`NewsSeman
+ticRepository` ports every other caller uses. `GetNewsSemanticState
+AsOf`/`GetNewsSemanticStatesAsOf` (FX-59's own files) remain
+completely untouched. No cache, materialized snapshot, or schema
+change was introduced -- every call still recomputes its answer
+fresh.
 
 ## Current state
 
