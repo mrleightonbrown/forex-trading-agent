@@ -2934,6 +2934,123 @@ pair-specific news snapshot (FX-60); no Market Context visualization
 change (FX-61); no network I/O of any kind; no scheduler/daemon; no
 `MANUAL_REVIEW` UI (the domain model supports it; nothing uses it yet).
 
+## PIT-safe news relevance, entities & topics (FX-59, ADR 0008)
+
+A SECOND derived evidence layer above FX-56/57/58, answering a
+question neither of those layers answers: "what macro subject(s) is
+this piece of evidence about, which institutions/jurisdictions does
+it refer to, and which currencies does FTA have explicit evidence it
+is relevant to?" Strictly item-level -- classification runs against
+one `NewsItem` at a time, never against an FX-58 canonical-group key
+(if two items later become `SAME_STORY`, their own FX-59 histories
+remain completely untouched); FX-60 is responsible for combining
+current FX-59 annotations with a currency pair.
+
+**One new append-only table, `news_semantic_annotation_vintages`**
+(migration `4b2621787a37`, downgrade-guarded from the start, same
+precedent `274aabcc57dd`/`504030474987` established): `(news_item_
+key, revision_sequence)` natural identity, `availability` ALWAYS
+FTA's own classification-run time (captured once per `ClassifyNews
+Once` run, never a source timestamp), `basis_news_item_revision_
+sequence` pinning the EXACT `NewsItemVintage` classified via a genuine
+composite foreign key into `news_item_vintages(news_item_key,
+revision_sequence)`, a stable `algorithm_version` (`"fx59_v1"`), and
+three JSONB arrays (`entities`/`topics`/`currency_relevance`) holding
+the actual classification output -- `entities`/`currency_relevance`
+are constrained non-empty; `topics` may legitimately be empty. No
+existing `news_*` table is touched or gains a column.
+
+**Stale semantics can never masquerade as current.**
+`GetNewsSemanticStateAsOf` (`application.use_cases.get_news_semantic_
+state_as_of`) distinguishes `CURRENT` (the latest annotation's basis
+revision equals the item's current evidence-eligible `NewsItemVintage`
+as of the same instant), `STALE` (an annotation exists, but a newer
+source revision has since become evidence-eligible and the classifier
+has not yet re-run), and `UNCLASSIFIED` (no annotation at all) --
+pinned by a dedicated real-Postgres worked example proving no
+destructive rewrite occurs and a historical `as_of` query before the
+new revision remains `CURRENT` for that instant. A batch variant,
+`GetNewsSemanticStatesAsOf`, is provided for FX-60's own future use.
+
+**`fx59_v1` is deterministic, local, and rule-based -- no LLM,
+embeddings, statistical NER, cloud NLP, zero-shot classification,
+fuzzy semantic similarity, web search, or external metadata anywhere.**
+`domain.news_semantic_classifying.classify_news_semantics` is a PURE
+function: a curated `NewsSemanticSourceProfile` registry (`domain.
+news_semantic_source_profile`) gives each of the six adopted sources
+an explicit publisher institution, jurisdiction, and primary currency
+-- structural facts, never inferred from text -- plus curated,
+phrase/token-boundary-safe alias/topic-rule registries matched via
+`domain.news_semantic_text_matching.find_matched_phrases` (never a
+naive substring match: `"CAD"` cannot match inside `"decade"`, a bare
+`"us"` pronoun cannot match `"United States"`, since the registry
+deliberately never includes a bare, case-fold-ambiguous `"US"`
+alias). An item from any source NOT in the registry fails closed
+(`UnsupportedNewsSemanticSourceError`) -- `ClassifyNewsOnce` classifies
+EVERY candidate in memory first, then records in deterministic order,
+so one unsupported source leaves zero annotations half-written.
+
+**Entities** (`domain.news_entity_annotation.NewsEntityAnnotation`):
+two types only, `INSTITUTION`/`JURISDICTION` (no `PERSON`/`COMPANY`/
+`SECURITY`/etc. yet). Stable internal keys (e.g. `"FEDERAL_RESERVE"`),
+never display text, and deliberately NOT a fixed database `CHECK`
+enumeration (a future institution can be added to the classifier's own
+registry without a migration). Each entity carries `SOURCE_PROFILE`
+and/or `TEXT_ALIAS` evidence, consolidated into one annotation.
+
+**Currency relevance** (`domain.news_currency_relevance.NewsCurrency
+Relevance`): categorical reasons only, no numeric score/confidence/
+rank. Every item gets its source's own primary currency
+(`SOURCE_JURISDICTION`); a SECOND currency requires an explicit
+currency-text alias (`EXPLICIT_CURRENCY_MENTION`, e.g. "sterling" --
+never bare "dollar") or an explicit mention of an institution mapped
+to a different currency (`EXPLICIT_INSTITUTION_MENTION`, e.g. a Bank
+of Canada item naming the European Central Bank adds EUR). A bare
+jurisdiction mention (e.g. "Canada") never adds currency relevance on
+its own -- this limits noise deliberately.
+
+**Topics** (`domain.news_topic.NewsTopic`): a closed, deliberately
+small nine-category v1 taxonomy (`MONETARY_POLICY`/`INFLATION_
+PRICES`/`LABOUR_EMPLOYMENT`/`GROWTH_ACTIVITY`/`INTERNATIONAL_TRADE`/
+`FISCAL_POLICY`/`FINANCIAL_STABILITY`/`BANKING_REGULATION`/`EXCHANGE_
+RATES`), multi-label (a story may match several, or none -- zero is a
+valid result, never forced into a catch-all `OTHER`). Publisher
+identity alone never implies a topic (an HM Treasury item is not
+automatically `FISCAL_POLICY`); text evidence is always required.
+
+**No sentiment/stance, no importance/impact score, anywhere.**
+`NewsSemanticClassification`'s surface is exactly `entities`/`topics`/
+`currency_relevance` -- no hawkish/dovish, bullish/bearish, or 0-100
+rank field exists in this layer.
+
+**Append-only determinism guard.** `RecordNewsSemanticAnnotation`
+mints a new revision when the basis revision OR the algorithm_version
+changes (even if the resulting output is identical -- the annotation
+must truthfully pin what was actually classified); re-classifying the
+SAME basis under the SAME algorithm with the SAME output is `UNCHANGED`
+(idempotent); the SAME basis + SAME algorithm producing a genuinely
+DIFFERENT output is treated as `NewsSemanticDeterminismError` -- a
+deterministic classifier must never present two outputs as both valid
+for identical inputs. Concurrent-write safety (the same `inserted`-
+flag-checking discipline FX-58H established) is proven against real,
+two-session Postgres races at the use-case level.
+
+**Real-data activation is LIVE**: the required pre-persistence dry-run
+against the real 358-item dataset found 2 multi-currency and 17
+explicit-foreign-institution classifications, every one directly
+inspected against stored text and confirmed genuine (zero false
+positives, zero rule corrections). The first real write created 358
+annotations (one per item); the second, immediate repeat reported
+`annotations_created=0`.
+
+**Explicitly NOT built in FX-59**: no `EconomicEvent` linkage of any
+kind (FX-52 remains DEFER); no pair-specific news evidence snapshot
+(FX-60's own future job); no Market Context visualization change
+(FX-61); no source-reputation weighting (FX-EPIC-09); no sentiment/
+stance/importance scoring of any kind; no canonical-group-level
+aggregation (FX-60's own job); no network I/O of any kind; no
+scheduler/daemon.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

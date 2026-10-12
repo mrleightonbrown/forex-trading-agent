@@ -14673,3 +14673,316 @@ verbatim above it.
 **Per this story's own explicit stop instruction**: do not start
 FX-59, FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work.
 Return FX-58H for architectural review.
+
+## 2026-10-12 — FX-59: PIT-safe news relevance, entities & topics (ADR 0008)
+
+A SECOND derived evidence layer above FX-56/57/58, answering a
+question neither canonicalization nor source ingestion answers:
+"what macro subject(s) is this piece of evidence about, which
+institutions/jurisdictions does it name, and which currencies does
+FTA have explicit evidence this item is relevant to?" Git HEAD at
+this story's own start: `ae3082d` (the FX-58H commit), verified
+directly via `git log`/`git status` before any work began. Full
+architecture record in the new `docs/adr/0008-pit-safe-news-
+semantics.md`.
+
+**1. Item-level, never pair-level or group-level.** Classification
+runs against one source-native `NewsItem` at a time -- never a
+currency pair (`EUR/USD`, `USD/CAD`, that is FX-60's own future job,
+Section 2), and never an FX-58 canonical-group key (Section 3): if
+two source-native items later become `SAME_STORY`, their own FX-59
+histories remain completely untouched, since canonical-group
+membership is itself PIT-derived and can later be corrected, while
+`NewsItem`s remain permanent source evidence.
+
+**2. Append-only PIT vintages, one new table.** `news_semantic_
+annotation_vintages` (migration `4b2621787a37`): `(news_item_key,
+revision_sequence)` natural identity, `availability` ALWAYS FTA's own
+classification-RUN time -- captured EXACTLY ONCE per `ClassifyNews
+Once` run via an injected clock (mirroring `CanonicalizeNewsOnce`'s
+own `run_at` discipline exactly), never any source timestamp and
+never the basis `NewsItemVintage`'s own `availability`. `basis_news_
+item_revision_sequence` carries a genuine COMPOSITE foreign key into
+`news_item_vintages(news_item_key, revision_sequence)` -- pinning the
+EXACT revision classified, never copying its headline/summary/body
+into this table. `algorithm_version` (`"fx59_v1"`, never a git commit
+hash) permits a future policy change to introduce `"fx59_v2"` without
+retroactively reinterpreting what an old classification meant. No
+application code path anywhere issues an `UPDATE` against this table.
+
+**3. Stale annotations fail safe -- the architecturally critical
+invariant.** `GetNewsSemanticStateAsOf` distinguishes `CURRENT` (the
+latest annotation's own basis revision equals the item's current
+evidence-eligible `NewsItemVintage` as of the same instant, via
+`NewsRepository.latest_evidence_eligible_vintage_as_of` reused
+directly -- never a second interpretation, same precedent FX-58's own
+canonicalization repository already established), `STALE` (an
+annotation exists, but a NEWER evidence-eligible revision has since
+appeared and the classifier has not yet re-run against it), and
+`UNCLASSIFIED` (no annotation at all as of that instant). Pinned by
+TWO mandatory real-Postgres worked examples: (a) the stale-state
+sequence itself -- `09:00` rev0 available, `09:05` classified
+(CURRENT at `09:10`), `09:20` rev1 becomes available (STALE at
+`09:25`), `09:30` reclassified against rev1 (CURRENT again at
+`09:35`), and a HISTORICAL query at `09:10` taken AFTER rev1 already
+exists in storage still correctly reports CURRENT for that earlier
+instant -- no destructive rewrite; (b) the analogous `algorithm_
+version`-change sequence -- the same basis, reclassified under
+`"fx59_v2"` at a LATER instant than its own `"fx59_v1"` classification,
+with both revisions coexisting and each visible only from its own
+`availability` onward.
+
+**4. `fx59_v1` is deterministic, local, rule-based -- explicitly no
+LLM, embeddings, statistical NER, cloud NLP, zero-shot classification,
+fuzzy semantic similarity, web search, or external news metadata
+(Section 5), establishing a measurable, fully auditable baseline
+before any future story considers a richer semantic model.**
+`domain.news_semantic_classifying.classify_news_semantics` is a PURE
+function -- no DB, clock, HTTP, randomness, or OS-level configuration
+lookup -- built from two curated, version-pinned ingredients: a
+six-source `NewsSemanticSourceProfile` registry (publisher
+institution/jurisdiction/primary currency as STRUCTURAL facts, never
+inferred from text, Section 19) and phrase/token-boundary-safe alias/
+topic-rule registries. Text matching uses ONLY `headline`/`summary`/
+`body_text` (Section 22) -- never canonical URL, external item id,
+source timestamps, or raw provider payload.
+
+**5. A SEPARATE shared helper enforces boundary-safe matching, never
+naive substring containment (Section 23).** `domain.news_semantic_
+text_matching.find_matched_phrases` wraps every phrase comparison in
+non-word-character boundary assertions: `"CAD"` cannot match inside
+`"decade"` (the preceding character `"e"` is a word character,
+failing the lookbehind); `"GDP"` cannot match inside `"GDPR"` (the
+following character `"R"` fails the lookahead); the alias registry
+deliberately contains NO bare, case-fold-ambiguous `"US"` jurisdiction
+alias at all (Section 25 -- case-folding would make it
+indistinguishable from the English pronoun "us"; only unambiguous
+forms like `"United States"`/`"U.S."` are used). Reuses `news_text_
+normalization.normalize_text` for Unicode/HTML-entity/whitespace
+consistency, but is a genuinely separate module from FX-58's own
+exact-MATCH-only normalization helper, since FX-59 needs substring-
+WITH-boundaries matching, a different concern.
+
+**6. An unregistered source fails closed, never silently (Section
+20), and classification happens in two phases so a failure never
+leaves a half-written run (Section 63).** `UnsupportedNewsSemantic
+SourceError` is raised the moment `classify_news_semantics` sees a
+`source_key` with no registered profile. `ClassifyNewsOnce` classifies
+EVERY candidate in memory FIRST (a side-effect-free loop), and only
+once every candidate has classified successfully does it begin
+recording, in deterministic (sorted `news_item_key`) order -- a
+single unsupported source anywhere in the candidate set therefore
+leaves ZERO annotations persisted, proven directly by a dedicated
+test asserting a valid, earlier-sorted item's own annotation was
+never written when a later item in the same run raised.
+
+**7. Entities, currency relevance, and topics are each a distinct,
+narrowly-scoped evidence concept, not conflated with one another.**
+Entities (`INSTITUTION`/`JURISDICTION` only, Section 16) use stable
+internal keys deliberately NOT constrained to a fixed database `CHECK`
+enumeration (Section 18) -- a future institution can be added to the
+classifier's own curated registry without a migration, and historical
+rows stay readable. Currency relevance (Section 26/27) is
+categorical-reasons-only, no score: every item gets its source's own
+primary currency (`SOURCE_JURISDICTION`); a SECOND currency requires
+an explicit currency-text alias (`EXPLICIT_CURRENCY_MENTION`, never
+bare "dollar," Section 29) or an explicit mention of a DIFFERENTLY-
+mapped institution (`EXPLICIT_INSTITUTION_MENTION`, Section 30 --
+deliberately keyed off `TEXT_ALIAS` evidence only, never a bare
+`SOURCE_PROFILE`-only institution the text itself never names, so a
+Fed article that never says "Federal Reserve" does not double-count
+USD through this path); a bare jurisdiction mention alone NEVER adds
+currency relevance (Section 31's own explicit noise limit). Topics
+(a closed nine-category v1 taxonomy, Section 32) are multi-label,
+zero a fully valid result (no `OTHER` catch-all, Section 33);
+publisher identity alone NEVER implies a topic (Section 44 -- an HM
+Treasury item is not automatically `FISCAL_POLICY`); each firing topic
+retains its own `matched_terms` as auditable evidence, never a full
+excerpt.
+
+**8. No sentiment/stance, and no importance/impact score, anywhere
+in this layer (Section 45/46) -- confirmed by a dedicated regression,
+not merely by omission.** `NewsSemanticClassification`'s own
+dataclass field surface is introspected directly in a test against a
+story whose own text literally contains "hawkish," "dovish,"
+"bullish," and "bearish," and asserted to be EXACTLY `entities`/
+`topics`/`currency_relevance` -- no fourth field exists to smuggle a
+market-direction interpretation into this story's own output.
+
+**9. A new append-only recording invariant, with no FX-56/58
+precedent: a basis-revision OR algorithm_version change ALWAYS mints
+a new revision, even when the output is byte-identical (Section
+53/54); the SAME basis + SAME algorithm producing a DIFFERENT output
+is an impossible state for a deterministic classifier, and is
+rejected rather than silently accepted as a second valid revision
+(Section 55, `NewsSemanticDeterminismError`).** `RecordNewsSemantic
+Annotation` checks PIT ordering FIRST, unconditionally (mirroring
+FX-56H.1/FX-58's own corrected "ordering before identity" lesson) --
+`OutOfOrderSemanticAnnotationError` on any earlier `availability`,
+equal explicitly permitted. Re-classifying the SAME basis under the
+SAME algorithm with the SAME output is `UNCHANGED`, idempotent. The
+reported outcome always reflects the ACTUAL durable write (the same
+`inserted`-flag-checking correction FX-58H established for
+canonicalization), proven at the fake-repository unit level AND
+against two genuinely concurrent real Postgres sessions going
+through the use case itself (Section 61/62) -- identical-first-
+classification races report `[CREATED, UNCHANGED]`; differing-payload
+races for a new identity report one `CREATED` and one `NewsSemantic
+AnnotationConflictError`, never a silent winner or a fabricated
+second revision. Ran the concurrency file 5 times consecutively to
+confirm determinism, not merely accidental correctness once.
+
+**Verification, reported separately:**
+
+- 141 new test functions across 16 brand-new files (159 actual
+  pytest-collected cases once parametrization is counted -- verified
+  via `echo "7+6+6+11+7+2+11+37+9+11+5+4+9+4+9+3" | bc` = 141 against
+  every touched file's own `grep -cE '^(async )?def test_'`, and the
+  18-case parametrization gap between 141 and 159 fully reconciled by
+  hand against the two parametrized test functions responsible for
+  it, continuing this project's own test-count-verification
+  discipline): domain (entity annotation 7, currency relevance 6,
+  topic annotation 6, semantic classification 11, semantic annotation
+  vintage 7, semantic source profile 2, semantic text matching 11,
+  semantic classifying 37); application (record-semantic-annotation
+  9, classify-news-once 11, get-semantic-state-as-of 5);
+  infrastructure/migration (unit 4, Postgres integration 9);
+  integration (semantic repository 9, full e2e 4, concurrency 3). All
+  159 passing.
+- Full regression of all six source families plus the common news
+  application layer (every FX-56/57 domain/infrastructure/application
+  test file): `466 passed`, zero new failures.
+- Full regression of FX-58/FX-58H's own canonicalization suite: `110
+  passed`, zero new failures.
+- Full deterministic default suite (`pytest`): `2438 passed, 10
+  deselected` -- ZERO failures this run; the 7 previously-logged
+  OANDA live-candle-backfill failures (FX-EPIC-06, unrelated) did not
+  reproduce, re-established fresh at this story's own start rather
+  than assumed from the prior story's report. The full delta from the
+  pre-story baseline (`2251 passed`) is fully reconciled: 159 from
+  this story's own new test files plus 28 from the repository's
+  EXISTING domain/application boundary-contract suites (`tests/
+  contract/`), which auto-parametrize over every domain/application
+  source file and therefore automatically gained one case per each of
+  this story's 12 new domain files and 4 new application files
+  (24 + 4 = 28; 159 + 28 = 187; 2251 + 187 = 2438, exactly).
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the same pre-existing BLS 403 (FX-EPIC-07, unrelated),
+  re-established and confirmed unchanged. FX-59 performs zero network
+  I/O and has no `live_source` test of its own.
+- `ruff check .`, `ruff format --check .`, `mypy .` (516 source
+  files), and `pre-commit run --all-files` all pass clean. **One
+  genuine, purely cosmetic contract-test trip was found and fixed
+  while running the FULL suite (not this story's own test files
+  alone) -- worth recording as a general lesson**: `tests/contract/
+  test_domain_boundary.py`'s own environment-variable-read guard
+  matches the bare substring `"environ"` ANYWHERE in a domain
+  module's source text, including inside its own docstrings -- a
+  module docstring describing `classify_news_semantics` as having "no
+  environment lookup" tripped it, since the ordinary English word
+  "environment" itself contains "environ" as a substring. Reworded to
+  "no OS-level configuration lookup" -- zero functional change.
+  **General lesson, continuing this project's own "run the full
+  suite, not just the files you touched" discovery-mechanism theme
+  (FX-57BH.1/FX-57FH's own precedent)**: a prose-level, substring-
+  based contract check can be tripped by ordinary English vocabulary
+  in a docstring, not only by real code; worth a quick self-check
+  (`grep -rn "environ\b" src/forex_agent/domain/`) on any future
+  domain-layer docstring before assuming a contract-suite failure
+  means an actual boundary violation.
+
+**The required pre-persistence dry-run safety gate (Section 79/80)
+passed cleanly on its own FIRST attempt, with a non-trivial amount
+of real evidence to inspect -- reported honestly in full, not
+glossed over.** `scripts/classify_news.py --dry-run`, run against the
+real, live 358-item dev database, reported 358 items considered, 358
+would-be-created annotations (one per item -- classification, unlike
+FX-58's own pairwise matching, always produces exactly one annotation
+per evidence-eligible item), 246 zero-topic items, 8 multi-topic
+items, 2 multi-currency classifications, and 17 explicit-foreign-
+institution classifications. Per Section 80's own explicit
+instruction, EVERY one of the 2 multi-currency and 17 foreign-
+institution classifications was directly inspected against the
+item's own underlying stored summary/headline text before any real
+write was attempted:
+
+- **Both multi-currency items are genuine, correct Bank of England
+  speeches**: "Money and power: lessons from history for stablecoins
+  and US dollar dominance" (Carolyn Wilkins) literally discusses "US
+  dollar dominance" in its own headline (GBP + USD, confirmed
+  genuine); "Agents of change" (Sarah Breeden) carries the summary
+  "Given at ECB Sintra Forum" (GBP + EUR, confirmed genuine).
+- **All 17 foreign-institution mentions were reviewed; the one that
+  initially looked most surprising on sight -- a Statistics Canada
+  "Sector-based Producer Price Indexes: announcement" item carrying a
+  `BANK_OF_CANADA` entity -- was directly queried via raw SQL against
+  the actual stored summary and confirmed genuine**: "...using a
+  methodology developed by the Bank of Canada." The remaining 16
+  (FOMC mentions inside Fed meeting minutes/statements; Bank of
+  England mentions inside HM Treasury items about joint HMT/BoE
+  appointments, the Asset Purchase Facility, and FCA board
+  appointments) were equally straightforward, genuine textual facts.
+
+**Zero false positives, zero alias collisions, zero wrong topic rules
+were found -- the general rules passed on the very first real
+dry-run, with no rule weakening/strengthening, no source-specific
+exception, no source-key gating, and no time-based heuristic applied
+anywhere** (Section 80/81/82's own explicit prohibitions, all
+honored). This is reported as a genuine, inspected success -- the
+presence of 19 total items requiring human inspection (unlike FX-58H's
+own trivial zero-automatic-pairs success) made this a real, non-
+trivial exercise of the gate, not a rubber stamp.
+
+**First real write-mode run** (`scripts/classify_news.py`, no
+`--dry-run`) reported `annotations_created=358`, `revisions_added=0`,
+`unchanged=0` -- matching the renewed gate exactly. **Second real
+run**, executed immediately after with the underlying source data
+completely unchanged, reported `annotations_created=0`, `unchanged=
+358`, confirming idempotency. Topic distribution across the real
+data: `MONETARY_POLICY` 39, `LABOUR_EMPLOYMENT` 17, `INFLATION_
+PRICES` 15, `GROWTH_ACTIVITY` 13, `INTERNATIONAL_TRADE` 11,
+`FINANCIAL_STABILITY` 11, `FISCAL_POLICY` 10, `EXCHANGE_RATES` 4,
+`BANKING_REGULATION` 4. Currency relevance distribution: `GBP` 170,
+`CAD` 121, `USD` 46, `EUR` 23. Source-native data (`news_items`/
+`news_item_vintages`/`news_source_mappings` across all six sources,
+and the FX-58 `news_canonical_relation_vintages` table's own genuine
+0-row count) independently re-verified byte-for-byte/count-for-count
+unchanged both before and after this story's entire body of work,
+including both live-database write-mode runs.
+
+**No schema change beyond the one new migration** (`4b2621787a37`,
+adding `news_semantic_annotation_vintages`; no change to any other
+FX-56/57/58 table). **ADR 0008 created**, recording the full
+architecture and the real-data finding above in full. **No ADR 0005/
+0006/0007 update** -- FX-59 touches no source-feasibility fact, no
+multi-channel provenance concept, and no canonicalization/
+deduplication decision; it is an entirely new, additive evidence
+layer.
+
+**Explicitly confirmed NOT done in FX-59**: no `EconomicEvent`
+linkage of any kind (FX-52 remains DEFER, and no occurrence identity
+was ever manufactured from a news headline or topic, per Section 87);
+no pair-specific news evidence snapshot of any kind (`EUR/USD` news
+snapshot, `USD/CAD` evidence bundle, pair relevance score -- all
+FX-60's own future job, per Section 88); no Market Context dashboard
+change (FX-61's own future job); no source-reputation/weighting of
+any kind (FX-EPIC-09's own future job, per Section 89); no sentiment/
+stance/importance/impact scoring of any kind, confirmed by a
+dedicated regression (Section 90); no canonical-group-level semantic
+aggregation (deliberately deferred to FX-60, per Section 2/3/11/67's
+own explicit boundary); no network I/O added anywhere (Section 86);
+no FX-57 adapter touched; no FX-58/58H canonicalization file touched;
+no scheduler/daemon of any kind. FX-60/FX-61/FX-EPIC-09/Decision
+Engine/Risk Engine not started. FX-49/FX-52 remain DEFER; FX-53
+remains BLOCKED.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-59 entry; `docs/
+ARCHITECTURE.md` carries a new "PIT-safe news relevance, entities &
+topics (FX-59, ADR 0008)" section; `docs/CURRENT_STATE.md` carries
+its own FX-59 entry immediately after the preserved FX-58H entry;
+`docs/adr/0008-pit-safe-news-semantics.md` carries the full
+architecture record and the real-data finding in full.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return
+FX-59 for architectural review.

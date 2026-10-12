@@ -2693,6 +2693,86 @@ _Last updated: 2026-09-27 (FX-54V)_
   ADR 0008 (the underlying architecture was never in question). **Stop
   after FX-58H — do not start FX-59/FX-60/FX-61/FX-EPIC-09, or any
   Decision/Risk Engine work.**
+- **FX-59: PIT-safe news relevance, entities & topics (complete —
+  real-data activation LIVE, ADR 0008)**. A SECOND derived evidence
+  layer above FX-56/57/58, strictly item-level (never against an
+  FX-58 canonical-group key): one new append-only table (`news_
+  semantic_annotation_vintages`, migration `4b2621787a37`,
+  downgrade-guarded) stores one classification per `NewsItemVintage`
+  actually classified, pinning the exact basis revision via a
+  composite FK, with `availability` always FTA's own classification-
+  run time. `GetNewsSemanticStateAsOf` distinguishes CURRENT/STALE/
+  UNCLASSIFIED PIT states — pinned by a dedicated real-Postgres worked
+  example proving a stale annotation never masquerades as current,
+  and a historical query before a new source revision remains
+  CURRENT for that instant. The `fx59_v1` classifier (`domain.news_
+  semantic_classifying.classify_news_semantics`) is a pure,
+  deterministic, rule-based function — zero LLM/embeddings/
+  statistical-NER/cloud-NLP/zero-shot/fuzzy-similarity/web-search
+  anywhere — combining a curated six-source profile registry
+  (publisher institution/jurisdiction/primary currency as structural
+  facts, never inferred from text) with phrase/token-boundary-safe
+  alias and topic-rule matching (`domain.news_semantic_text_
+  matching.find_matched_phrases`; `"CAD"` cannot match inside
+  `"decade"`, no bare case-fold-ambiguous `"US"` alias exists). An
+  unregistered source fails closed (`UnsupportedNewsSemanticSource
+  Error`); `ClassifyNewsOnce` classifies every candidate in memory
+  first, so one unsupported source leaves zero annotations half-
+  written. Entities: `INSTITUTION`/`JURISDICTION` only, stable
+  internal keys, not a fixed DB enum. Currency relevance: categorical
+  reasons only (no score) — every item gets its source's own primary
+  currency; a second currency requires an explicit currency-text
+  alias or an explicit mapped-institution mention, never a bare
+  jurisdiction mention alone. Topics: a closed nine-category v1
+  taxonomy, multi-label, zero-topic a valid result, never forced into
+  an `OTHER` catch-all; publisher identity alone never implies a
+  topic. No sentiment/stance/importance score anywhere in this layer.
+  Append-only determinism guard: same basis + same algorithm_version
+  + different output raises `NewsSemanticDeterminismError`, never
+  silently accepted as a second valid revision. 141 new test
+  functions across 16 new files (159 actual pytest cases once
+  parametrization is counted, verified via per-file `grep -c`, no
+  existing test file modified) — all passing. Full regression (six
+  source families + common news layer, 466 tests; FX-58/58H
+  canonicalization, 110 tests) passes; full deterministic default
+  suite `2438 passed, 10 deselected` (zero failures — the 7 previously
+  logged OANDA live-candle-backfill failures did not reproduce this
+  run; re-established, not assumed, and not altered by this story);
+  full `live_source` suite `9 passed, 1 failed` (the same pre-existing
+  BLS 403). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean (one
+  genuine, unrelated-to-logic contract-test trip was found and fixed
+  during this story: a domain-module docstring's own use of the word
+  "environment" contains the substring `"environ"`, which `tests/
+  contract/test_domain_boundary.py`'s own environment-variable-read
+  guard matches as a bare substring — reworded to "OS-level
+  configuration lookup," no functional change). **The required
+  pre-persistence dry-run safety gate (`scripts/classify_news.py
+  --dry-run` against the real 358-item dev database) found 2 multi-
+  currency and 17 explicit-foreign-institution classifications — EVERY
+  ONE directly inspected against the underlying stored text and
+  confirmed genuine** (two BoE speeches literally discussing "US
+  dollar dominance" and "Given at ECB Sintra Forum"; a Statistics
+  Canada release whose own summary genuinely credits "a methodology
+  developed by the Bank of Canada"). Zero false positives, zero alias
+  collisions, zero rule corrections made. First real write created
+  358 annotations (one per genuine item); the second, immediately-
+  repeated run reported `annotations_created=0`, confirming
+  idempotency. Topic distribution: MONETARY_POLICY 39, LABOUR_
+  EMPLOYMENT 17, INFLATION_PRICES 15, GROWTH_ACTIVITY 13,
+  INTERNATIONAL_TRADE 11, FINANCIAL_STABILITY 11, FISCAL_POLICY 10,
+  EXCHANGE_RATES 4, BANKING_REGULATION 4; 246 items matched no topic
+  (a correct reflection of the deliberately small taxonomy, not a
+  gap); 8 multi-topic items. Currency relevance: GBP 170, CAD 121,
+  USD 46, EUR 23. All 358 pre-existing source rows across six sources
+  and the 0-row FX-58 canonical relation table confirmed exactly
+  untouched throughout. **Explicitly NOT built**: no `EconomicEvent`
+  linkage (FX-52 remains DEFER); no pair-specific news evidence
+  snapshot (FX-60's own future job); no Market Context dashboard
+  change (FX-61); no source-reputation weighting (FX-EPIC-09); no
+  sentiment/stance/importance scoring; no canonical-group-level
+  aggregation (FX-60's own job); no network I/O anywhere; no
+  scheduler/daemon. **Stop after FX-59 — do not start FX-60/FX-61/
+  FX-EPIC-09, or any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
