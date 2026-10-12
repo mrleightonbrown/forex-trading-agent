@@ -2812,6 +2812,85 @@ _Last updated: 2026-09-27 (FX-54V)_
   **ADR 0008 amended with a dated addendum** — no new ADR. **Stop
   after FX-59H — do not start FX-60/FX-61/FX-EPIC-09, or any
   Decision/Risk Engine work.**
+- **FX-60: PIT-safe pair-specific news evidence snapshot (complete,
+  ADR 0009)**. A THIRD derived evidence layer, strictly a
+  presentation-facing read model over FX-56/57 (storage), FX-58
+  (canonicalization), and FX-59 (semantics) — no new table, no
+  migration, no snapshot write repository, no append-only snapshot
+  vintage. `GetPairNewsEvidenceSnapshot` recomputes its answer fresh
+  on every call, using ONE explicit caller-supplied `as_of` across
+  every constituent query; it never calls `UtcTimestamp.now()`
+  internally. Pair representation reuses `domain.instrument.
+  Instrument` directly — a new `parse_instrument` function parses
+  `"BASE/QUOTE"` strings (e.g. `"EUR/USD"`) into it, delegating every
+  validation rule to `Instrument.__post_init__`, never hard-coded to
+  only three pairs. `window_start`/`as_of` are both required,
+  explicit parameters — no hidden 24h/48h/72h policy. Canonical
+  grouping happens before presentation (`derive_canonical_groups`
+  reused directly, one group → at most one entry). Snapshot
+  eligibility uses evidence-eligible prospective news only
+  (`include_backfill=False` default). `story_first_seen_at` is the
+  MINIMUM `NewsItem.first_seen_at` among a group's own snapshot-
+  eligible members — never `source_published_at`/semantic
+  availability/vintage availability — so a late-arriving duplicate
+  that later merges into an older `SAME_STORY` group correctly
+  reverts the merged story's own age to the earliest member, pinned
+  by a dedicated real-Postgres worked example; a `BACKFILL`-only
+  member can never suppress a genuinely prospective story's own
+  correct age either. Pair relevance comes ONLY from FX-59's own
+  `currency_relevance` (`domain.news_pair_relevance.classify_pair_
+  relevance`, a pure function into `BASE_ONLY`/`QUOTE_ONLY`/`BOTH` —
+  purely categorical, never directional) — original FX-59 reasons are
+  preserved verbatim, canonically sorted/deduplicated. Only `CURRENT`
+  semantics may contribute; `STALE`/`UNCLASSIFIED` mean UNKNOWN, never
+  "irrelevant," and surface as `NewsPairSemanticGap` diagnostics with
+  `NewsPairSemanticCoverage.INCOMPLETE_SEMANTICS` — even inside an
+  otherwise pair-irrelevant group. Source withdrawal is tracked
+  separately (`active_relevant_member_keys`/`withdrawn_relevant_
+  member_keys`), never deleted; a deterministic, non-"best-source"
+  `display_member_news_item_key` exists purely for stable UI
+  selection. No score/weighting/source-reputation/sentiment/
+  importance of any kind anywhere in the new DTOs, confirmed by a
+  dedicated field-surface introspection test. 63 net new collected
+  test cases across 4 files (1 modified, 3 new; verified via actual
+  pytest collection, not merely raw `def test_` counts, since
+  parametrization expands several of them) — domain (`test_
+  instrument.py` 5→23 collected, net +18; `test_news_pair_relevance.py`
+  14 new), application (`test_get_pair_news_evidence_snapshot.py` 18
+  new, fake-repository-based), integration
+  (`test_pair_news_evidence_snapshot.py` 13 new, real Postgres,
+  covering every mandatory PIT worked example — same-story/not-same
+  relation PIT, transitive/contradictory grouping, the critical
+  window/dedup example, correction-does-not-revive, source-published-
+  time-does-not-control-window, semantic-availability PIT, stale-
+  semantics PIT, backfill window-anchor exclusion, algorithm-version
+  PIT, and a full-chain no-mutation proof) — all passing. Full
+  regression (six source families + common news layer 466, FX-58/58H
+  94, FX-59/59H 165) passes unchanged; full deterministic default
+  suite and full `live_source` suite both re-established and
+  reported separately (see `docs/NEXT_STEPS.md`'s own FX-60 entry for
+  exact counts). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean.
+  **The required real-data safety check was run against EUR/USD (69
+  active entries, 289 pair-irrelevant groups, `COMPLETE` coverage),
+  GBP/USD (215 active entries, including the one real `BOTH` entry —
+  a Bank of England speech explicitly discussing "US dollar
+  dominance"), and USD/CAD (167 active entries, zero `BOTH`
+  entries)** — every `BOTH`/foreign-institution entry and a
+  deterministic `BASE_ONLY`/`QUOTE_ONLY` sample were inspected
+  directly against the underlying FX-59 output and confirmed genuine;
+  zero false positives, zero aggregation-rule corrections needed. All
+  358 source items, all 358 semantic annotations, and the 0-row
+  canonical relation table confirmed exactly untouched before and
+  after every real-data run. **ADR 0009 created** — a new ADR, since
+  this is a genuinely new architectural layer (not a correction to an
+  existing one). **Explicitly NOT built**: no `EconomicEvent` linkage;
+  no Market Context visualization change (FX-61's own future job); no
+  source-reputation weighting (FX-EPIC-09); no sentiment/stance/
+  importance/base-vs-quote-balance scoring; no AI-generated news
+  summary; no article ranking beyond deterministic ordering; no
+  network I/O anywhere; no FX-56/57/58/58H/59/59H file touched; no
+  new schema/migration/persistence repository. **Stop after FX-60 —
+  do not start FX-61/FX-EPIC-09, or any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

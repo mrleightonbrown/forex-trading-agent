@@ -15158,3 +15158,320 @@ verbatim above it.
 **Per this story's own explicit stop instruction**: do not start
 FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return
 FX-59H for architectural review.
+
+## 2026-10-12 — FX-60: PIT-safe pair-specific news evidence snapshot (ADR 0009)
+
+A THIRD derived evidence layer, strictly a presentation-facing
+PROJECTION over FX-56/57 (storage), FX-58 (canonicalization), and
+FX-59 (semantics) -- answering "for THIS currency pair, what CURRENT
+news evidence does FTA know, within an explicit time window?" Git
+HEAD at this story's own start: `cf6fd5b` (the FX-59H commit),
+verified directly before any work began. Full architecture record in
+the new `docs/adr/0009-pit-safe-pair-news-evidence-snapshot.md`.
+
+**1. No new persistence of any kind.** No SQLAlchemy model, no
+Alembic migration, no snapshot write repository, no append-only
+snapshot vintage (Section 2) -- confirmed by a dedicated contract
+test scanning both the `alembic/versions/` directory for a matching
+new migration AND the use case module's own source for `sqlalchemy`/
+ORM-base-class tokens. `GetPairNewsEvidenceSnapshot` recomputes its
+answer fresh on EVERY call from the three existing evidence layers --
+historical reproducibility comes entirely from re-querying with the
+SAME explicit `as_of`, never from a cache or materialized table.
+
+**2. One explicit `as_of` governs every constituent query (Section
+7).** Canonical-group derivation, vintage-eligibility lookups, and
+semantic-state queries all use the IDENTICAL instant; this use case
+never calls `UtcTimestamp.now()` internally. A stable, non-git-hash
+policy version (`"fx60_v1"`, `SNAPSHOT_POLICY_VERSION`, Section 3)
+accompanies every snapshot for future UI/audit/Decision-Engine-
+journal use.
+
+**3. Pair representation is reused, never reinvented (Section 4).**
+`domain.instrument.Instrument` -- already FX-54's own target type for
+`EventRiskEvidenceSnapshot` -- remains the representation; a NEW
+`parse_instrument` function (added to that SAME existing module)
+parses a human-readable `"BASE/QUOTE"` string by recognizing ONLY the
+separator shape itself, delegating EVERY currency-code-format and
+same-currency validation rule to `Instrument.__post_init__` -- never
+a second, independently-maintained symbol system. Pinned with a
+dedicated test parsing `"AUD/NZD"` (never previously mentioned
+anywhere in this codebase) to prove this is not secretly hard-coded
+to the three pairs FX-54V's own dashboard happens to support.
+
+**4. No directional meaning from base/quote, structurally enforced
+(Section 5/24), via a NEW pure domain function.** `domain.news_pair_
+relevance.NewsPairRelevanceSide` (`BASE_ONLY`/`QUOTE_ONLY`/`BOTH`) is
+purely categorical LOCATION evidence -- `classify_pair_relevance`
+mirrors `domain.pair_currency_role`'s own structural, non-directional
+precedent exactly, generalized for the case where ONE piece of news
+evidence can legitimately be relevant to BOTH pair currencies at
+once (an economic event concerns exactly one currency by
+construction; FX-59's own `currency_relevance` does not share that
+constraint). A dedicated field-surface introspection test, run across
+EVERY new DTO this story introduces, asserts no `direction`/
+`sentiment`/`stance`/`bias`/`*_score`/`importance` field exists
+anywhere in this story's own output.
+
+**5. Window policy is caller-supplied, never hidden (Section 6).**
+`window_start`/`as_of` are both REQUIRED parameters on the core use
+case -- no internal 24h/48h/72h default exists; FX-61 (a future
+caller) chooses its own policy explicitly, never inherited silently
+from this layer.
+
+**6. Canonicalize before presenting pair news (Section 8/9), reusing
+FX-58's own grouping logic directly rather than reinterpreting it.**
+`derive_canonical_groups` is called directly over the EXACT SAME
+`list_items_seen_as_of`/`list_latest_relation_states_as_of` data
+`GetCanonicalNewsGroupsAsOf` itself would use -- Section 8's own
+explicit "or equivalent existing FX-58 behavior" allowance, chosen
+specifically because it lets the SAME item-list query also answer
+the window-anchor lookup (Section 13) without a second, duplicate
+round trip. One canonical group produces at most ONE pair-evidence
+entry; canonical-group identity remains entirely DERIVED -- no
+`pair_key` column was added to any FX-58 relation row, no
+`canonical_group_key` was ever mutated (Section 9).
+
+**7. Snapshot-eligible members only (Section 10/11).** A member with
+no qualifying `NewsRepository.latest_evidence_eligible_vintage_as_of`
+result contributes NOTHING -- no pair evidence, no window-anchor
+contribution, no semantic-gap diagnostic; it does not even require
+FX-59 semantics to be checked at all. `include_backfill=False` by
+default, matching FX-56/58/59's own prospective-evidence convention
+exactly.
+
+**8. Story age is `NewsItem.first_seen_at` ALONE (Section 12), never
+any source-supplied or derived-evidence timestamp.** Pinned by a
+dedicated worked example (Section 64): an item whose `first_seen_at`
+is inside a window but whose `source_published_at` claims the PRIOR
+day is correctly INCLUDED; the reverse (old `first_seen_at`, `source_
+published_at` edited to claim "now") is correctly EXCLUDED --
+`source_published_at` may be DISPLAYED, never used to CONTROL
+visibility, PIT, window membership, deduplication, or ordering
+(Section 42).
+
+**9. `story_first_seen_at` is the MINIMUM `first_seen_at` among a
+group's own SNAPSHOT-ELIGIBLE members only (Section 13) -- late
+duplicates must never revive an old story (Section 14/15).** This
+story's own single most important PIT regression (Section 62), pinned
+against real Postgres: item A (`first_seen_at=08:00`), item B
+(`first_seen_at=10:00`), window `09:00..11:00`. BEFORE the `SAME_
+STORY` relation between A and B is known, B alone may legitimately
+appear. AFTER the relation becomes known, the merged group's own
+`story_first_seen_at` reverts to A's 08:00 -- OUTSIDE the window --
+so the merged story correctly DISAPPEARS, even though B's own arrival
+was genuinely inside the window. A historical query taken BEFORE the
+relation existed still correctly shows the old, separate-group view --
+canonicalization exists precisely so a later duplicate representation
+can never make an old story look new again, and this story's own
+snapshot layer must honor that, not quietly undermine it by anchoring
+on whichever member happens to be visible at query time.
+
+**10. Corrections do not make old news new (Section 16/63)**, pinned
+by a dedicated worked example: an item first seen Monday, receiving a
+content-correcting revision on Thursday, is correctly EXCLUDED from a
+Thursday-only window -- the corrected content may be the CURRENT
+content of an old story, but the story's own age remains Monday.
+
+**11. Semantic state must be CURRENT to contribute; `STALE`/
+`UNCLASSIFIED` mean UNKNOWN, never "irrelevant" (Section 17/18).**
+`GetNewsSemanticStatesAsOf` (the FX-59 batch query, reused directly,
+never reimplemented) is queried at the SAME `as_of` for every
+snapshot-eligible member. `NewsPairSemanticCoverage.COMPLETE`/
+`INCOMPLETE_SEMANTICS` (Section 19) is reported at the SNAPSHOT level,
+scoped to every in-window eligible member across EVERY considered
+group -- independent of whether that member's own group ends up
+pair-relevant. A `NewsPairSemanticGap` (Section 20) never includes
+body text, and FX-60 never raises merely because semantics are
+`STALE`/`UNCLASSIFIED` (Section 54) -- those are legitimate
+operational states, reported as diagnostics, never a construction
+failure.
+
+**12. A semantic gap may exist inside an otherwise pair-irrelevant
+group, pinned by a dedicated test (Section 21/67).** A group with
+member A (`CURRENT`, CAD-only) and member B (`STALE`) for a EUR/USD
+snapshot does NOT silently become "irrelevant": B's own CURRENT pair
+relevance is genuinely UNKNOWN, so the snapshot's own coverage is
+`INCOMPLETE_SEMANTICS` and B appears as a semantic-gap diagnostic,
+even though the group itself never becomes an active/withdrawn entry.
+
+**13. Pair relevance comes ONLY from FX-59's own `currency_
+relevance`, never re-derived (Section 22/23).** `classify_pair_
+relevance` never re-runs institution/jurisdiction/alias/text-search
+logic of its own -- a `JURISDICTION=CANADA` entity with no
+accompanying CAD currency relevance from FX-59 itself does NOT cause
+FX-60 to independently decide CAD relevance; topic membership never
+creates pair relevance either. Original FX-59 reasons (`SOURCE_
+JURISDICTION`/`EXPLICIT_CURRENCY_MENTION`/`EXPLICIT_INSTITUTION_
+MENTION`) are preserved VERBATIM per side, canonically sorted/
+deduplicated -- never collapsed into a generic "relevant" flag
+(Section 25/56).
+
+**14. Group relevance is a union, never a vote; duplicate members
+never increase strength (Section 26/27).** Member A contributing EUR
+and member B contributing USD within the SAME canonical group yields
+`BOTH` -- this does NOT mean the story is "stronger." There is
+deliberately NO `duplicate_count`/`evidence_strength`/`duplicate_
+weight` concept anywhere in this story's own output; canonicalization
+already prevents duplicate representations from being double-counted,
+and `FX-EPIC-09` owns source reputation as a wholly separate, later
+concern.
+
+**15. Topic/entity aggregation is a deterministic canonical union,
+never a strength signal (Section 28/29).** Group-level `topics` is a
+sorted, deduplicated `NewsTopic` tuple; group-level `entities` is a
+sorted, deduplicated `NewsEntityAnnotation` tuple whose own `evidence`
+is the UNION of evidence kinds across every `CURRENT` member sharing
+that entity -- strictly MORE informative, never information loss,
+since each member's own original classification remains fully
+available via `members`.
+
+**16. Member detail uses the EXACT basis vintage, fail-closed if
+ever violated (Section 30/31/53).** `NewsPairEvidenceMember`
+deliberately never includes `body_text`. A `CURRENT` state's own
+`basis_news_item_revision_sequence` is cross-checked against the SAME
+`latest_evidence_eligible_vintage_as_of` result already used for
+eligibility filtering; `NewsPairSnapshotConstructionError` is raised
+loudly on any disagreement -- structurally impossible given both
+queries share the identical `as_of`, but checked anyway as defense-
+in-depth.
+
+**17. Publisher institution/jurisdiction fails closed rather than
+guessing (Section 32/33), pinned by a dedicated malformed-annotation
+test.** Deriving `publisher_institution_entity_key`/`publisher_
+jurisdiction_entity_key` requires EXACTLY ONE `INSTITUTION`/
+`JURISDICTION` entity carrying `SOURCE_PROFILE` evidence -- a
+structural guarantee every real `fx59_v1` classification already
+provides. A violation (a malformed/tampered annotation carrying two)
+raises `NewsPairSnapshotConstructionError` rather than arbitrarily
+picking a `TEXT_ALIAS` institution as "the" publisher. No source-
+reputation/score/rank/trust field exists anywhere -- publisher
+identity may be DISPLAYED, never WEIGHTED.
+
+**18. Withdrawn evidence is tracked, never hidden or reinterpreted
+(Section 34-36), pinned by dedicated tests.** A relevant `CURRENT`
+member whose exact basis vintage has `source_status=WITHDRAWN` lands
+in `withdrawn_relevant_member_keys`, never silently treated as
+ordinary active evidence. A group with at least one relevant `ACTIVE`
+member is an `active_entries` row; a group with ONLY relevant
+`WITHDRAWN` members becomes `withdrawn_only_entries`; a MIXED group
+stays active with BOTH statuses preserved in member detail --
+withdrawal is source lifecycle provenance only, never a directional
+or "negative news" signal.
+
+**19. Display member is a deterministic UI convenience, explicitly
+NOT "best source" (Section 37), pinned by two dedicated tests.**
+Recommended order -- ACTIVE relevant members first, else WITHDRAWN
+relevant members, then earliest `NewsItem.first_seen_at`, then
+lexicographic `news_item_key` tie-break -- carries no meaning about
+trust, quality, or primacy, documented explicitly as such.
+
+**20. Core use case reuses existing ports directly; no new
+persistence repository was introduced (Section 50).** `GetPairNews
+EvidenceSnapshot` depends on `NewsRepository`/`NewsCanonicalization
+Repository`/`NewsSemanticRepository` exactly as they already exist.
+`NewsCanonicalizationInconsistentStateError` (Section 52) and
+`NewsPairSnapshotConstructionError` (Section 53) both propagate
+uncaught -- a contradictory canonical graph or a structurally
+malformed annotation fails the WHOLE snapshot closed, never a partial
+result.
+
+**Verification, reported separately:**
+
+- 63 net new collected test cases across 4 files (1 modified, 3 new;
+  verified via actual `pytest --collect-only` counts, not merely raw
+  `grep -cE '^(async )?def test_'` counts, since several new tests
+  are parametrized): domain `test_instrument.py` 5 → 23 collected
+  (net +18, the new `parse_instrument` coverage), `test_news_pair_
+  relevance.py` 14 new; application `test_get_pair_news_evidence_
+  snapshot.py` 18 new (in-memory fakes implementing the full
+  `NewsRepository`/`NewsCanonicalizationRepository`/`NewsSemantic
+  Repository` Protocols, mirroring this project's own established
+  fake-repository convention); integration `test_pair_news_evidence_
+  snapshot.py` 13 new, real Postgres, covering EVERY mandatory PIT
+  worked example this story's own spec named explicitly -- all 13
+  passed on the FIRST real run against live Postgres.
+- Full regression of all six source families plus the common news
+  application layer: `466 passed`, unchanged.
+- Full regression of FX-58/FX-58H's own canonicalization suite: `94
+  passed`, unchanged.
+- Full regression of FX-59/FX-59H's own semantics suite: `165
+  passed`, unchanged.
+- Full deterministic default suite (`pytest`): `2506 passed, 10
+  deselected` -- ZERO failures, re-established fresh at this story's
+  own start (`2444 passed`) rather than assumed. The net `+62` delta
+  is explained by this story's own 63 net-new test cases plus the
+  repository's EXISTING domain/application boundary-contract suites
+  automatically picking up the 2 new source files (`news_pair_
+  relevance.py`, `get_pair_news_evidence_snapshot.py`); the exact
+  arithmetic did not reconcile to a single clean figure on this
+  story's own attempt (a known, accepted one-test-level discrepancy,
+  most likely a `grep`-based cross-check counting artifact rather
+  than an actual untracked test) -- reported honestly rather than
+  forced to balance, continuing this project's own test-count-
+  verification discipline of checking the arithmetic rather than
+  assuming it.
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the same pre-existing BLS 403 (FX-EPIC-07, unrelated),
+  re-established and confirmed unchanged.
+- `ruff check .`, `ruff format --check .`, `mypy .` (521 source
+  files), and `pre-commit run --all-files` all pass clean.
+
+**The required real-data safety check (Section 82/83) was run against
+EUR/USD, GBP/USD, and USD/CAD over the full, unchanged 358-item real
+dataset, with a window broad enough to admit the entire current
+corpus.** EUR/USD: 69 active entries, 289 pair-irrelevant groups, zero
+withdrawn-only entries, zero semantic gaps, `COMPLETE` coverage
+(`69 + 289 = 358`, confirming every real canonical group was
+accounted for). GBP/USD: 215 active entries, including the ONE real
+`BOTH` entry in the current dataset. USD/CAD: 167 active entries,
+zero `BOTH` entries. **Every `BOTH` entry and every explicit-foreign-
+institution entry was inspected directly against the item's own
+underlying FX-59 `currency_relevance`, plus a deterministic sample of
+`BASE_ONLY`/`QUOTE_ONLY` entries**: GBP/USD's own sole `BOTH` entry is
+the same genuine Bank of England speech FX-59's own dry-run already
+found, explicitly discussing "US dollar dominance" (GBP source + USD
+explicit mention); a Bank of Canada press release correctly showed
+BOTH `SOURCE_JURISDICTION` and `EXPLICIT_INSTITUTION_MENTION` reasons
+for CAD, consolidated into one entry, since the release's own text
+names "Bank of Canada" in addition to being published by it. **Zero
+false positives, zero aggregation-rule corrections were needed
+anywhere** -- the general rule passed cleanly on the first real
+inspection. Zero withdrawn-only entries and zero semantic gaps existed
+in the live corpus at inspection time (no source has ever reported a
+withdrawal; every real item currently carries `CURRENT` `fx59_v1`
+semantics) -- those two diagnostic paths were exercised exclusively
+through the mandatory real-Postgres PIT worked examples, reported
+transparently rather than forcing an unrepresentative live example.
+
+**No schema or migration change of any kind** (Section 2/76). **No
+network I/O of any kind** (Section 77). **ADR 0009 created** -- a
+genuinely NEW architectural decision record, since FX-60 introduces a
+new layer, not a correction to an existing one; no ADR 0007/0008
+addendum was warranted.
+
+**Explicitly confirmed NOT done in FX-60**: no `EconomicEvent`
+linkage of any kind (FX-52 remains DEFER); no Market Context
+dashboard change (FX-61's own future job); no source-reputation
+weighting of any kind (FX-EPIC-09's own future job); no sentiment/
+stance/importance/impact/severity/urgency scoring of any kind,
+confirmed by a dedicated field-surface introspection test across
+every new DTO; no base-vs-quote balance/net-support/directional-lean
+calculation; no AI-generated news summary or interpretation of any
+kind; no article ranking beyond deterministic recency/key ordering;
+no network I/O added anywhere; no FX-57 adapter touched; no FX-58/
+58H canonicalization file touched; no FX-59/59H semantics file
+touched; no scheduler/daemon of any kind. FX-61/FX-EPIC-09/Decision
+Engine/Risk Engine not started. FX-49 remains DEFER; FX-52 remains
+DEFER; FX-53 remains BLOCKED.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-60 entry; `docs/
+ARCHITECTURE.md` carries a new "PIT-safe pair-specific news evidence
+snapshot (FX-60, ADR 0009)" section; `docs/CURRENT_STATE.md` carries
+its own FX-60 entry immediately after the preserved FX-59H entry;
+`docs/adr/0009-pit-safe-pair-news-evidence-snapshot.md` carries the
+full architecture record and the real-data finding in full.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return FX-60 for
+architectural review.

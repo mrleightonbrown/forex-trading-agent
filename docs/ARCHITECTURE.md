@@ -3062,6 +3062,123 @@ stance/importance scoring of any kind; no canonical-group-level
 aggregation (FX-60's own job); no network I/O of any kind; no
 scheduler/daemon.
 
+## PIT-safe pair-specific news evidence snapshot (FX-60, ADR 0009)
+
+A THIRD derived layer, strictly a presentation-facing PROJECTION over
+FX-56/57 (storage), FX-58 (canonicalization), and FX-59 (semantics) --
+introduces no new table, no migration, no snapshot write repository,
+no append-only snapshot vintage. `GetPairNewsEvidenceSnapshot`
+recomputes its answer fresh on every call from the three existing
+evidence layers, using ONE explicit caller-supplied `as_of` across
+every constituent query (canonical-group derivation, vintage
+eligibility, semantic state) -- it never calls `UtcTimestamp.now()`
+internally. A stable, non-persisted policy version (`"fx60_v1"`,
+`SNAPSHOT_POLICY_VERSION`) accompanies every snapshot for downstream
+audit/journal use.
+
+**Pair representation is reused, not reinvented.** `domain.
+instrument.Instrument` (already used by FX-54's own `EventRiskEvidence
+Snapshot`) remains the target type; a new `parse_instrument` function
+on that same module parses a human-readable `"BASE/QUOTE"` string
+(e.g. `"EUR/USD"`) into it, delegating every currency-code-format and
+same-currency validation rule to `Instrument.__post_init__` itself --
+never a parallel symbol system, and never hard-coded to only three
+pairs.
+
+**Window policy is caller-supplied, never hidden.** `window_start`/
+`as_of` are both required parameters on the core use case -- no
+internal 24h/48h/72h default exists anywhere in this layer; a future
+caller (FX-61) chooses its own policy explicitly.
+
+**Canonicalize before presenting.** `derive_canonical_groups` runs
+first (reusing the exact same `list_items_seen_as_of`/`list_latest_
+relation_states_as_of` data `GetCanonicalNewsGroupsAsOf` itself would
+use, so the item list needed for the window-anchor lookup is fetched
+once, not duplicated) -- one canonical group produces at most ONE
+pair-evidence entry; canonical group identity remains entirely
+derived, never persisted here.
+
+**Snapshot eligibility uses evidence-eligible PROSPECTIVE news only**
+(`include_backfill=False` by default, matching FX-56/58/59's own
+convention) -- a member with no qualifying `NewsRepository.latest_
+evidence_eligible_vintage_as_of` result contributes nothing: no pair
+evidence, no window-anchor contribution, no semantic-gap diagnostic.
+
+**Story age is `NewsItem.first_seen_at` alone -- never `source_
+published_at`, semantic annotation availability, or any vintage's own
+`availability`.** `story_first_seen_at` is the MINIMUM `first_seen_at`
+among a group's own SNAPSHOT-ELIGIBLE members only, so a `BACKFILL`-
+only member that would otherwise be a group's earliest member is
+excluded from this computation entirely -- an excluded historical
+member can never make a genuinely prospective story look artificially
+old. A late-arriving duplicate that later merges into an existing
+`SAME_STORY` group does NOT make an old story look new again: once
+the relation is known, the merged group's own anchor reverts to the
+earliest member's `first_seen_at`, pinned by a dedicated worked
+example where a story crossing a requested window boundary correctly
+disappears from the snapshot the instant its own duplicate
+representation becomes known as the SAME underlying story.
+
+**Pair relevance comes ONLY from FX-59's own `currency_relevance`,
+never re-derived.** `domain.news_pair_relevance.classify_pair_
+relevance` is a pure function over already-decided FX-59 output into
+`NewsPairRelevanceSide` (`BASE_ONLY`/`QUOTE_ONLY`/`BOTH`) -- purely
+categorical location evidence, never a directional/bullish/bearish
+signal; it never re-runs institution/jurisdiction/alias/text-search
+logic, and never infers relevance from entities or topics alone.
+Original FX-59 reasons (`SOURCE_JURISDICTION`/`EXPLICIT_CURRENCY_
+MENTION`/`EXPLICIT_INSTITUTION_MENTION`) are preserved verbatim, per
+side, canonically sorted/deduplicated -- never collapsed into a
+generic "relevant" flag.
+
+**Only `CURRENT` semantics may contribute; `STALE`/`UNCLASSIFIED`
+mean UNKNOWN, never "irrelevant."** A non-`CURRENT` snapshot-eligible,
+in-window member is surfaced as a `NewsPairSemanticGap` diagnostic
+instead -- even inside a canonical group with no OTHER pair-relevant
+member, so genuinely unknown relevance is never silently reported as
+a confirmed absence. `NewsPairSemanticCoverage.INCOMPLETE_SEMANTICS`
+is reported whenever any in-window, eligible member across ANY
+considered group is non-`CURRENT`, independent of whether that
+member's own group happens to be pair-relevant.
+
+**Source withdrawal is tracked separately from active evidence, never
+deleted.** A relevant `CURRENT` member whose exact basis vintage has
+`source_status = WITHDRAWN` lands in `withdrawn_relevant_member_
+keys`; a group with at least one relevant `ACTIVE` member is an
+active entry, a group with only relevant `WITHDRAWN` members becomes
+a withdrawn-only entry, and a mixed group stays active with full
+member-level status detail preserved. A deterministic, non-"best-
+source" `display_member_news_item_key` (ACTIVE members first, then
+WITHDRAWN, then earliest `first_seen_at`, then lexicographic
+news_item_key) exists purely for stable UI selection.
+
+**No score, weighting, source reputation, sentiment, or importance
+of any kind** -- confirmed by a dedicated field-surface introspection
+test across every new DTO (`NewsPairEvidenceSnapshot`/`NewsPairEvidence
+Group`/`NewsPairEvidenceMember`), asserting no `direction`/`sentiment`/
+`stance`/`bias`/`*_score`/`importance` field exists anywhere in this
+story's own output. No `EconomicEvent` join, no market-regime/
+strategy-signal/policy-rate-differential merge -- FX-60 produces the
+NEWS evidence family only.
+
+**Real-data activation**: the required safety check was run against
+EUR/USD (69 active entries, 289 pair-irrelevant groups, `COMPLETE`
+coverage), GBP/USD (215 active entries, including the one real `BOTH`
+entry -- a Bank of England speech explicitly discussing "US dollar
+dominance"), and USD/CAD (167 active entries, zero `BOTH` entries) --
+every `BOTH`/foreign-institution entry and a deterministic `BASE_
+ONLY`/`QUOTE_ONLY` sample were inspected directly against the
+underlying FX-59 output and confirmed genuine.
+
+**Explicitly NOT built in FX-60**: no `EconomicEvent` linkage; no
+Market Context visualization change (FX-61's own future job); no
+source-reputation weighting (FX-EPIC-09); no sentiment/stance/
+importance/base-vs-quote-balance scoring of any kind; no AI-
+generated news summary; no article ranking beyond deterministic
+recency/key ordering; no network I/O of any kind; no FX-56/57/58/
+58H/59/59H file touched; no new schema/migration/persistence
+repository.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
