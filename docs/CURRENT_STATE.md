@@ -2773,6 +2773,45 @@ _Last updated: 2026-09-27 (FX-54V)_
   aggregation (FX-60's own job); no network I/O anywhere; no
   scheduler/daemon. **Stop after FX-59 — do not start FX-60/FX-61/
   FX-EPIC-09, or any Decision/Risk Engine work.**
+- **FX-59H: historical determinism-guard hardening (complete)**. A
+  narrow correction to FX-59's own append-only determinism check:
+  `RecordNewsSemanticAnnotation` previously compared an incoming
+  classification against only the item's currently-latest annotation,
+  which missed the case where an older `algorithm_version` becomes
+  current again later (`fx59_v1` → `fx59_v2` → `fx59_v1`) — the
+  latest row at that point is the `fx59_v2` one, so a latest-only
+  check could never compare the new `fx59_v1` output against the
+  earlier, already-stored `fx59_v1` output. The check now runs
+  against the item's ENTIRE stored history (reusing the existing
+  `list_annotation_vintages_for_item`, no new repository method, no
+  schema change, migration `4b2621787a37` untouched): a repeated old
+  algorithm with the SAME output correctly mints `REVISION_ADDED`
+  (FTA genuinely recording that policy is current again); a repeated
+  old algorithm with a DIFFERENT output correctly raises
+  `NewsSemanticDeterminismError`, with no new row persisted. PIT
+  ordering remains checked strictly first, unconditionally, before
+  this historical check. No classifier-policy change of any kind
+  (source profiles/aliases/topic rules/text matching all unchanged);
+  `algorithm_version` remains `fx59_v1`. 6 net new test functions
+  (verified via per-file `grep -c` before/after: unit +4, e2e +2) —
+  165 focused FX-59/FX-59H tests total, all passing. Full regression
+  (six source families + common news layer 466, FX-58/58H 94 — the
+  text-normalization suite's own 16 tests were counted under the
+  six-source regression this time rather than separately, so 94 + 16
+  = 110 matches the prior FX-58/58H total exactly, no actual change)
+  passes; full deterministic default suite `2444 passed, 10
+  deselected` (zero failures, net +6 over the pre-story baseline of
+  2438); full `live_source` suite `9 passed, 1 failed` (same
+  pre-existing BLS 403). `ruff`/`ruff format`/`mypy`/`pre-commit` all
+  clean. No classifier re-run was required or forced: the renewed
+  dry-run and a real write-mode run against the unchanged 358-item
+  dataset both reported `annotations_created=0, revisions_added=0,
+  unchanged=358`, confirming the correction altered no existing real
+  decision. All 358 source items, all 358 semantic annotations, and
+  the 0-row canonical relation table confirmed exactly untouched.
+  **ADR 0008 amended with a dated addendum** — no new ADR. **Stop
+  after FX-59H — do not start FX-60/FX-61/FX-EPIC-09, or any
+  Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

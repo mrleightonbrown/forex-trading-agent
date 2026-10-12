@@ -3,8 +3,11 @@
 ## Status
 
 **Accepted -- code/schema/tests complete, and real-data activation
-COMPLETE, 2026-10-12.** The required pre-persistence dry-run safety
-gate (Section 79/80 of FX-59's own spec) found 2 multi-currency
+COMPLETE, 2026-10-12. A narrow recording-invariant correction (FX-59H,
+2026-10-12) is recorded in this ADR's own addendum at the end of this
+document -- the classifier policy, schema, and real annotations below
+are otherwise unchanged by it.** The required pre-persistence dry-run
+safety gate (Section 79/80 of FX-59's own spec) found 2 multi-currency
 classifications and 17 explicit-foreign-institution classifications
 against the real, already-ingested 358-item dataset; every one was
 directly inspected against the underlying stored text and confirmed
@@ -180,3 +183,45 @@ inspected gate, not assumed.
   cleared to begin, pending separate authorization -- it may reuse
   `GetNewsSemanticStatesAsOf`'s batch PIT query directly, per this
   ADR's own Decision 11/12.
+
+## FX-59H addendum (2026-10-12): determinism enforced across an
+item's FULL history, not merely its latest row
+
+**Finding.** FX-59's own original `RecordNewsSemanticAnnotation`
+checked Decision 9's own determinism invariant (`(basis_news_item_
+revision_sequence, algorithm_version)` -> at most one classification
+payload) ONLY against the item's currently-LATEST annotation. This
+missed a real gap: if an OLDER `algorithm_version` becomes current
+again later (e.g. `fx59_v1` -> `fx59_v2` -> `fx59_v1`), the item's own
+latest row at that third instant is the `fx59_v2` one, not the
+`fx59_v1` one -- so a latest-only check could never compare the new
+`fx59_v1` output against the OLDER, already-stored `fx59_v1` output,
+and a genuinely non-deterministic classifier output could have slipped
+past undetected.
+
+**Correction.** The invariant is now checked against the item's
+ENTIRE stored annotation history (via the existing `list_annotation_
+vintages_for_item`, no new repository method, no schema change): for
+every historical row sharing the SAME `(basis_news_item_revision_
+sequence, algorithm_version)` pair as the incoming classification, its
+own stored payload must equal the incoming one, or `NewsSemantic
+DeterminismError` is raised -- regardless of whether that historical
+row is currently the item's own latest. PIT ordering is still checked
+strictly FIRST, unconditionally, before this historical check, so an
+out-of-order `availability` is rejected before any determinism
+comparison runs. The basis-revision dimension remains part of the
+deterministic key exactly as before (Decision 6/9) -- two different
+basis revisions under the same algorithm are never compared against
+each other. No unique database constraint was added on `(news_item_
+key, basis_news_item_revision_sequence, algorithm_version)`, since a
+later revision genuinely reusing an earlier basis+algorithm pair (the
+`fx59_v1` -> `fx59_v2` -> `fx59_v1` sequence) is a legitimate
+`REVISION_ADDED`, never a once-only identity.
+
+**Scope.** This is a recording-invariant fix only -- no classifier
+policy, source profile, alias registry, topic rule, or text-matching
+behavior changed; `algorithm_version` remains `fx59_v1`; no new real
+annotation revision was required (the dry-run and a real write-mode
+run against the unchanged 358-item dataset both reported `created=0,
+revisions_added=0, unchanged=358`, confirming the correction altered
+no existing decision). No migration was needed or made.

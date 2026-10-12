@@ -3023,17 +3023,28 @@ automatically `FISCAL_POLICY`); text evidence is always required.
 `currency_relevance` -- no hawkish/dovish, bullish/bearish, or 0-100
 rank field exists in this layer.
 
-**Append-only determinism guard.** `RecordNewsSemanticAnnotation`
-mints a new revision when the basis revision OR the algorithm_version
-changes (even if the resulting output is identical -- the annotation
-must truthfully pin what was actually classified); re-classifying the
-SAME basis under the SAME algorithm with the SAME output is `UNCHANGED`
-(idempotent); the SAME basis + SAME algorithm producing a genuinely
-DIFFERENT output is treated as `NewsSemanticDeterminismError` -- a
-deterministic classifier must never present two outputs as both valid
-for identical inputs. Concurrent-write safety (the same `inserted`-
-flag-checking discipline FX-58H established) is proven against real,
-two-session Postgres races at the use-case level.
+**Append-only determinism guard, enforced across an item's ENTIRE
+stored history, not merely its currently-latest row (corrected by
+FX-59H).** `RecordNewsSemanticAnnotation` mints a new revision when
+the basis revision OR the algorithm_version changes relative to the
+item's own LATEST row (even if the resulting output is identical --
+the annotation must truthfully pin what was actually classified);
+re-classifying the SAME basis under the SAME algorithm with the SAME
+output is `UNCHANGED` (idempotent). The determinism check itself --
+the SAME `(basis_news_item_revision_sequence, algorithm_version)`
+pair must never be associated with two different outputs
+(`NewsSemanticDeterminismError`) -- is checked against EVERY stored
+historical row for the item, never only its latest: an older
+`algorithm_version` can legitimately become current again later
+(e.g. `fx59_v1` -> `fx59_v2` -> `fx59_v1`, correctly `REVISION_ADDED`
+if the output matches the earlier `fx59_v1` row, correctly rejected
+if it does not), and a latest-only check would miss that comparison
+once a different algorithm_version became the item's own current
+state. No unique database constraint exists on that pair -- the
+invariant is "same input implies same output," never "an input
+combination may recur only once." Concurrent-write safety (the same
+`inserted`-flag-checking discipline FX-58H established) is proven
+against real, two-session Postgres races at the use-case level.
 
 **Real-data activation is LIVE**: the required pre-persistence dry-run
 against the real 358-item dataset found 2 multi-currency and 17

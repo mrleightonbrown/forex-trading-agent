@@ -25,6 +25,8 @@ from forex_agent.application.use_cases.get_news_semantic_state_as_of import (
     NewsSemanticState,
 )
 from forex_agent.application.use_cases.record_news_semantic_annotation import (
+    NewsSemanticAnnotationOutcome,
+    NewsSemanticDeterminismError,
     RecordNewsSemanticAnnotation,
 )
 from forex_agent.domain.news_evidence_disposition import NewsEvidenceDisposition
@@ -338,3 +340,98 @@ async def test_algorithm_version_pit_example(
     assert state_at_1030.state is NewsSemanticState.CURRENT
     assert state_at_1030.annotation is not None
     assert state_at_1030.annotation.algorithm_version == "fx59_v1"
+
+
+# --- FX-59H: historical determinism enforced across the FULL record,
+# not merely the item's currently-latest row -- against real Postgres.
+
+
+async def test_repeated_old_algorithm_same_output_is_revision_added_real_postgres(
+    news_repo: SqlAlchemyNewsRepository, semantic_repo: SqlAlchemyNewsSemanticRepository
+) -> None:
+    item = await _make_item(news_repo, "fx59h-same-1", availability=_ts(9))
+    record = RecordNewsSemanticAnnotation(semantic_repo)
+    candidate = NewsSemanticClassificationCandidate(
+        news_item_key=item,
+        source_key=TEST_SOURCE_KEY,
+        basis_news_item_revision_sequence=0,
+        basis_availability=_ts(9),
+        headline="The Federal Reserve met today.",
+        summary=None,
+        body_text=None,
+        source_content_type=None,
+        source_channel=None,
+    )
+    classification = classify_news_semantics(candidate)
+
+    # T1: fx59_v1 -> A.
+    await record(
+        item, 0, availability=_ts(10), classification=classification, algorithm_version="fx59_v1"
+    )
+    # T2: fx59_v2 -> A (same output, different algorithm_version).
+    await record(
+        item, 0, availability=_ts(11), classification=classification, algorithm_version="fx59_v2"
+    )
+    # T3: fx59_v1 -> A again -- the item's own latest row at T3 is the
+    # fx59_v2 one, so this must be REVISION_ADDED, not UNCHANGED.
+    result = await record(
+        item, 0, availability=_ts(12), classification=classification, algorithm_version="fx59_v1"
+    )
+
+    assert result.outcome is NewsSemanticAnnotationOutcome.REVISION_ADDED
+    assert result.annotation.revision_sequence == 2
+    all_vintages = await semantic_repo.list_annotation_vintages_for_item(item)
+    assert len(all_vintages) == 3
+
+
+async def test_repeated_old_algorithm_different_output_is_determinism_error_real_postgres(
+    news_repo: SqlAlchemyNewsRepository, semantic_repo: SqlAlchemyNewsSemanticRepository
+) -> None:
+    item = await _make_item(news_repo, "fx59h-diff-1", availability=_ts(9))
+    record = RecordNewsSemanticAnnotation(semantic_repo)
+    candidate = NewsSemanticClassificationCandidate(
+        news_item_key=item,
+        source_key=TEST_SOURCE_KEY,
+        basis_news_item_revision_sequence=0,
+        basis_availability=_ts(9),
+        headline="The Federal Reserve met today.",
+        summary=None,
+        body_text=None,
+        source_content_type=None,
+        source_channel=None,
+    )
+    classification_a = classify_news_semantics(candidate)
+    different_candidate = NewsSemanticClassificationCandidate(
+        news_item_key=item,
+        source_key=TEST_SOURCE_KEY,
+        basis_news_item_revision_sequence=0,
+        basis_availability=_ts(9),
+        headline="The Federal Reserve met today about Canada and the Bank of Canada.",
+        summary=None,
+        body_text=None,
+        source_content_type=None,
+        source_channel=None,
+    )
+    classification_c = classify_news_semantics(different_candidate)
+    assert classification_a != classification_c  # a genuinely different output
+
+    # T1: fx59_v1 -> A. T2: fx59_v2 -> (anything). T3: fx59_v1 -> C.
+    await record(
+        item, 0, availability=_ts(10), classification=classification_a, algorithm_version="fx59_v1"
+    )
+    await record(
+        item, 0, availability=_ts(11), classification=classification_a, algorithm_version="fx59_v2"
+    )
+
+    with pytest.raises(NewsSemanticDeterminismError):
+        await record(
+            item,
+            0,
+            availability=_ts(12),
+            classification=classification_c,
+            algorithm_version="fx59_v1",
+        )
+
+    # No third row minted -- the two existing rows remain untouched.
+    all_vintages = await semantic_repo.list_annotation_vintages_for_item(item)
+    assert len(all_vintages) == 2

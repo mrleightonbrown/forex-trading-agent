@@ -14986,3 +14986,175 @@ architecture record and the real-data finding in full.
 **Per this story's own explicit stop instruction**: do not start
 FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return
 FX-59 for architectural review.
+
+## 2026-10-12 — FX-59H: historical determinism-guard hardening
+
+A NARROW correction to FX-59's own recording invariant -- reviewer-
+triggered, not real-data-triggered (unlike FX-58H's own real-data
+finding). FX-59's architecture, classifier rules, schema, real
+annotations, and ADR 0008 are otherwise approved and unchanged. Git
+HEAD at this story's own start: `df478f5` (the FX-59 commit), verified
+directly before any work began.
+
+**1. The gap: the determinism check compared only against the item's
+currently-latest row, not its full history.** `RecordNewsSemantic
+Annotation`'s own Section 55 invariant -- the SAME `(basis_news_item_
+revision_sequence, algorithm_version)` pair must never be associated
+with two different classification payloads -- was enforced only
+against `latest_annotation_for_item`'s own result. This misses the
+case where an OLDER `algorithm_version` becomes current again LATER:
+`fx59_v1(A)` -> `fx59_v2(B)` -> `fx59_v1(?)` -- at the third instant,
+the item's own latest row is the `fx59_v2` one, so a latest-only
+comparison can never check the new `fx59_v1` output against the
+EARLIER, already-stored `fx59_v1` output at all. A genuinely non-
+deterministic classifier output for that older pair could slip past
+completely undetected.
+
+**2. The fix: check against the ENTIRE stored history, using the
+smallest clean solution (Option A, per this story's own explicit
+Section 7 preference) -- no repository redesign.** `RecordNewsSemantic
+Annotation` now calls the EXISTING `list_annotation_vintages_for_item`
+and checks the incoming classification against EVERY historical row
+sharing the same `(basis_news_item_revision_sequence, algorithm_
+version)` pair, not merely the latest one -- raising `NewsSemantic
+DeterminismError` on any mismatch, BEFORE any persistence decision.
+No new repository method was added (Section 7's own "prefer B only if
+it materially improves clarity/efficiency" was judged not to apply
+for a per-item history this small); no schema change; migration
+`4b2621787a37` untouched.
+
+**3. Conceptual ordering preserved exactly as specified (Section 3)**:
+(1) fetch the item's current latest annotation; (2) PIT ordering
+FIRST, unconditionally -- `OutOfOrderSemanticAnnotationError` on any
+`availability` earlier than the latest's own, checked and raised
+BEFORE the historical determinism comparison even runs, so a
+backdated claim that would ALSO violate determinism is rejected on
+ordering grounds, never on determinism grounds (proven by a dedicated
+test constructing exactly that double-violation scenario); (3) the
+historical determinism check across the full record; (4) normal
+idempotency/revision decision; (5) persist if required.
+
+**4. The basis-revision dimension remains part of the deterministic
+key (Section 6), confirmed unchanged.** `basis0 + fx59_v1 -> A` and
+`basis1 + fx59_v1 -> B` are both independently valid and are never
+compared against each other for determinism purposes, since the
+underlying evidence genuinely differs -- the deterministic key is
+exactly `(news_item_key, basis_news_item_revision_sequence,
+algorithm_version)`, never collapsed to `(news_item_key, algorithm_
+version)` alone.
+
+**5. No unique database constraint was added, per this story's own
+explicit Section 8 prohibition.** The invariant being enforced is
+"the same deterministic input always produces the same output,"
+never "a deterministic input combination may appear only once in an
+item's history" -- a later revision legitimately reusing an earlier
+basis+algorithm pair (the `fx59_v1` -> `fx59_v2` -> `fx59_v1`
+sequence below) is explicitly a valid, expected `REVISION_ADDED`, not
+a constraint violation.
+
+**6. Worked examples, pinned by both fake-repository unit tests and
+real Postgres integration tests:**
+
+- `fx59_v1(A)` -> `fx59_v2(B)` -> `fx59_v1(A)` again: `REVISION_
+  ADDED` at T3 (revision_sequence 2) -- the item's own latest row at
+  T3 was the `fx59_v2` row, so `fx59_v1` becoming current again is a
+  genuine new fact FTA is recording; never `UNCHANGED`, since
+  `UNCHANGED` would fail to record that the policy in effect changed
+  back.
+- `fx59_v1(A)` -> `fx59_v2(B)` -> `fx59_v1(C)`, `C != A`:
+  `NewsSemanticDeterminismError` raised, NO third row persisted --
+  the two pre-existing rows remain exactly as they were, confirmed by
+  re-reading the stored history after the raised exception.
+- `basis0 + fx59_v1(A)` -> `basis1 + fx59_v1(B)`: a valid `REVISION_
+  ADDED`, the basis dimension changing is sufficient to make this a
+  genuinely new, non-conflicting input.
+- An incoming call that is simultaneously out-of-order AND would also
+  violate the historical determinism invariant: `OutOfOrderSemantic
+  AnnotationError` fires, confirmed never `NewsSemanticDeterminismError`
+  -- ordering wins precedence unconditionally.
+
+**Verification, reported separately:**
+
+- 6 net new test functions (verified via per-file `grep -cE
+  '^(async )?def test_'` before/after, continuing this project's own
+  test-count-verification discipline): `test_record_news_semantic_
+  annotation.py` 9 -> 13 (net +4: repeated-old-algorithm-same-output,
+  repeated-old-algorithm-different-output, different-basis-same-
+  algorithm-valid-revision, out-of-order-wins-over-determinism);
+  `test_classify_news_e2e.py` 4 -> 6 (net +2, the same two historical
+  worked examples against real Postgres). 165 focused FX-59/FX-59H
+  tests total, all passing (159 pre-existing + 6 net new).
+- Full regression of all six source families plus the common news
+  application layer: `466 passed`, unchanged from FX-59.
+- Full regression of FX-58/FX-58H's own canonicalization suite: `94
+  passed` -- NOT a regression: `test_news_text_normalization.py`'s
+  own 16 tests were grouped under the six-source regression run this
+  time rather than counted separately (`94 + 16 = 110`, verified via
+  `bc`, exactly matching the prior FX-58/58H total).
+- Full deterministic default suite (`pytest`): `2444 passed, 10
+  deselected` -- zero failures, a net `+6` over this story's own
+  freshly re-established pre-story baseline (`2438 passed`), matching
+  the 6 net-new test functions exactly.
+- Full `live_source` suite (`pytest -m live_source`): `9 passed, 1
+  failed` -- the same pre-existing BLS 403 (FX-EPIC-07, unrelated),
+  re-established and confirmed unchanged.
+- `ruff check .`, `ruff format --check .`, `mypy .` (516 source
+  files), and `pre-commit run --all-files` all pass clean.
+- Existing concurrency behavior re-confirmed unchanged: `test_
+  semantic_annotation_concurrency.py` re-run three consecutive times
+  (identical-first-classification races still `[CREATED, UNCHANGED]`;
+  differing-payload races still one `CREATED` and one conflict). No
+  new concurrency regression was added, per this story's own Section
+  10 caution against overengineering locking -- the new historical-
+  determinism check is a read preceding any write decision and does
+  not participate in the storage layer's own race-resolution path
+  (the existing unique `(news_item_key, revision_sequence)` index
+  remains the sole race guard).
+
+**No classifier-policy change of any kind (Section 12's own explicit
+list, all confirmed untouched)**: source profiles, institution/
+jurisdiction/currency alias registries, topic rules, the phrase-
+boundary matcher, text-field combination behavior, and currency-
+relevance rules. `algorithm_version` remains `fx59_v1` -- no
+reclassification under a new version was performed or required. The
+renewed dry-run against the real, unchanged 358-item dataset reported
+`annotations_created=0, revisions_added=0, unchanged=358`; an
+immediately-following real write-mode run reported the identical
+result, confirming the correction altered no existing real decision.
+All 358 source items (45 FED + 22 ECB + 150 BOE + 20 GOVUK_HMT + 111
+STATCAN + 10 BOC), all 358 real semantic annotations, and the 0-row
+FX-58 canonical relation table independently re-verified byte-for-
+byte/count-for-count unchanged both before and after this story's
+entire body of work.
+
+**No schema or migration change** -- migration `4b2621787a37` is
+untouched, per this story's own explicit Section 9 instruction; the
+existing 358 real semantic rows remain exactly as FX-59 left them.
+**ADR 0008 amended with a dated addendum** (recording the finding and
+correction in full, preserving the original FX-59 body text verbatim
+above it) -- no new ADR, since the underlying architecture this story
+preserves was never in question; only a recording-invariant gap was
+corrected.
+
+**Explicitly confirmed NOT done in FX-59H**: no classifier-policy
+change of any kind; no new ADR; no schema/migration change; no
+repository-port redesign (the existing `list_annotation_vintages_for_
+item` was reused directly -- no new `annotations_for_basis_and_
+algorithm`-style method was added); no unique database constraint on
+`(basis, algorithm_version)`; no overengineered locking/distributed-
+concurrency mechanism added; no network I/O of any kind; no FX-57/58/
+58H file touched. FX-60/FX-61/FX-EPIC-09/Decision Engine/Risk Engine
+not started.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-59H entry; `docs/
+ARCHITECTURE.md`'s "PIT-safe news relevance, entities & topics"
+section's own "Append-only determinism guard" paragraph is updated in
+place to describe the full-history check; `docs/CURRENT_STATE.md`
+carries its own FX-59H entry immediately after the preserved FX-59
+entry; `docs/adr/0008-pit-safe-news-semantics.md` carries the dated
+FX-59H addendum in full, with the original FX-59 body text preserved
+verbatim above it.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-60, FX-61, FX-EPIC-09, or any Decision/Risk Engine work. Return
+FX-59H for architectural review.
