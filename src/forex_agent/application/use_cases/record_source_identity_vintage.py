@@ -37,7 +37,18 @@ identity-vintage history, not merely whichever row is currently
 latest -- an older `(algorithm_version, evidence)` pair can legitimately
 become "latest" again later (e.g. a corrected alias is reverted), and a
 stale, different payload for that exact same pair must still be
-caught even though it is no longer the current row."""
+caught even though it is no longer the current row.
+
+**FX-62H correction: the full-history check above originally compared
+ONLY `display_name`, silently allowing a historical conflict in
+`aliases`, `authoritative_identifier`, or `canonical_website` under
+the exact same `(source_key, algorithm_version, evidence)` basis to
+pass undetected.** The comparison is now the COMPLETE derived payload
+`(display_name, aliases, authoritative_identifier, canonical_website)`
+-- see `IdentityPayload` below -- matching what this docstring already
+described as the invariant. The determinism key itself (`(source_key,
+algorithm_version, evidence)`) is unchanged; this was a comparison-
+completeness defect, not a key-shape defect."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -104,32 +115,41 @@ class OutOfOrderSourceIdentityError(Exception):
         )
 
 
+IdentityPayload = tuple[str, tuple[str, ...], str | None, str | None]
+"""The COMPLETE derived identity payload this use case extracts from
+evidence -- `(display_name, aliases, authoritative_identifier,
+canonical_website)` -- in that fixed field order, used wherever two
+payloads must be compared for determinism."""
+
+
 class SourceIdentityDeterminismError(Exception):
     """Raised when the SAME `(source_key, algorithm_version, evidence)`
-    historical basis produces a DIFFERENT identity payload than SOME
-    ALREADY-STORED vintage for that exact basis -- see the module
-    docstring for why `evidence` (not merely `evidence_kind`) is part
-    of this basis."""
+    historical basis produces a DIFFERENT derived identity payload --
+    `(display_name, aliases, authoritative_identifier, canonical_
+    website)`, the COMPLETE set of fields this use case derives from
+    evidence, not merely `display_name` -- than SOME ALREADY-STORED
+    vintage for that exact basis. See the module docstring for why
+    `evidence` (not merely `evidence_kind`) is part of this basis."""
 
     def __init__(
         self,
         source_key: str,
         algorithm_version: str,
         evidence: SourceProvenanceEvidence,
-        existing_display_name: str,
-        incoming_display_name: str,
+        existing_payload: IdentityPayload,
+        incoming_payload: IdentityPayload,
     ) -> None:
         self.source_key = source_key
         self.algorithm_version = algorithm_version
         self.evidence = evidence
-        self.existing_display_name = existing_display_name
-        self.incoming_display_name = incoming_display_name
+        self.existing_payload = existing_payload
+        self.incoming_payload = incoming_payload
         super().__init__(
             f"source_key={source_key!r}, algorithm_version={algorithm_version!r}, evidence="
-            f"{evidence!r} already produced a DIFFERENT identity payload: existing display_name="
-            f"{existing_display_name!r}, incoming display_name={incoming_display_name!r} -- the "
-            "SAME evidence read under the SAME policy version must never produce two different "
-            "identity payloads"
+            f"{evidence!r} already produced a DIFFERENT identity payload: existing "
+            "(display_name, aliases, authoritative_identifier, canonical_website)="
+            f"{existing_payload!r}, incoming={incoming_payload!r} -- the SAME evidence read "
+            "under the SAME policy version must never produce two different identity payloads"
         )
 
 
@@ -178,20 +198,32 @@ class RecordSourceIdentityVintage:
         if latest is not None and availability.value < latest.availability.value:
             raise OutOfOrderSourceIdentityError(source_key, latest.availability, availability)
 
+        incoming_payload: IdentityPayload = (
+            display_name,
+            aliases,
+            authoritative_identifier,
+            canonical_website,
+        )
         if existing_source is not None:
             history = await self._repository.list_identity_vintages_for_source(source_key)
             for historical in history:
+                historical_payload: IdentityPayload = (
+                    historical.display_name,
+                    historical.aliases,
+                    historical.authoritative_identifier,
+                    historical.canonical_website,
+                )
                 if (
                     historical.algorithm_version == algorithm_version
                     and historical.evidence == evidence
-                    and historical.display_name != display_name
+                    and historical_payload != incoming_payload
                 ):
                     raise SourceIdentityDeterminismError(
                         source_key,
                         algorithm_version,
                         evidence,
-                        historical.display_name,
-                        display_name,
+                        historical_payload,
+                        incoming_payload,
                     )
 
         if existing_source is None:
@@ -226,13 +258,16 @@ class RecordSourceIdentityVintage:
 
         assert latest is not None  # an existing source always has >=1 vintage (atomic creation)
 
+        latest_payload: IdentityPayload = (
+            latest.display_name,
+            latest.aliases,
+            latest.authoritative_identifier,
+            latest.canonical_website,
+        )
         if (
             latest.algorithm_version == algorithm_version
             and latest.evidence == evidence
-            and latest.display_name == display_name
-            and latest.aliases == aliases
-            and latest.authoritative_identifier == authoritative_identifier
-            and latest.canonical_website == canonical_website
+            and latest_payload == incoming_payload
         ):
             # `evidence` is part of this comparison (mirroring `latest.
             # algorithm_version == algorithm_version`): a DIFFERENT

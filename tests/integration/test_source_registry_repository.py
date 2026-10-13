@@ -29,6 +29,7 @@ from forex_agent.application.use_cases.record_source_attribution import (
 )
 from forex_agent.application.use_cases.record_source_identity_vintage import (
     RecordSourceIdentityVintage,
+    SourceIdentityDeterminismError,
     SourceIdentityOutcome,
 )
 from forex_agent.application.use_cases.resolve_publisher_for_news_item_as_of import (
@@ -357,6 +358,60 @@ async def test_pit_identity_resolution_real_postgres(
     assert before.resolution is SourceIdentityResolution.NOT_KNOWN
     assert at.resolution is SourceIdentityResolution.KNOWN
     assert after.resolution is SourceIdentityResolution.KNOWN
+
+
+async def test_determinism_conflict_on_aliases_is_not_persisted_real_postgres(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+) -> None:
+    """FX-62H: a historical-payload conflict confined to `aliases`
+    (display_name unchanged) must be rejected by `RecordSourceIdentity
+    Vintage` BEFORE any write reaches the database -- proven here by
+    confirming the vintage count is unchanged after the rejection."""
+    source_key = f"{TEST_REGISTRY_PREFIX}DETCONFLICT1"
+    record_identity = RecordSourceIdentityVintage(registry_repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await record_identity(
+        source_key=source_key,
+        source_kind=IntelligenceSourceKind.ORGANIZATION,
+        registered_at=_ts(9),
+        availability=_ts(9),
+        algorithm_version="fx62_v1",
+        display_name="Stable Name",
+        aliases=("Alias A",),
+        authoritative_identifier=None,
+        canonical_website=None,
+        evidence=shared_evidence,
+    )
+    await record_identity(
+        source_key=source_key,
+        source_kind=IntelligenceSourceKind.ORGANIZATION,
+        registered_at=_ts(9),
+        availability=_ts(10),
+        algorithm_version="fx62_v1",
+        display_name="Stable Name",
+        aliases=("Alias B",),
+        authoritative_identifier=None,
+        canonical_website=None,
+        evidence=_evidence("a different, later evidence object"),
+    )
+
+    with pytest.raises(SourceIdentityDeterminismError):
+        await record_identity(
+            source_key=source_key,
+            source_kind=IntelligenceSourceKind.ORGANIZATION,
+            registered_at=_ts(9),
+            availability=_ts(11),
+            algorithm_version="fx62_v1",
+            display_name="Stable Name",
+            aliases=("Alias C",),  # conflicts with Alias A under the SAME shared_evidence basis
+            authoritative_identifier=None,
+            canonical_website=None,
+            evidence=shared_evidence,
+        )
+
+    stored = await registry_repo.list_identity_vintages_for_source(source_key)
+    assert len(stored) == 2  # the rejected third revision was never written
+    assert {v.aliases for v in stored} == {("Alias A",), ("Alias B",)}
 
 
 # --- Section 9: publisher-correction worked example --------------------------

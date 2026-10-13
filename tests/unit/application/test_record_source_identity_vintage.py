@@ -2,7 +2,9 @@
 CREATED/REVISION_ADDED/UNCHANGED outcomes, PIT ordering, and the
 determinism invariant defined for identity vintages (same `(source_
 key, algorithm_version, evidence)` basis must never yield a different
-display_name)."""
+COMPLETE derived identity payload -- `display_name`, `aliases`,
+`authoritative_identifier`, AND `canonical_website`, per the FX-62H
+correction below)."""
 
 from datetime import UTC, datetime
 
@@ -194,6 +196,307 @@ async def test_different_evidence_descriptions_are_not_compared_for_determinism(
     )
 
     assert result.outcome is SourceIdentityOutcome.REVISION_ADDED
+
+
+@pytest.mark.asyncio
+async def test_same_basis_different_aliases_is_a_determinism_violation() -> None:
+    """FX-62H: the full-history check must compare `aliases`, not
+    merely `display_name` -- same basis, same display_name, DIFFERENT
+    aliases must still be caught."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        aliases=("Fed",),
+        evidence=shared_evidence,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Fed (temporary alias change)",
+        aliases=("FOMC",),
+        evidence=_evidence("a different, later evidence object"),
+    )
+
+    with pytest.raises(SourceIdentityDeterminismError):
+        await _record(
+            use_case,
+            availability=_ts(11),
+            display_name="Federal Reserve",
+            aliases=("Federal Open Market Committee",),  # different aliases, same basis
+            evidence=shared_evidence,
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_basis_different_authoritative_identifier_is_a_determinism_violation() -> None:
+    """FX-62H: same basis, same display_name/aliases, DIFFERENT
+    authoritative_identifier must still be caught."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        authoritative_identifier="LEI-AAA",
+        evidence=shared_evidence,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Fed (temporary identifier change)",
+        authoritative_identifier="LEI-BBB",
+        evidence=_evidence("a different, later evidence object"),
+    )
+
+    with pytest.raises(SourceIdentityDeterminismError):
+        await _record(
+            use_case,
+            availability=_ts(11),
+            display_name="Federal Reserve",
+            authoritative_identifier="LEI-CCC",  # different identifier, same basis
+            evidence=shared_evidence,
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_basis_different_canonical_website_is_a_determinism_violation() -> None:
+    """FX-62H: same basis, same display_name/aliases/authoritative_
+    identifier, DIFFERENT canonical_website must still be caught."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        canonical_website="https://www.federalreserve.gov",
+        evidence=shared_evidence,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Fed (temporary website change)",
+        canonical_website="https://example.com/temp",
+        evidence=_evidence("a different, later evidence object"),
+    )
+
+    with pytest.raises(SourceIdentityDeterminismError):
+        await _record(
+            use_case,
+            availability=_ts(11),
+            display_name="Federal Reserve",
+            canonical_website="https://wrong.example.com",  # different website, same basis
+            evidence=shared_evidence,
+        )
+
+
+@pytest.mark.asyncio
+async def test_identical_historical_full_payload_is_not_a_violation() -> None:
+    """Same basis, EXACT SAME complete payload (including aliases/
+    authoritative_identifier/canonical_website) re-submitted after an
+    intervening different-basis row must succeed, not raise."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        aliases=("Fed",),
+        authoritative_identifier="LEI-AAA",
+        canonical_website="https://www.federalreserve.gov",
+        evidence=shared_evidence,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Fed (temporary)",
+        evidence=_evidence("a different, later evidence object"),
+    )
+
+    result = await _record(
+        use_case,
+        availability=_ts(11),
+        display_name="Federal Reserve",
+        aliases=("Fed",),
+        authoritative_identifier="LEI-AAA",
+        canonical_website="https://www.federalreserve.gov",
+        evidence=shared_evidence,  # exact same basis, exact same complete payload
+    )
+
+    assert result.outcome is SourceIdentityOutcome.REVISION_ADDED
+    assert result.identity_vintage.display_name == "Federal Reserve"
+    assert result.identity_vintage.aliases == ("Fed",)
+
+
+@pytest.mark.asyncio
+async def test_new_evidence_supporting_changed_identity_is_not_a_violation() -> None:
+    """A genuinely different evidence object under the same algorithm
+    version is a different basis -- never compared, regardless of how
+    many fields differ."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        aliases=("Fed",),
+        authoritative_identifier="LEI-AAA",
+        canonical_website="https://www.federalreserve.gov",
+        evidence=_evidence("first manual review"),
+    )
+
+    result = await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Federal Reserve System",
+        aliases=("FOMC",),
+        authoritative_identifier="LEI-BBB",
+        canonical_website="https://example.com/new",
+        evidence=_evidence("second manual review -- genuine comprehensive correction"),
+    )
+
+    assert result.outcome is SourceIdentityOutcome.REVISION_ADDED
+
+
+@pytest.mark.asyncio
+async def test_different_algorithm_version_is_not_a_violation() -> None:
+    """A different `algorithm_version` under the same evidence is a
+    different basis -- never compared against the prior algorithm
+    version's own payload."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        algorithm_version="fx62_v1",
+        display_name="Federal Reserve",
+        evidence=shared_evidence,
+    )
+
+    result = await _record(
+        use_case,
+        availability=_ts(10),
+        algorithm_version="fx62_v2",
+        display_name="A completely different payload under v2",
+        evidence=shared_evidence,
+    )
+
+    assert result.outcome is SourceIdentityOutcome.REVISION_ADDED
+
+
+@pytest.mark.asyncio
+async def test_full_history_v1_a_v2_b_v1_a_succeeds() -> None:
+    """Section 8's own "an older pair can legitimately become latest
+    again" worked example: v1(A) -> v2(B) -> v1(A) (A's own exact
+    basis re-confirmed with its own exact original payload) must
+    succeed."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    evidence_v1 = _evidence("basis V1")
+    evidence_v2 = _evidence("basis V2")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Payload A",
+        aliases=("Alias A",),
+        evidence=evidence_v1,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Payload B",
+        aliases=("Alias B",),
+        evidence=evidence_v2,
+    )
+
+    result = await _record(
+        use_case,
+        availability=_ts(11),
+        display_name="Payload A",
+        aliases=("Alias A",),
+        evidence=evidence_v1,  # same basis as the FIRST record -- same payload too
+    )
+
+    assert result.outcome is SourceIdentityOutcome.REVISION_ADDED
+    assert result.identity_vintage.display_name == "Payload A"
+    assert result.identity_vintage.aliases == ("Alias A",)
+
+
+@pytest.mark.asyncio
+async def test_full_history_v1_a_v2_b_v1_c_is_rejected() -> None:
+    """The same worked example, but the third call's payload (C)
+    genuinely differs from A under the exact same v1 basis -- this
+    must be rejected as a determinism violation, even though v1(A) is
+    no longer the item's own latest row at the time of the check."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    evidence_v1 = _evidence("basis V1")
+    evidence_v2 = _evidence("basis V2")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Payload A",
+        aliases=("Alias A",),
+        evidence=evidence_v1,
+    )
+    await _record(
+        use_case,
+        availability=_ts(10),
+        display_name="Payload B",
+        aliases=("Alias B",),
+        evidence=evidence_v2,
+    )
+
+    with pytest.raises(SourceIdentityDeterminismError):
+        await _record(
+            use_case,
+            availability=_ts(11),
+            display_name="Payload A",
+            aliases=("Alias C",),  # differs from A's own original aliases under the SAME v1 basis
+            evidence=evidence_v1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_takes_precedence_over_determinism_conflict() -> None:
+    """PIT ordering is checked FIRST, unconditionally -- an incoming
+    vintage that is BOTH out-of-order AND would conflict on a
+    determinism basis must raise `OutOfOrderSourceIdentityError`, never
+    `SourceIdentityDeterminismError`."""
+    repo = FakeSourceRegistryRepository()
+    use_case = RecordSourceIdentityVintage(repo)
+    shared_evidence = _evidence("the exact same evidence, re-submitted")
+    await _record(
+        use_case,
+        availability=_ts(9),
+        display_name="Federal Reserve",
+        evidence=shared_evidence,
+    )
+    await _record(
+        use_case,
+        availability=_ts(20),
+        display_name="Fed (later)",
+        evidence=_evidence("later evidence"),
+    )
+
+    with pytest.raises(OutOfOrderSourceIdentityError):
+        # Both out-of-order (availability=10 < latest's own 20) AND a
+        # would-be determinism conflict (same shared_evidence basis,
+        # different aliases from the first record) -- ordering wins.
+        await _record(
+            use_case,
+            availability=_ts(10),
+            display_name="Federal Reserve",
+            aliases=("A conflicting alias",),
+            evidence=shared_evidence,
+        )
 
 
 @pytest.mark.asyncio
