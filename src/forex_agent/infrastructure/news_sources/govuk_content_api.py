@@ -72,8 +72,10 @@ from forex_agent.infrastructure.news_sources.govuk_discovery import (
     parse_govuk_discovery_atom,
 )
 from forex_agent.infrastructure.news_sources.http_fetch import (
+    AcquisitionAttemptRecorder,
     ClockFn,
     SleepFn,
+    bind_acquisition_recorder,
     default_clock,
     fetch_text,
 )
@@ -305,6 +307,7 @@ class GovUkHmtSource:
         pace_seconds: float = _DEFAULT_PACE_SECONDS,
         sleep: SleepFn = _default_sleep,
         monotonic: MonotonicFn = _default_monotonic,
+        on_acquisition_attempt: AcquisitionAttemptRecorder | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -318,6 +321,7 @@ class GovUkHmtSource:
         self._sleep = sleep
         self._monotonic = monotonic
         self._last_request_at: float | None = None
+        self._on_acquisition_attempt = on_acquisition_attempt
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -382,7 +386,10 @@ class GovUkHmtSource:
         raises `NewsSourceUnavailableError` if the HTTP fetch itself
         fails (404/410/5xx/network/malformed JSON)."""
         await self._pace()
-        fetched = await fetch_text(self._client, f"/api/content{path}", clock=self._clock)
+        on_attempt = bind_acquisition_recorder(self._on_acquisition_attempt, SOURCE_KEY, CHANNEL)
+        fetched = await fetch_text(
+            self._client, f"/api/content{path}", clock=self._clock, on_attempt=on_attempt
+        )
         try:
             item = parse_content_api_item(fetched.text)
         except MalformedContentApiResponseError as exc:

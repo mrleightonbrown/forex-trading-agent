@@ -6731,3 +6731,70 @@ is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-63, or any Decision/Risk Engine work.
+
+## FX-63: source operational reliability (complete)
+
+FX-EPIC-09's second story (Phase A): an operational-reliability layer
+measuring HOW reliably FTA retrieves evidence from a technical feed
+-- kept strictly separate from WHO is responsible for it (FX-62) and
+WHAT it says (FX-59), explicitly not a credibility/trust/forecast-
+accuracy score. Starting commit: `64078fa` (the FX-62H commit),
+verified before any work began.
+
+Discovery confirmed zero durable historical attempt-level evidence
+exists for any source -- a fetch failure was only ever printed, never
+persisted. One new, independent table (migration `d8995cb04276`,
+`source_operational_observations`) is append-only, has no revision
+concept, and deliberately carries NO foreign key onto `intelligence_
+sources` (instrumentation must keep working regardless of FX-62's
+bootstrap state), keyed on the stable natural key `(source_key,
+run_id, attempt_number)`. Content metrics (items/revisions/
+withdrawals/corrections) are derived purely from FX-56/57's own
+already-durable evidence via two new batch methods on `SqlAlchemy
+NewsRepository`, mirroring FX-60H's own narrow-local-Protocol
+precedent -- no new persistence for content at all.
+
+**Instrumentation is minimal and additive**: `http_fetch.fetch_text`
+gained one new optional `on_attempt` hook (mirroring its own pre-
+existing `before_attempt` precedent), threaded through all six
+adapters as `on_acquisition_attempt`. `None` (every existing caller's
+own default) preserves existing behavior byte-for-byte -- every pre-
+existing adapter/`http_fetch` test passed unmodified. All six
+`scripts/ingest_*.py` entrypoints were updated to wire this into a
+real recorder.
+
+**A PIT-safety design correction was found and fixed during
+implementation** (documented in full in `docs/adr/0011-source-
+operational-reliability.md`'s own Deviations section): the
+acquisition-coverage check initially let a future attempt leak into a
+historical coverage judgment about an earlier `as_of`, caught by a
+failing unit test before any production profile was computed.
+
+Run LIVE against all six real sources: 33 genuine acquisition-attempt
+observations recorded, including one real `TIMEOUT` on StatCan's
+`statcan_prices` channel that retried once and succeeded -- an
+organic, non-fabricated confirmation of attempt/retry instrumentation
+working correctly in production. The live run discovered 36 genuinely
+new real-world items (corpus grew 358 -> 394); `scripts/bootstrap_
+source_registry.py` (FX-62) was re-run afterward and attributed all
+36 correctly.
+
+73 new tests across 11 files (16 domain + 5 application-record + 33
+application-profile + 8 real-Postgres integration + 4 `http_fetch` +
+7 adapter-wiring). Full deterministic suite: 2794 passed (up from
+2721). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean. Every
+pre-existing FX-55-62H test passed UNMODIFIED.
+
+**Explicitly confirmed NOT done**: no reliability/trust/reputation/
+weighting/trading-signal field of any kind; no FX-56-61 behavioral
+change; no `EconomicEvent` linkage; no Decision/Risk Engine
+integration; no historical attempt data fabricated for the period
+before this story's own instrumentation began recording.
+
+Full details in `docs/DECISIONS.md`'s FX-63 entry; `docs/CURRENT_
+STATE.md` carries its own FX-63 entry immediately after the FX-62H
+entry; `docs/adr/0011-source-operational-reliability.md` is the
+complete decision record.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-64, or any Decision/Risk Engine work.

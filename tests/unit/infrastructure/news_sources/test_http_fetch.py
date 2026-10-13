@@ -8,7 +8,11 @@ import pytest
 
 from forex_agent.application.ports.news_source import NewsSourceUnavailableError
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.news_sources.http_fetch import fetch_text
+from forex_agent.infrastructure.news_sources.http_fetch import (
+    FetchAttemptOutcome,
+    FetchAttemptOutcomeKind,
+    fetch_text,
+)
 
 
 def _client(handler: httpx.MockTransport) -> httpx.AsyncClient:
@@ -163,6 +167,113 @@ async def test_before_attempt_hook_runs_on_every_attempt_including_retries() -> 
 
 @pytest.mark.asyncio
 async def test_no_before_attempt_hook_is_a_no_op() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    result = await fetch_text(client, "/feed.xml", sleep=_no_sleep)
+    await client.aclose()
+
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_on_attempt_hook_reports_each_retry_then_success() -> None:
+    # FX-63: every transport-level attempt inside this loop must be
+    # individually observable, including ones later retried.
+    attempts = {"count": 0}
+    observed: list[FetchAttemptOutcome] = []
+
+    async def on_attempt(outcome: FetchAttemptOutcome) -> None:
+        observed.append(outcome)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            return httpx.Response(503, text="unavailable")
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    await fetch_text(client, "/feed.xml", sleep=_no_sleep, max_attempts=3, on_attempt=on_attempt)
+    await client.aclose()
+
+    assert [o.attempt_number for o in observed] == [1, 2, 3]
+    assert [o.outcome_kind for o in observed] == [
+        FetchAttemptOutcomeKind.HTTP_FAILURE,
+        FetchAttemptOutcomeKind.HTTP_FAILURE,
+        FetchAttemptOutcomeKind.SUCCESS,
+    ]
+    assert observed[0].http_status == 503
+    assert observed[2].http_status == 200
+
+
+@pytest.mark.asyncio
+async def test_on_attempt_hook_distinguishes_timeout_from_network_failure() -> None:
+    timeout_observed: list[FetchAttemptOutcome] = []
+
+    async def on_attempt(outcome: FetchAttemptOutcome) -> None:
+        timeout_observed.append(outcome)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out")
+
+    client = _client(httpx.MockTransport(handler))
+    with pytest.raises(NewsSourceUnavailableError):
+        await fetch_text(
+            client, "/feed.xml", sleep=_no_sleep, max_attempts=2, on_attempt=on_attempt
+        )
+    await client.aclose()
+
+    assert len(timeout_observed) == 2
+    assert all(o.outcome_kind is FetchAttemptOutcomeKind.TIMEOUT for o in timeout_observed)
+
+    network_observed: list[FetchAttemptOutcome] = []
+
+    async def on_attempt_network(outcome: FetchAttemptOutcome) -> None:
+        network_observed.append(outcome)
+
+    def network_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    network_client = _client(httpx.MockTransport(network_handler))
+    with pytest.raises(NewsSourceUnavailableError):
+        await fetch_text(
+            network_client,
+            "/feed.xml",
+            sleep=_no_sleep,
+            max_attempts=2,
+            on_attempt=on_attempt_network,
+        )
+    await network_client.aclose()
+
+    assert len(network_observed) == 2
+    assert all(o.outcome_kind is FetchAttemptOutcomeKind.NETWORK_FAILURE for o in network_observed)
+
+
+@pytest.mark.asyncio
+async def test_on_attempt_hook_reports_unretried_ordinary_4xx() -> None:
+    observed: list[FetchAttemptOutcome] = []
+
+    async def on_attempt(outcome: FetchAttemptOutcome) -> None:
+        observed.append(outcome)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    client = _client(httpx.MockTransport(handler))
+    with pytest.raises(NewsSourceUnavailableError):
+        await fetch_text(
+            client, "/feed.xml", sleep=_no_sleep, max_attempts=3, on_attempt=on_attempt
+        )
+    await client.aclose()
+
+    assert len(observed) == 1
+    assert observed[0].outcome_kind is FetchAttemptOutcomeKind.HTTP_FAILURE
+    assert observed[0].http_status == 404
+
+
+@pytest.mark.asyncio
+async def test_no_on_attempt_hook_is_a_no_op() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="ok")
 

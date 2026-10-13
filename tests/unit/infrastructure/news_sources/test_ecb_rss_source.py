@@ -471,3 +471,29 @@ def test_ecb_feed_uses_the_registered_source_key_and_exact_path() -> None:
     assert ECB_FEEDS[0].path == "/rss/press.html"
     assert ECB_FEEDS[0].channel == "ecb_press"
     assert isinstance(ECB_FEEDS[0], EcbFeedDefinition)
+
+
+@pytest.mark.asyncio
+async def test_on_acquisition_attempt_hook_is_invoked_with_source_key_and_channel() -> None:
+    observed: list[tuple[str, str]] = []
+
+    async def on_acquisition_attempt(
+        source_key: str, channel: str, run_id: str, outcome: object
+    ) -> None:
+        observed.append((source_key, channel))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, text=_feed_xml(), headers={"content-type": "application/rss+xml"}
+        )
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://www.ecb.europa.eu"
+    )
+    source = EcbRssSource(
+        client=client, clock=lambda: _RETRIEVED_AT, on_acquisition_attempt=on_acquisition_attempt
+    )
+    await source.fetch_feed(_PRESS_FEED)
+    await source.aclose()
+
+    assert observed == [("ECB", "ecb_press")]

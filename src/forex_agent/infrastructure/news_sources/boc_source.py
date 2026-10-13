@@ -77,7 +77,13 @@ from forex_agent.infrastructure.news_sources.boc_rdf_parsing import (
 from forex_agent.infrastructure.news_sources.boc_timestamp_remediation import (
     remediate_boc_dc_date,
 )
-from forex_agent.infrastructure.news_sources.http_fetch import ClockFn, default_clock, fetch_text
+from forex_agent.infrastructure.news_sources.http_fetch import (
+    AcquisitionAttemptRecorder,
+    ClockFn,
+    bind_acquisition_recorder,
+    default_clock,
+    fetch_text,
+)
 
 SOURCE_KEY = "BOC"
 CHANNEL = "boc_press_releases"
@@ -96,7 +102,11 @@ class BocSource:
     StatCan's own adapter."""
 
     def __init__(
-        self, client: httpx.AsyncClient | None = None, *, clock: ClockFn = default_clock
+        self,
+        client: httpx.AsyncClient | None = None,
+        *,
+        clock: ClockFn = default_clock,
+        on_acquisition_attempt: AcquisitionAttemptRecorder | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -106,6 +116,7 @@ class BocSource:
             follow_redirects=True,
         )
         self._clock = clock
+        self._on_acquisition_attempt = on_acquisition_attempt
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -121,7 +132,10 @@ class BocSource:
         dropped). A structurally-invalid individual item (missing
         identity/link/title/dc:language) is an ordinary item-level
         invalid, counted via `items_invalid`, never escalated."""
-        fetched = await fetch_text(self._client, _FEED_PATH, clock=self._clock)
+        on_attempt = bind_acquisition_recorder(self._on_acquisition_attempt, SOURCE_KEY, CHANNEL)
+        fetched = await fetch_text(
+            self._client, _FEED_PATH, clock=self._clock, on_attempt=on_attempt
+        )
         try:
             parsed = parse_boc_press_releases_rdf(fetched.text)
         except MalformedBocFeedError as exc:

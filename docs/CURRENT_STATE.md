@@ -3172,6 +3172,72 @@ _Last updated: 2026-09-27 (FX-54V)_
   mixing content from more than one institution would need explicit
   review before reusing this same bootstrap pattern. **Stop after
   FX-62 — do not start FX-63, or any Decision/Risk Engine work.**
+- **FX-62H: complete identity determinism enforcement (complete)**. An
+  independent-review finding closed: `RecordSourceIdentityVintage`'s
+  full-history determinism check compared only `display_name`,
+  silently allowing a historical conflict confined to `aliases`/
+  `authoritative_identifier`/`canonical_website` under the exact same
+  `(source_key, algorithm_version, evidence)` basis to pass undetected.
+  Fixed to compare the complete derived payload (all four fields) —
+  the determinism KEY itself was already correct; this was a
+  comparison-completeness gap. 9 new unit tests + 1 real-Postgres
+  integration test proving a rejected revision is never persisted.
+  Full suite: 2710 passed (up from 2700).
+- **FX-63: source operational reliability (complete, FX-EPIC-09's
+  second story, ADR 0011)**. An operational-reliability layer on top
+  of FX-62's own registry: HOW reliably FTA retrieves evidence from a
+  technical feed, kept strictly separate from WHO is responsible for
+  it (FX-62) and WHAT it says (FX-59) — still explicitly not a
+  credibility/trust/forecast-accuracy score. A NEW, independent table
+  (`source_operational_observations`, migration `d8995cb04276`) is
+  append-only with no revision concept and no FK onto `intelligence_
+  sources` (instrumentation must work regardless of FX-62's bootstrap
+  state), keyed on the stable natural key `(source_key, run_id,
+  attempt_number)`. Content metrics (items/revisions/withdrawals/
+  corrections) are derived purely from FX-56/57's own already-durable
+  evidence via two new batch methods on `SqlAlchemyNewsRepository`
+  (mirroring FX-60H's own narrow-local-Protocol precedent) — no new
+  persistence for content at all. **Minimal, additive instrumentation**:
+  `http_fetch.fetch_text` gained one new optional `on_attempt` hook
+  (mirroring its own pre-existing `before_attempt` precedent exactly),
+  threaded through all six adapters' constructors as `on_acquisition_
+  attempt` — `None` (every pre-existing caller's own default)
+  preserves existing behavior byte-for-byte, proven by every pre-
+  existing adapter/`http_fetch` test passing unmodified. Acquisition
+  failures are recorded against the TECHNICAL FEED, never the resolved
+  publisher; `GetSourceOperationalProfileAsOf` resolves a descriptive
+  publisher association separately (reusing FX-62's `ResolvePublisher
+  ForNewsItemAsOf`), never substituted for the feed's own identity
+  when unresolved. **No historical attempt data fabricated**:
+  acquisition coverage is honestly `UNAVAILABLE` before this story's
+  own instrumentation began recording; a zero-attempt window reports
+  `success_rate = None`, never 0%. **PIT-safety design correction
+  found during implementation** (ADR 0011's own Deviations section):
+  the acquisition-coverage check initially compared a globally-
+  earliest-ever-recorded observation against `window_start`, ignoring
+  the profile's own `as_of` — a future attempt could leak into a
+  historical coverage judgment about an earlier instant. Caught by a
+  failing unit test ("observation after T is excluded"); fixed by
+  adding `as_of` to `earliest_observation_availability_for_source`'s
+  own signature before any production profile was computed. Run LIVE
+  against all six real sources via the updated `scripts/ingest_*.py`
+  entrypoints: 33 genuine acquisition-attempt observations, including
+  one real `TIMEOUT` on StatCan's `statcan_prices` channel that
+  retried once and succeeded (attempt 1 then 2, same `run_id`) — an
+  organic, non-fabricated confirmation of attempt/retry instrumentation
+  working correctly in production. The live run also discovered 36
+  genuinely new real-world items (corpus grew 358 → 394),
+  re-attributed correctly by re-running `scripts/bootstrap_source_
+  registry.py` (FX-62) afterward (36 new `CONFIRMED` attributions,
+  zero `UNRESOLVED`). 73 new tests across 11 files: 4 brand-new unit/
+  integration test files (domain observation type — 16; `RecordSource
+  OperationalObservation` — 5; `GetSourceOperationalProfileAsOf` — 33;
+  the real-Postgres repository suite — 8) plus `http_fetch` (+4) and
+  all six adapter test files (+7 combined) gaining new hook-wiring
+  tests. Full deterministic suite: 2794 passed (up from 2721). `ruff`/
+  `ruff format`/`mypy`/`pre-commit` all clean. Every pre-existing
+  FX-55-62H test passed UNMODIFIED. **Stop after FX-63 — do not start
+  FX-64, or any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

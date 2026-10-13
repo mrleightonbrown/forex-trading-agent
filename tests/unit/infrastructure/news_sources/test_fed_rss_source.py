@@ -253,3 +253,41 @@ def test_fed_feeds_use_the_registered_source_key_and_exact_paths() -> None:
         "/feeds/testimony.xml",
     }
     assert isinstance(FED_FEEDS[0], FedFeedDefinition)
+
+
+@pytest.mark.asyncio
+async def test_on_acquisition_attempt_hook_is_invoked_with_source_key_and_channel() -> None:
+    # FX-63: forward-looking acquisition-attempt instrumentation.
+    observed: list[tuple[str, str, str]] = []
+
+    async def on_acquisition_attempt(
+        source_key: str, channel: str, run_id: str, outcome: object
+    ) -> None:
+        observed.append((source_key, channel, run_id))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_feed_xml(), headers={"content-type": "text/xml"})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://www.federalreserve.gov"
+    )
+    source = FedRssSource(
+        client=client, clock=lambda: _RETRIEVED_AT, on_acquisition_attempt=on_acquisition_attempt
+    )
+    await source.fetch_feed(_PRESS_MONETARY_FEED)
+    await source.aclose()
+
+    assert len(observed) == 1
+    source_key, channel, run_id = observed[0]
+    assert source_key == "FED"
+    assert channel == "press_monetary"
+    assert run_id
+
+
+@pytest.mark.asyncio
+async def test_no_on_acquisition_attempt_hook_is_a_no_op() -> None:
+    source = _source_returning(200, _feed_xml(_item_xml(guid="g-no-hook")))
+    outcome = await source.fetch_feed(_PRESS_MONETARY_FEED)
+    await source.aclose()
+
+    assert len(outcome.observations) == 1

@@ -109,7 +109,13 @@ from forex_agent.domain.news_observation_mode import NewsObservationMode
 from forex_agent.domain.news_source_status import NewsSourceStatus
 from forex_agent.domain.news_source_timestamp_provenance import NewsSourceTimestampProvenance
 from forex_agent.domain.timestamps import UtcTimestamp
-from forex_agent.infrastructure.news_sources.http_fetch import ClockFn, default_clock, fetch_text
+from forex_agent.infrastructure.news_sources.http_fetch import (
+    AcquisitionAttemptRecorder,
+    ClockFn,
+    bind_acquisition_recorder,
+    default_clock,
+    fetch_text,
+)
 from forex_agent.infrastructure.news_sources.rss_item_parsing import (
     MalformedNewsFeedError,
     NewsRssItem,
@@ -173,7 +179,11 @@ class EcbRssSource:
     `functools.partial(source.fetch_feed, ECB_FEEDS[0])`)."""
 
     def __init__(
-        self, client: httpx.AsyncClient | None = None, *, clock: ClockFn = default_clock
+        self,
+        client: httpx.AsyncClient | None = None,
+        *,
+        clock: ClockFn = default_clock,
+        on_acquisition_attempt: AcquisitionAttemptRecorder | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -183,13 +193,19 @@ class EcbRssSource:
             follow_redirects=True,
         )
         self._clock = clock
+        self._on_acquisition_attempt = on_acquisition_attempt
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
     async def fetch_feed(self, feed: EcbFeedDefinition) -> NewsSourceFetchOutcome:
-        fetched = await fetch_text(self._client, feed.path, clock=self._clock)
+        on_attempt = bind_acquisition_recorder(
+            self._on_acquisition_attempt, SOURCE_KEY, feed.channel
+        )
+        fetched = await fetch_text(
+            self._client, feed.path, clock=self._clock, on_attempt=on_attempt
+        )
         try:
             parsed = parse_news_rss_items(fetched.text)
         except MalformedNewsFeedError as exc:

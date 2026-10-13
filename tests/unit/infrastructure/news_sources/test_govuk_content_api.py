@@ -266,6 +266,35 @@ async def test_source_key_and_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_acquisition_attempt_hook_is_invoked_with_source_key_and_channel() -> None:
+    observed: list[tuple[str, str]] = []
+
+    async def on_acquisition_attempt(
+        source_key: str, channel: str, run_id: str, outcome: object
+    ) -> None:
+        observed.append((source_key, channel))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, text=_content_json(), headers={"content-type": "application/json"}
+        )
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://www.gov.uk"
+    )
+    source = GovUkHmtSource(
+        client=client,
+        clock=lambda: _RETRIEVED_AT,
+        pace_seconds=0.0,
+        on_acquisition_attempt=on_acquisition_attempt,
+    )
+    await source.fetch_content_item("/government/news/example-item")
+    await source.aclose()
+
+    assert observed == [("GOVUK_HMT", "hmt_news_and_communications")]
+
+
+@pytest.mark.asyncio
 async def test_content_id_is_external_identity() -> None:
     source = _source_returning(200, _content_json(content_id="abc-123"))
     outcome = await source.fetch_content_item("/government/news/x")

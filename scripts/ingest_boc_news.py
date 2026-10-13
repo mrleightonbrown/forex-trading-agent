@@ -31,24 +31,42 @@ from forex_agent.application.use_cases.ingest_news_source_once import (
     NewsIngestionResult,
 )
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
+from forex_agent.application.use_cases.record_source_operational_observation import (
+    RecordSourceOperationalObservation,
+)
 from forex_agent.infrastructure.db.news_repository import SqlAlchemyNewsRepository
 from forex_agent.infrastructure.db.session import get_engine
+from forex_agent.infrastructure.db.source_operational_observation_repository import (
+    SqlAlchemySourceOperationalObservationRepository,
+)
+from forex_agent.infrastructure.news_sources.acquisition_observation_wiring import (
+    make_acquisition_recorder,
+)
 from forex_agent.infrastructure.news_sources.boc_source import SOURCE_KEY, BocSource
 
 
 async def main() -> None:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
-    source = BocSource()
+    source: BocSource | None = None
     try:
         async with session_factory() as session:
             repository = SqlAlchemyNewsRepository(session)
             record_observation = RecordNewsObservation(repository)
             ingest_once = IngestNewsSourceOnce(SOURCE_KEY, record_observation)
 
+            observation_repository = SqlAlchemySourceOperationalObservationRepository(session)
+            record_acquisition_observation = RecordSourceOperationalObservation(
+                observation_repository
+            )
+            source = BocSource(
+                on_acquisition_attempt=make_acquisition_recorder(record_acquisition_observation)
+            )
+
             result = await ingest_once((source.fetch_press_releases,))
             await session.commit()
     finally:
-        await source.aclose()
+        if source is not None:
+            await source.aclose()
 
     _print_result(result)
 

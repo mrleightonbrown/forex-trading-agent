@@ -3344,6 +3344,71 @@ score; no change to FX-58/59/60/61's own sentiment-free, score-free
 surface; no `EconomicEvent` linkage; no Decision/Risk Engine use of
 any kind. FX-64 through FX-67 remain behind Gate G09.
 
+## Source operational reliability (FX-63, ADR 0011, FX-EPIC-09's second story)
+
+**FX-63 is Phase A's second story**, adding an operational-reliability
+layer on top of FX-62's own identity/attribution registry: HOW
+reliably FTA itself has been able to retrieve evidence from a
+technical feed, kept strictly separate from WHO is responsible for
+that evidence (FX-62) and WHAT the evidence says (FX-59) -- still
+explicitly NOT a credibility, trust, or forecast-accuracy score.
+
+**Two genuinely different evidence bases, never merged into one
+blanket judgment.** Acquisition metrics (attempts/successes/failures/
+retries) come ONLY from a NEW, independent table, `source_operational_
+observations` -- append-only, no revision/correction concept at all
+(a retried attempt is simply another row, keyed on the stable natural
+key `(source_key, run_id, attempt_number)`), with NO foreign key onto
+`intelligence_sources` (instrumentation must keep working regardless
+of FX-62's own bootstrap state). Content metrics (items/revisions/
+withdrawals/corrections) come ONLY from FX-56/57's own already-durable
+`NewsItem`/`NewsItemVintage` evidence, read via two new batch methods
+on `SqlAlchemyNewsRepository` (mirroring FX-60H's own narrow-local-
+Protocol precedent) -- no new persistence for content at all. A
+profile's acquisition and content coverage (`OperationalMetricCoverage`:
+`OBSERVED`/`PARTIAL`/`UNAVAILABLE`/`NOT_APPLICABLE`) are independent,
+metric-specific judgments, never merged.
+
+**Instrumentation is minimal and additive, at the narrowest existing
+boundary.** `infrastructure.news_sources.http_fetch.fetch_text` gained
+one new optional hook, `on_attempt`, invoked after every transport-
+level attempt it makes (including internal retries) -- mirroring the
+exact precedent its own pre-existing `before_attempt` pacing hook
+established. `None` (every pre-existing caller's own default)
+preserves existing behavior byte-for-byte; the six news adapters each
+gained one new optional constructor parameter forwarding this hook,
+proven via every pre-existing adapter test passing unmodified. No
+historical attempt data exists before this story's own instrumentation
+began recording -- acquisition coverage for any earlier window is
+honestly `UNAVAILABLE`, never fabricated; a `recorded_attempts == 0`
+window reports `success_rate = None`, never a 0% rate.
+
+**Technical feed identity, never publisher judgment.** An HTTP 403,
+timeout, or network failure is recorded against the technical feed
+that experienced it, never the resolved publishing institution.
+`GetSourceOperationalProfileAsOf` resolves a descriptive publisher
+association separately -- at most once per profile, reusing FX-62's
+own `ResolvePublisherForNewsItemAsOf` -- never substituted for the
+technical feed's own identity when unresolved.
+
+Run live against all six real sources: 33 genuine acquisition-attempt
+observations, including one real `TIMEOUT` on StatCan's `statcan_
+prices` channel that retried once and succeeded -- an organic, non-
+fabricated confirmation that attempt/retry instrumentation works
+correctly in production. The live run also discovered 36 genuinely
+new real-world items (growing the corpus from 358 to 394), re-
+attributed correctly by re-running `scripts/bootstrap_source_
+registry.py` (FX-62) afterward. See ADR 0011 for the complete decision
+record, including a PIT-safety design correction found and fixed
+during implementation (a future attempt was initially able to leak
+into a historical coverage judgment about an earlier `as_of`).
+
+**Explicitly NOT built in FX-63**: no reliability/forecast-performance
+scoring beyond FTA's own acquisition metrics; no reputation/trust/
+weighting/trading-signal field of any kind; no change to FX-56-61's
+own behavior; no `EconomicEvent` linkage; no Decision/Risk Engine use.
+FX-64 through FX-67 remain behind Gate G09.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

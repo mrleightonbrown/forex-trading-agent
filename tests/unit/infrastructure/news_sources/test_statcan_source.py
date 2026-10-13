@@ -107,6 +107,31 @@ async def test_source_key_and_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_acquisition_attempt_hook_is_invoked_with_source_key_and_channel() -> None:
+    observed: list[tuple[str, str]] = []
+
+    async def on_acquisition_attempt(
+        source_key: str, channel: str, run_id: str, outcome: object
+    ) -> None:
+        observed.append((source_key, channel))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, text=_feed_xml(), headers={"content-type": "application/atom+xml"}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=_HOST)
+    source = StatCanSource(
+        client=client, clock=lambda: _RETRIEVED_AT, on_acquisition_attempt=on_acquisition_attempt
+    )
+    feed = STATCAN_FEEDS[0]
+    await source.fetch_feed(feed)
+    await source.aclose()
+
+    assert observed == [("STATCAN", feed.channel)]
+
+
+@pytest.mark.asyncio
 async def test_entry_id_is_external_identity() -> None:
     feed = STATCAN_FEEDS[0]
     source = _source_returning(

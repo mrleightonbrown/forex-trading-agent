@@ -388,6 +388,46 @@ class SqlAlchemyNewsRepository:
                 latest_by_key[row.news_item_key] = row
         return {key: _vintage_to_domain(row) for key, row in latest_by_key.items()}
 
+    async def list_item_keys_for_source(self, source_key: str) -> tuple[str, ...]:
+        """FX-63 Section 11: every internal `news_item_key` whose
+        `NewsSourceMappingRow.source_key` equals `source_key` -- the
+        ONE efficient batch entry point `GetSourceOperationalProfile
+        AsOf`'s own narrow `_ContentLookup` Protocol needs, satisfying
+        it directly without widening the global `NewsRepository` port
+        (mirrors `latest_evidence_eligible_vintages_as_of`'s own FX-60H
+        precedent). Served by `uq_news_source_mappings_identity`'s own
+        leftmost `source_key` prefix -- no new index required."""
+        stmt = select(NewsSourceMappingRow.news_item_key).where(
+            NewsSourceMappingRow.source_key == source_key
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+        return tuple(rows)
+
+    async def list_vintages_for_items(
+        self, news_item_keys: tuple[str, ...]
+    ) -> dict[str, tuple[NewsItemVintage, ...]]:
+        """FX-63 Section 11: every stored vintage for EVERY key in
+        `news_item_keys`, in ONE round trip -- the batch equivalent of
+        calling `list_vintages` once per key, never a second,
+        independently-maintained selection rule. A key with no stored
+        vintage is simply absent from the returned mapping."""
+        if not news_item_keys:
+            return {}
+        stmt = select(NewsItemVintageRow).where(
+            NewsItemVintageRow.news_item_key.in_(news_item_keys)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+
+        by_key: dict[str, list[NewsItemVintageRow]] = {}
+        for row in rows:
+            by_key.setdefault(row.news_item_key, []).append(row)
+        return {
+            key: tuple(_vintage_to_domain(row) for row in item_rows)
+            for key, item_rows in by_key.items()
+        }
+
 
 # --- First-vintage shape guard (FX-56H) -----------------------------------
 

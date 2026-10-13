@@ -96,8 +96,10 @@ from forex_agent.domain.news_source_status import NewsSourceStatus
 from forex_agent.domain.news_source_timestamp_provenance import NewsSourceTimestampProvenance
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.news_sources.http_fetch import (
+    AcquisitionAttemptRecorder,
     ClockFn,
     SleepFn,
+    bind_acquisition_recorder,
     default_clock,
     fetch_text,
 )
@@ -158,6 +160,7 @@ class StatCanSource:
         crawl_delay_seconds: float = _CRAWL_DELAY_SECONDS,
         sleep: SleepFn = _default_sleep,
         monotonic: MonotonicFn = _default_monotonic,
+        on_acquisition_attempt: AcquisitionAttemptRecorder | None = None,
     ) -> None:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
@@ -171,6 +174,7 @@ class StatCanSource:
         self._sleep = sleep
         self._monotonic = monotonic
         self._last_request_at: float | None = None
+        self._on_acquisition_attempt = on_acquisition_attempt
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -202,12 +206,16 @@ class StatCanSource:
         Daily-release article -- see `statcan_atom_parsing.py`) is an
         ordinary item-level invalid, never escalated to this
         exception."""
+        on_attempt = bind_acquisition_recorder(
+            self._on_acquisition_attempt, SOURCE_KEY, feed.channel
+        )
         fetched = await fetch_text(
             self._client,
             feed.path,
             clock=self._clock,
             before_attempt=self._pace,
             sleep=self._sleep,
+            on_attempt=on_attempt,
         )
         try:
             parsed = parse_statcan_daily_atom(fetched.text)
