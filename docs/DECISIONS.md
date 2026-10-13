@@ -16074,3 +16074,158 @@ complete decision record.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-64, or any Decision/Risk Engine work.
+
+## 2026-10-13 — FX-63H: operational observation integrity hardening
+
+**Scope.** Three independent-review findings on FX-63, closed without
+touching its own schema/migration or any FX-56-62H behavior. Starting
+commit: `9fde292` (the FX-63 commit).
+
+**H1 (failure isolation).** `on_attempt` was awaited directly inside
+`fetch_text`'s own retry loop, so an observation-persistence failure
+could propagate into the acquisition decision path; `make_
+acquisition_recorder` also shared the calling script's own session,
+so a commit inside `add_observation` could affect unrelated pending
+`NewsItem` work in that same session. Fixed with a single narrow
+try/except boundary (`_report_attempt`, the ONLY call site for `on_
+attempt`) reporting via `on_attempt_error` (default: a visible
+stderr diagnostic), and by giving the recorder its OWN independent
+session per attempt (`session_factory`, not a bound repository) --
+proven by a real-Postgres test that a deliberately uncommitted
+`NewsItemVintage` insert on a separate session stays uncommitted
+after the recorder's own commit completes.
+
+**H2 (truthful coverage).** Coverage was inferred from `earliest_
+observation_availability_for_source(...) <= window_start`, which does
+not prove the window was CONTINUOUSLY instrumented (no heartbeat/
+liveness signal exists, only discrete attempt events). Simplified to
+`UNAVAILABLE` (zero in-window attempts) / `PARTIAL` (>=1) only --
+`OBSERVED` is reserved for a future, explicit complete-coverage
+contract and is never emitted for acquisition metrics today; the now-
+unused `earliest_observation_availability_for_source` was removed
+from the port/fake/real repository rather than left as dead code.
+
+**H3 (retry counting).** `retry_attempts` was computed as "in-window
+attempt count for a run minus one," undercounting a retry whose own
+attempt 1 fell outside the requested window. Fixed to use each
+observation's own `attempt_number > 1` directly -- self-evident
+regardless of whether earlier attempts in the same run are visible
+in this particular window.
+
+**Regression.** 13 new tests (5 `http_fetch` isolation + 2 real-
+Postgres wiring-isolation + 6 `GetSourceOperationalProfileAsOf`
+coverage/retry). Full deterministic suite: 2807 passed (up from
+2794). `ruff check .`, `ruff format --check .`, `mypy .`, `pre-commit
+run --all-files` all pass clean. Real-data verification against all
+six live sources found NO coverage-status change -- every source
+was, and remains, `PARTIAL`.
+
+Full details in `docs/ADR 0011`'s own FX-63H addendum.
+
+**Per this story's own explicit stop instruction**: do not begin
+Gate G09 or FX-64.
+
+## 2026-10-13 — FX-64: structured forecast capture & historical provenance
+
+**Scope.** FX-EPIC-09 Phase B's first story: an immutable, PIT-safe
+structured forecast registry preserving a forecaster's own original
+assertion and evidentiary basis -- capture and provenance only,
+explicitly NOT accuracy/skill calculation, outcome adjudication, or
+source weighting (FX-65, not authorized by this story). Starting
+commit: `95532a7` (the FX-63H commit), verified before any FX-64 code
+was written.
+
+**Discovery.** FX-62's identity/vintage/determinism contracts, FX-57's
+basis-pinning, FX-58/59's append-only patterns, and FX-63's
+observation contracts were inspected. `EconomicEventConsensusVintage`
+(FX-51) is a DIFFERENT concept -- calendar-tied market consensus,
+with no forecaster/publisher distinction and no target-definition
+precision -- FX-64 neither extends nor duplicates it; no backlog
+collision was found.
+
+**Design.** `ForecastClaim` (minimal, immutable) + `StructuredForecast
+Vintage` (append-only) mirror FX-62's own split; `claim_key` is always
+caller-supplied from stable, source-backed identifiers, never the
+forecast value alone. Two new tables (migration `afb65123d185`); no
+existing table touched. `ForecastAttribution` structurally forbids
+recording a survey's own publisher as its personal forecaster
+(`AGGREGATE_SURVEY_CONSENSUS` forbids both `forecaster_source_key`
+and `anonymous_respondent_id`). `forecast_target_registry` is a
+small, curated registry (mirroring `economic_indicator_registry`)
+with `measurement_convention` as a first-class, compared field, so
+two genuinely different statistical conventions for "the same"
+variable family are always two different target definitions. Full
+rationale in `docs/adr/0012-structured-forecast-capture-and-
+provenance.md`.
+
+**The single most important architectural feature (Section 7):
+production PIT and retrospective research are separate dimensions,
+with NO implicit fallback.** `StructuredForecastRepository` exposes
+two differently-NAMED read paths -- `latest_production_observed_
+vintage_as_of`/`list_production_observed_claims_as_of` (used by
+`GetForecastClaimAsOf`/`ListForecastClaimsAsOf`) and `latest_vintage_
+as_of_for_research` (used ONLY by `GetRetrospectiveForecastResearch
+View`, which takes its own `research_as_of`, never `as_of`) -- no
+single method and no boolean flag could let a caller reach a
+retrospective vintage through an ordinary production query.
+
+**Determinism** mirrors FX-62H's own corrected lesson exactly: the
+determinism key is `(claim_key, algorithm_version, evidence)` (the
+FULL evidence object); the compared payload is `(forecast_type,
+target_key, target_period, numeric_value, unit, categorical_outcome,
+attribution)` -- every one of Section 13's own named dimensions is
+individually tested.
+
+**Capture eligibility** (`ValidateStructuredForecastCandidate`) is
+pure and side-effect-free, checked first and unconditionally --
+builds each strict value object from the caller's own raw candidate
+fields (mirroring FX-56's own flat-DTO convention) and classifies any
+construction failure into `INSUFFICIENT_SPECIFICATION`/`AMBIGUOUS_
+ATTRIBUTION`/`UNSUPPORTED_FORECAST_TYPE`/`UNVERIFIED_EVIDENCE`,
+proven never to persist a rejected candidate by a real-Postgres test.
+
+**Real-data pilot examples**, independently verified against each
+source's own public documentation: ECB Survey of Professional
+Forecasters Q1 2025 (published 2025-01-31, HICP 2025 = 2.1%) and Q2
+2025 (published 2025-04-22, HICP 2025 = 2.2%) -- two genuinely
+DISTINCT claims for the identical target+period, neither overwriting
+the other (Section 5's own rule, proven with real data); Bank of
+Canada Market Participants Survey Q1 2025 (published 2025-04-28):
+median policy-rate forecast of 2.25% for the scheduled 2025-12-10
+decision, and median GDP growth forecast of 1.0% YoY for end-2025,
+from the SAME document. One additional, clearly-labeled SYNTHETIC
+within-claim-correction example (no real documented case of a survey
+correcting an already-published figure was found). All five recorded
+via `scripts/import_pilot_structured_forecasts.py`, confirmed
+idempotent across three real runs.
+
+**Regression.** Full deterministic suite: 2962 passed. `ruff check .`,
+`ruff format --check .`, `mypy .` (614 source files), `pre-commit run
+--all-files` all pass clean. 121 new tests across domain/application/
+integration files. Every pre-existing FX-55-63H test passed
+UNMODIFIED; real counts confirmed unchanged (394 NewsItems, 358
+semantic annotations, 12 intelligence sources, 400 attribution
+vintages, 34 operational observations).
+
+**Explicitly confirmed NOT done**: no forecast accuracy/skill
+calculation; no outcome adjudication; no source reputation weighting;
+no `EconomicEvent` linkage; no Decision/Risk Engine integration; no
+forecast-series linking entity (deferred, Section 5's own "may be,"
+not required by any real pilot example).
+
+**One architectural gap honestly flagged** (ADR 0012's own
+Consequences section): no real `PRODUCTION_OBSERVED` pilot example
+exists -- this story authorizes no live acquisition adapter, so every
+real example is, honestly, retrospective research acquired long
+after its own publication. `PRODUCTION_OBSERVED` mechanics are
+proven correct by synthetic unit and real-Postgres integration tests
+instead, never by a fabricated contemporaneous-knowledge claim.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-64 entry; `docs/CURRENT_
+STATE.md` carries its own FX-64 entry immediately after the FX-63H
+entry; `docs/adr/0012-structured-forecast-capture-and-provenance.md`
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-65, FX-66, or FX-67. Independent architectural review is mandatory
+before authorizing FX-65.

@@ -3409,6 +3409,75 @@ weighting/trading-signal field of any kind; no change to FX-56-61's
 own behavior; no `EconomicEvent` linkage; no Decision/Risk Engine use.
 FX-64 through FX-67 remain behind Gate G09.
 
+## Structured forecast capture & historical provenance (FX-64, ADR 0012, FX-EPIC-09 Phase B's first story)
+
+**FX-64 is Phase B's first story**, giving FTA an immutable, point-
+in-time-safe structured forecast registry -- capture and provenance
+only, explicitly NOT forecast evaluation (FX-65's own future job,
+unauthorized here). `ForecastClaim` (minimal, immutable) + `Structured
+ForecastVintage` (append-only) mirror FX-62's own identity/vintage
+split exactly; `claim_key` is always caller-supplied, built from
+stable, source-backed identifiers -- never from the forecast value
+alone, so two forecasters predicting the same number are always two
+distinct claims, and a genuinely new survey round is a distinct claim
+from an earlier one, never a silent overwrite.
+
+**Attribution structurally distinguishes forecaster from publisher.**
+`ForecastAttributionKind` (`NAMED_INSTITUTION`/`AGGREGATE_SURVEY_
+CONSENSUS`/`ANONYMOUS_RESPONDENT`) makes it unconstructable to record
+a survey's own publisher (reusing FX-62 identities verbatim) as the
+personal forecaster of an aggregate statistic -- proven with real
+data: the Bank of Canada and the ECB both appear only as `publisher_
+source_key` for their own survey medians, never as `forecaster_
+source_key`.
+
+**Exact target semantics are a small, curated registry**
+(`forecast_target_registry`, mirroring `economic_indicator_registry`'s
+own admission discipline), never a bare `(family, year, value)`
+tuple -- `measurement_convention` keeps genuinely different
+statistical conventions for "the same" variable family as genuinely
+different target definitions, proven with real data: the Philadelphia
+Fed SPF's own QoQ-annualized GDP growth convention and the Bank of
+Canada MPS's own YoY convention coexist as two distinct `GDP_GROWTH`
+definitions.
+
+**Production PIT and retrospective research are separate dimensions,
+with no implicit fallback (the single most important architectural
+feature of this story).** The repository exposes two differently-
+named read paths -- production-only (`GetForecastClaimAsOf`/`List
+ForecastClaimsAsOf`) and an explicit, separately-parameterized
+research view (`GetRetrospectiveForecastResearchView`, its own
+`research_as_of`, never `as_of`) -- so a caller can never reach a
+retrospective vintage through an ordinary production query. Every
+real pilot example is honestly `RETROSPECTIVE_RESEARCH` (acquired
+in October 2026, long after each one's own real 2025 publication);
+none is backdated, and none is visible to a production query at any
+`as_of`.
+
+**Historical determinism mirrors FX-62H's own corrected lesson**: the
+full derived payload (type, target, period, value/outcome,
+attribution) and the full evidence object (not merely its kind) are
+both part of the historical basis comparison -- a legitimate
+correction under genuinely different evidence always mints a new
+append-only revision, proven with a real within-claim correction
+pilot example.
+
+Real pilot examples recorded against three independently-verified,
+publicly-documented surveys (ECB SPF, Bank of Canada MPS) demonstrate
+every required case: two genuinely distinct survey rounds for the
+same target (never merged), an aggregate-consensus forecast whose
+publisher is not the forecaster, one evidence document supporting two
+distinct claims, and a real within-claim correction. See ADR 0012 for
+the complete decision record and the one honestly-flagged
+architectural gap (no genuine `PRODUCTION_OBSERVED` example exists,
+since this story authorizes no live acquisition adapter).
+
+**Explicitly NOT built in FX-64**: forecast accuracy/skill
+calculations, outcome adjudication, source reputation weighting,
+`EconomicEvent` linkage, any Decision/Risk Engine integration, or a
+forecast-series linking entity (deferred, not required by any real
+pilot example). FX-65 through FX-67 remain unauthorized.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

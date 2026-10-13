@@ -3238,6 +3238,81 @@ _Last updated: 2026-09-27 (FX-54V)_
   `ruff format`/`mypy`/`pre-commit` all clean. Every pre-existing
   FX-55-62H test passed UNMODIFIED. **Stop after FX-63 — do not start
   FX-64, or any Decision/Risk Engine work.**
+- **FX-63H: operational observation integrity hardening (complete)**.
+  Closed three independent-review findings on FX-63 without touching
+  its schema/migration or FX-56-62H behavior. **H1**: `on_attempt` was
+  awaited unguarded inside `fetch_text`'s own retry loop (a telemetry
+  write failure could crash an otherwise-successful fetch), and the
+  recorder shared the caller's own session (its commit could affect
+  unrelated pending `NewsItem` work). Fixed with a single narrow
+  try/except boundary (`_report_attempt`) plus an independent
+  `session_factory`-per-attempt in `make_acquisition_recorder`,
+  proven by a real-Postgres test that a deliberately uncommitted
+  `NewsItem` write stays uncommitted after the recorder's own commit.
+  **H2**: acquisition coverage was inferred from an earliest-
+  observation timestamp alone, which does not prove continuous
+  coverage (no heartbeat/liveness signal exists). Simplified to
+  `UNAVAILABLE`/`PARTIAL` only -- `OBSERVED` is reserved for a future,
+  unbuilt complete-coverage contract; the now-dead `earliest_
+  observation_availability_for_source` method was removed rather
+  than left unused. **H3**: in-window retry counting undercounted a
+  retry whose own preceding attempt fell outside the window -- fixed
+  to use each observation's own `attempt_number > 1` directly. 13
+  new tests; full deterministic suite: 2807 passed (up from 2794).
+  Real-data verification against all six live sources found NO
+  coverage-status change (every source was, and remains, `PARTIAL`).
+  **Stop after FX-63H — do not begin Gate G09 or FX-64.**
+- **FX-64: structured forecast capture & historical provenance
+  (complete, FX-EPIC-09 Phase B's first story, ADR 0012)**. An
+  immutable, PIT-safe structured forecast registry -- capture and
+  provenance only, explicitly NOT forecast evaluation (FX-65, not
+  authorized). `ForecastClaim` (minimal) + `StructuredForecastVintage`
+  (append-only) mirror FX-62's own identity/vintage split; `claim_key`
+  is always caller-supplied from stable, source-backed identifiers,
+  never from the forecast value alone. **Attribution** structurally
+  distinguishes forecaster from publisher (`NAMED_INSTITUTION`/
+  `AGGREGATE_SURVEY_CONSENSUS`/`ANONYMOUS_RESPONDENT`), reusing FX-62
+  identities verbatim -- proven with real data: the Bank of Canada
+  and the ECB appear only as publishers of their own survey medians,
+  never as the personal forecaster. **Target semantics** are a small,
+  curated registry (`forecast_target_registry`, six definitions,
+  mirroring `economic_indicator_registry`'s own admission discipline)
+  with `measurement_convention` as a first-class field, proven with
+  real data: the Philadelphia Fed SPF's own QoQ-annualized GDP growth
+  convention and the Bank of Canada MPS's own YoY convention coexist
+  as genuinely distinct `GDP_GROWTH` definitions, never conflated.
+  **Production PIT and retrospective research are separate
+  dimensions with no implicit fallback** (this story's own single
+  most important feature) -- two differently-named repository read
+  paths, `GetForecastClaimAsOf`/`ListForecastClaimsAsOf` (production-
+  only) and `GetRetrospectiveForecastResearchView` (its own `research_
+  as_of`, never `as_of`); every real pilot example is honestly
+  `RETROSPECTIVE_RESEARCH` (acquired October 2026, long after each
+  one's own real 2025 publication) and confirmed invisible to a
+  production query at any `as_of`. **Determinism** mirrors FX-62H's
+  own corrected lesson: the full derived payload AND the full
+  evidence object are both part of the historical basis, proven with
+  a real within-claim correction example. **Capture eligibility** is
+  checked first, unconditionally -- a rejected candidate is never
+  persisted, proven by a real-Postgres test. Two new tables (migration
+  `afb65123d185`); no FX-56-63H table touched, mutated, or given a
+  new column. Five real pilot examples recorded against ECB SPF (Q1
+  and Q2 2025, two genuinely distinct claims for the identical
+  target) and Bank of Canada MPS (Q1 2025, policy rate AND GDP growth
+  from the same document) via `scripts/import_pilot_structured_
+  forecasts.py`, confirmed idempotent across three real runs; one
+  additional, clearly-labeled SYNTHETIC within-claim-correction
+  example. 121 new tests across unit/integration files; full
+  deterministic suite: 2962 passed. `ruff`/`ruff format`/`mypy`/
+  `pre-commit` all clean. Every pre-existing FX-55-63H test passed
+  UNMODIFIED; real FX-56-63H data counts (394 NewsItems, 358 semantic
+  annotations, 12 intelligence sources, 400 attribution vintages, 34
+  operational observations) confirmed unchanged by this story.
+  **One architectural gap honestly flagged** (ADR 0012): no real
+  `PRODUCTION_OBSERVED` pilot example exists, since this story
+  authorizes no live acquisition adapter -- every real example is,
+  honestly, retrospective research. **Stop after FX-64 — independent
+  architectural review is mandatory before authorizing FX-65.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
