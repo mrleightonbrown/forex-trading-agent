@@ -22,6 +22,7 @@ from forex_agent.apps.api.view_models.news_evidence_view_model import (
     EMPTY_STATE_NO_WINDOW_ELIGIBLE_EVIDENCE,
     PRESENTATION_VERSION,
     RELEVANCE_EXPLANATION_NOTE,
+    _safe_external_url,
     build_news_evidence_view,
 )
 from forex_agent.domain.instrument import Instrument
@@ -576,6 +577,75 @@ def test_https_url_is_preserved() -> None:
     view = build_news_evidence_view(_snapshot(active=(group,)))
 
     assert view["active_entries"][0]["members"][0]["canonical_url"] == "https://example.com/story"
+
+
+# --- FX-61H H2: strict external URL validation --------------------------------
+
+_VALID_URLS = (
+    "http://example.com/story",
+    "https://example.com/story",
+    "HTTPS://EXAMPLE.COM/Story",
+    "http://example.com:8080/story?q=1#frag",
+    "http://user:pass@example.com/story",
+    "http://[::1]/story",
+    "https://sub.example.co.uk/a/b/c",
+)
+
+_INVALID_URLS = (
+    "javascript:alert(1)",
+    "data:text/html,<script>1</script>",
+    "vbscript:msgbox(1)",
+    "ftp://example.com/file",
+    "mailto:a@example.com",
+    "http://",
+    "http:///path",
+    "http:evil.com",
+    "https:evil.com",
+    "//example.com/story",
+    "http://example.com\n/evil",
+    "http://example.com\t/evil",
+    "http://example.com\r/evil",
+    "http://exa mple.com",
+    "http://\x00example.com",
+    " http://example.com",
+    "http://example.com ",
+    "http://[notclosed/path",
+    "",
+)
+
+
+def test_safe_external_url_accepts_well_formed_http_https_urls() -> None:
+    for url in _VALID_URLS:
+        assert _safe_external_url(url) == url, f"{url!r} should have been accepted"
+
+
+def test_safe_external_url_rejects_malformed_or_unsafe_urls() -> None:
+    for url in _INVALID_URLS:
+        assert _safe_external_url(url) is None, f"{url!r} should have been rejected"
+
+
+def test_safe_external_url_accepts_none() -> None:
+    assert _safe_external_url(None) is None
+
+
+def test_safe_external_url_rejects_missing_host_through_the_full_view() -> None:
+    group = _singleton_group(
+        "G1", side=NewsPairRelevanceSide.BASE_ONLY, canonical_url="http:///no-host"
+    )
+    view = build_news_evidence_view(_snapshot(active=(group,)))
+
+    assert view["active_entries"][0]["members"][0]["canonical_url"] is None
+
+
+def test_safe_external_url_rejects_embedded_newline_through_the_full_view() -> None:
+    group = _singleton_group(
+        "G1",
+        side=NewsPairRelevanceSide.BASE_ONLY,
+        canonical_url="http://example.com/story\n/evil",
+    )
+    view = build_news_evidence_view(_snapshot(active=(group,)))
+
+    assert view["active_entries"][0]["members"][0]["canonical_url"] is None
 
 
 # --- UTC serialization / presentation metadata -------------------------------

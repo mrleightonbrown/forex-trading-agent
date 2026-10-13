@@ -29,6 +29,7 @@ architect's own review notes on FX-60H.1:
    categorical location evidence, exactly as FX-60 itself defines it:
    it never means "buy"/"sell"/"bullish"/"bearish"."""
 
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -72,21 +73,45 @@ EMPTY_STATE_MESSAGES: dict[str, str] = {
     ),
 }
 
-#: FX-61 Section 4.6: only these schemes may ever reach the
-#: presentation layer as a clickable `canonical_url` -- `javascript:`/
-#: `data:`/any other scheme is dropped here, at the source, rather
-#: than trusted to client-side handling alone.
+#: FX-61 Section 4.6, hardened FX-61H Section H2: only these schemes
+#: may ever reach the presentation layer as a clickable `canonical_
+#: url` -- `javascript:`/`data:`/any other scheme is dropped here, at
+#: the source, rather than trusted to client-side handling alone.
 _SAFE_URL_SCHEMES = {"http", "https"}
+
+#: FX-61H Section H2: every ASCII C0 control character (0x00-0x1F),
+#: DEL (0x7F), and the plain space (0x20) -- a legitimate URL never
+#: contains any of these literally (a real space must be percent-
+#: encoded as `%20`); rejecting the whole 0x00-0x20 range in one
+#: sweep catches NUL/newline/tab/CR injection attempts and bare
+#: whitespace together, rather than two separate checks.
+_CONTROL_OR_SPACE_PATTERN = re.compile(r"[\x00-\x20\x7f]")
 
 
 def _safe_external_url(url: str | None) -> str | None:
+    """FX-61H Section H2: only a well-formed, absolute `http`/`https`
+    URL with a non-empty hostname and no control/space characters is
+    ever returned -- anything else (missing scheme, missing host,
+    `javascript:`/`data:`, malformed authority, embedded control
+    characters) is rejected to `None` HERE, at the single source of
+    truth, never left for the client to filter."""
     if url is None:
         return None
+    if _CONTROL_OR_SPACE_PATTERN.search(url):
+        return None
     try:
-        scheme = urlparse(url).scheme.lower()
+        parsed = urlparse(url)
     except ValueError:
         return None
-    return url if scheme in _SAFE_URL_SCHEMES else None
+    if parsed.scheme.lower() not in _SAFE_URL_SCHEMES:
+        return None
+    try:
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    return url
 
 
 def _entity_view(entity: NewsEntityAnnotation) -> dict[str, Any]:

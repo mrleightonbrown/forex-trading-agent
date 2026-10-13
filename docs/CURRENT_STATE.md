@@ -3076,6 +3076,48 @@ _Last updated: 2026-09-27 (FX-54V)_
   dependency; no FX-58/58H/59/59H/60/60H/60H.1 file touched. **Stop
   after FX-61 — do not start FX-EPIC-09 or any Decision/Risk Engine
   work.**
+- **FX-61H: news evidence presentation hardening (complete)**. A
+  narrowly-scoped correction to three minor FX-61 review findings.
+  **H1 (robust lookback validation)**: `news_lookback_hours` is now
+  checked for finiteness (`math.isfinite`) BEFORE the `<= 0` check —
+  `NaN <= 0` is `False` in Python, so a bare non-positive check alone
+  let `NaN`/`+-inf` reach `timedelta()` construction, which raised an
+  UNHANDLED `ValueError`/`OverflowError` (a 500), not a controlled
+  400. `_resolve_news_lookback_hours` is now `_resolve_news_window_
+  start`, combining lookback validation AND the `window_start`
+  subtraction in one place (both the JSON route and the HTML page
+  call it), wrapped in `try/except (OverflowError, ValueError)` so an
+  astronomically large but finite value also resolves to 400, never
+  an unhandled 500 — with no arbitrary trading-policy maximum imposed
+  (only Python's own representable-datetime boundary). **H2 (strict
+  external URL validation)**: `_safe_external_url` now rejects a
+  missing/empty hostname, any embedded ASCII control character or
+  literal space (`\x00`-`\x20`, `\x7f`, one regex sweep), and a
+  malformed authority (e.g. unbalanced IPv6 brackets) — closing gaps
+  where `"http://"`, `"http:evil.com"`, and a URL containing an
+  embedded newline all previously passed the scheme-only check.
+  **H3 (complete provenance detail presentation)**: the expandable
+  story detail's own client-side renderer now displays four fields
+  the view model already carried but never rendered — canonical
+  relationship revision + both endpoint revisions, `source_content_
+  type`, `source_published_at` (explicitly labelled "provider
+  publication time (context only, never used for PIT filtering/
+  sorting/window eligibility)"), and each entity's own evidence
+  categories. No new source data, semantic annotation, or provenance
+  record — purely a presentation fix. 11 net new tests across 2 files
+  (verified via `grep -c`/`git diff`): `test_market_context_routes.py`
+  (+6 — NaN/inf/-inf rejection, astronomically-large-value rejection,
+  large-but-representable-value acceptance, same validation through
+  the HTML page, H3 field-presence in served page/payload),
+  `test_news_evidence_view_model.py` (+5 — `_safe_external_url`
+  accept/reject matrices covering missing host, control characters,
+  malformed authority, plus through-the-view regression cases) — all
+  passing, plus a real-browser screenshot (Playwright, temporary,
+  no persistent footprint) confirming H2/H3 render correctly. Full
+  deterministic suite: 2585 passed (up from 2574). `ruff`/`ruff
+  format`/`mypy`/`pre-commit` all clean. Every pre-existing FX-61 test
+  passed UNMODIFIED. **Stop after FX-61H — do not start FX-EPIC-09 or
+  any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

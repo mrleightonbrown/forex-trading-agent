@@ -461,6 +461,69 @@ async def test_news_route_rejects_non_positive_lookback(client: AsyncClient) -> 
         assert response.status_code == 400
 
 
+# --- FX-61H H1: robust lookback validation -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_non_finite_lookback_with_controlled_400(
+    client: AsyncClient,
+) -> None:
+    """`NaN <= 0` is `False` in Python -- a bare non-positive check
+    alone would let NaN/+-inf slip through into `timedelta()`
+    construction, which raises an UNHANDLED `ValueError`/`OverflowError`
+    (a 500), not a controlled 400. Every non-finite value must be
+    rejected explicitly, before it ever reaches `timedelta()`."""
+    for bad_value in ("nan", "inf", "-inf", "infinity", "-infinity"):
+        response = await client.get(
+            "/api/market-context/USD_CAD/news", params={"news_lookback_hours": bad_value}
+        )
+        assert response.status_code == 400, f"{bad_value!r} must be rejected with 400"
+        assert "finite" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_unrepresentable_lookback_with_controlled_400(
+    client: AsyncClient,
+) -> None:
+    """A finite but astronomically large lookback -- one whose own
+    `timedelta()` construction, or whose subtraction from `as_of`,
+    would overflow Python's representable datetime range -- must still
+    resolve to a controlled 400, never an unhandled 500."""
+    for bad_value in (1e20, 1e15, 1e13):
+        response = await client.get(
+            "/api/market-context/USD_CAD/news",
+            params={"as_of": "2026-01-01T00:00:00+00:00", "news_lookback_hours": bad_value},
+        )
+        assert response.status_code == 400, f"{bad_value!r} must be rejected with 400, not 500"
+
+
+@pytest.mark.asyncio
+async def test_news_route_accepts_a_large_but_representable_lookback(
+    client: AsyncClient,
+) -> None:
+    """A large, but genuinely representable, lookback must NOT be
+    rejected -- H1 closes the NaN/overflow gap without introducing an
+    arbitrary trading-policy maximum on top of it."""
+    response = await client.get(
+        "/api/market-context/USD_CAD/news",
+        params={"as_of": "2026-01-01T00:00:00+00:00", "news_lookback_hours": 1_000_000},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_page_rejects_non_finite_lookback_with_controlled_400(
+    client: AsyncClient,
+) -> None:
+    """The SAME validation applies through the HTML page route, which
+    shares the one `_resolve_news_window_start` resolver with the JSON
+    route -- never a second, divergent validation path."""
+    response = await client.get(
+        "/market-context", params={"pair": "USD_CAD", "news_lookback_hours": "nan"}
+    )
+    assert response.status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_news_route_reflects_persisted_evidence_with_correct_pair_relevance(
     client: AsyncClient, news_session: AsyncSession
@@ -559,3 +622,70 @@ async def test_news_evidence_withdrawn_entries_distinct_key_from_active(
     active_keys = {e["canonical_group_key"] for e in body["active_entries"]}
     withdrawn_keys = {e["canonical_group_key"] for e in body["withdrawn_only_entries"]}
     assert active_keys.isdisjoint(withdrawn_keys)
+
+
+# --- FX-61H H3: complete provenance detail presentation ----------------------
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_page_renders_previously_omitted_provenance_fields(
+    client: AsyncClient,
+) -> None:
+    """The view model already carried relation revisions/endpoint
+    revisions, `source_content_type`, `source_published_at`, and
+    entity evidence categories (Section 4.5/6) -- FX-61H's own finding
+    was that the SERVED page's own client-side detail renderer never
+    referenced them. Asserts the served page's own script text now
+    references every one of these fields, so the expandable story
+    detail can actually display them (no browser automation available
+    in this environment to execute the script and inspect the DOM
+    directly -- this is the strongest available automated check)."""
+    response = await client.get("/market-context", params={"pair": "GBP_USD"})
+
+    assert response.status_code == 200
+    body = response.text
+
+    # H3.1: canonical relationship revision and endpoint revisions.
+    assert "r.revision_sequence" in body
+    assert "r.left_item_revision_sequence" in body
+    assert "r.right_item_revision_sequence" in body
+
+    # H3.2: source content type.
+    assert "m.source_content_type" in body
+
+    # H3.3: source publication timestamp, clearly labelled as provider
+    # publication time -- never conflated with FTA's own first-seen/
+    # availability instants.
+    assert "m.source_published_at" in body
+    assert "provider publication time" in body.lower()
+    assert "never used for pit filtering" in body.lower()
+
+    # H3.4: entity evidence categories.
+    assert "e.evidence" in body
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_page_provenance_fields_render_with_real_data(
+    client: AsyncClient, news_session: AsyncSession
+) -> None:
+    """An end-to-end confirmation that the underlying DATA for each
+    newly-surfaced field is genuinely present in the embedded payload
+    for a real, persisted item -- not merely that the script text
+    mentions the right property names."""
+    await _make_news_item(news_session, "H3_STORY", first_seen_at=_ts(2026, 9, 1))
+
+    response = await client.get(
+        "/api/market-context/GBP_USD/news",
+        params={"as_of": "2026-09-02T00:00:00+00:00", "news_lookback_hours": 48},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    matching = [
+        e for e in body["active_entries"] if any(m["headline"] == "Headline" for m in e["members"])
+    ]
+    assert len(matching) == 1
+    member = matching[0]["members"][0]
+    assert "source_content_type" in member
+    assert "source_published_at" in member
+    assert all("evidence" in entity for entity in member["classification"]["entities"])

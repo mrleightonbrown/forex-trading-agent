@@ -19,6 +19,7 @@ already-committed FX-46 artifact from local disk -- never BLS, ONS,
 Bank of Canada, FRED, or any central-bank/commercial endpoint.
 """
 
+import math
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -203,27 +204,44 @@ async def get_events(
     return build_events_view(snapshot)
 
 
-def _resolve_news_lookback_hours(news_lookback_hours: float) -> timedelta:
-    """FX-61 Section 4.1/6: a presentation convenience default only
-    (`_DEFAULT_NEWS_LOOKBACK`), always explicit/overridable -- never a
-    news-importance policy. Must be strictly positive; never silently
-    substitutes a default on an invalid value."""
+def _resolve_news_window_start(
+    resolved_as_of: UtcTimestamp, news_lookback_hours: float
+) -> UtcTimestamp:
+    """FX-61H Section H1: validates `news_lookback_hours` AND computes
+    `window_start` in ONE place, entirely before any repository/
+    session work -- a non-finite (`NaN`/`+-inf`), non-positive, or
+    unrepresentable value (one whose `timedelta` construction or
+    `window_start` subtraction would overflow Python's own datetime
+    range) always raises a controlled `HTTPException(400)`, never an
+    unhandled 500. `news_lookback_hours <= 0` alone does NOT catch
+    `NaN` (`NaN <= 0` is `False` in Python), so finiteness is checked
+    FIRST, explicitly. No arbitrary trading-policy maximum is imposed
+    here -- only Python's own representable-datetime boundary is
+    enforced, which is a technical constraint, not a business one."""
+    if not math.isfinite(news_lookback_hours):
+        raise HTTPException(status_code=400, detail="news_lookback_hours must be a finite number")
     if news_lookback_hours <= 0:
         raise HTTPException(status_code=400, detail="news_lookback_hours must be positive")
-    return timedelta(hours=news_lookback_hours)
+    try:
+        news_lookback = timedelta(hours=news_lookback_hours)
+        return UtcTimestamp(resolved_as_of.value - news_lookback)
+    except (OverflowError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"news_lookback_hours is too large to represent: {news_lookback_hours!r}",
+        ) from exc
 
 
 async def _build_news_evidence_view(
     instrument: Instrument,
     resolved_as_of: UtcTimestamp,
-    news_lookback: timedelta,
+    window_start: UtcTimestamp,
     session: AsyncSession,
 ) -> dict[str, object]:
     """FX-61 Section 3: the ONLY place this story constructs `GetPair
     NewsEvidenceSnapshot` -- both the JSON route and the HTML page
     call this SAME function, so there is never a second, independently
     -interpreting code path (Section 6's own explicit prohibition)."""
-    window_start = UtcTimestamp(resolved_as_of.value - news_lookback)
     news_repository = SqlAlchemyNewsRepository(session)
     canonicalization_repository = SqlAlchemyNewsCanonicalizationRepository(session, news_repository)
     semantic_repository = SqlAlchemyNewsSemanticRepository(session, news_repository)
@@ -243,8 +261,8 @@ async def get_news_evidence(
 ) -> dict[str, object]:
     instrument = _resolve_supported_pair(pair)
     resolved_as_of = _resolve_as_of(as_of)
-    news_lookback = _resolve_news_lookback_hours(news_lookback_hours)
-    return await _build_news_evidence_view(instrument, resolved_as_of, news_lookback, session)
+    window_start = _resolve_news_window_start(resolved_as_of, news_lookback_hours)
+    return await _build_news_evidence_view(instrument, resolved_as_of, window_start, session)
 
 
 @router.get("/api/research/fx46")
@@ -297,8 +315,10 @@ async def market_context_page(
     artifact = _get_fx46_artifact()
     fx46_pair_code = pair if pair in artifact.pairs else next(iter(sorted(artifact.pairs)), pair)
 
-    news_lookback = _resolve_news_lookback_hours(news_lookback_hours)
-    news_view = await _build_news_evidence_view(instrument, resolved_as_of, news_lookback, session)
+    news_window_start = _resolve_news_window_start(resolved_as_of, news_lookback_hours)
+    news_view = await _build_news_evidence_view(
+        instrument, resolved_as_of, news_window_start, session
+    )
 
     html = render_market_context_page(
         selected_pair=pair,

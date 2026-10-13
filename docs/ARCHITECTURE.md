@@ -1383,6 +1383,23 @@ accounting counts shown are never affected by a client-side filter
 (a separate "N of M displayed" line makes this explicit). No cache,
 no persisted visualization materialization, no new migration.
 
+**FX-61H hardening** closed three presentation-layer findings. `news_
+lookback_hours` validation now checks `math.isfinite()` BEFORE the
+sign check (`NaN <= 0` is `False` in Python, so a bare non-positive
+check alone let `NaN`/`+-inf` reach `timedelta()` construction
+unchecked, raising an unhandled 500); `_resolve_news_window_start`
+also wraps the `timedelta`/subtraction arithmetic in `try/except
+(OverflowError, ValueError)` so an astronomically large but finite
+value resolves to a controlled 400 too, with no arbitrary trading-
+policy maximum imposed. `_safe_external_url` now additionally rejects
+a missing/empty hostname, any embedded ASCII control character or
+literal space, and a malformed authority. The expandable story
+detail now renders four fields the view model already carried but
+never displayed -- canonical relationship revision + endpoint
+revisions, source content type, source publication time (explicitly
+labelled as provider-reported, never used for PIT filtering/sorting/
+window eligibility), and entity evidence categories.
+
 ## News Intelligence source feasibility (FX-55, hardened FX-55H, FX-EPIC-08's first story)
 
 **FX-EPIC-08 ("News Intelligence") is now started, and FX-55 is

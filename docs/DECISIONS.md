@@ -15791,3 +15791,97 @@ its own FX-61 entry immediately after the preserved FX-60H.1 entry.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-EPIC-09 or any Decision/Risk Engine work.
+
+## 2026-10-13 — FX-61H: news evidence presentation hardening
+
+A narrowly-scoped correction to three minor findings from independent
+FX-61 architectural review, touching only the presentation layer.
+Starting commit: `1672099` (the FX-61 commit), verified before any
+work began.
+
+**H1 — robust lookback validation.** `news_lookback_hours <= 0` alone
+does not catch `NaN` (`NaN <= 0` evaluates to `False` in Python), so
+a `NaN`/`+-inf` value previously reached `timedelta()` construction
+unchecked, raising an unhandled `ValueError`/`OverflowError` -- an
+HTTP 500, not a controlled 400. Fixed by checking `math.isfinite()`
+FIRST, before the sign check. A second, independent gap: even a
+finite lookback can be astronomically large enough that `timedelta()`
+construction OR the `window_start = as_of - lookback` subtraction
+overflows Python's own representable datetime range -- also
+previously an unhandled 500. Fixed by replacing `_resolve_news_
+lookback_hours` (which returned a bare `timedelta`) with `_resolve_
+news_window_start` (which validates AND computes `window_start` in
+ONE place, wrapped in `try/except (OverflowError, ValueError)`),
+called by both the JSON route and the HTML page -- never a second,
+divergent validation path. No arbitrary trading-policy maximum was
+introduced; only Python's own representable-datetime boundary is
+enforced, which is a technical constraint, not a business one -- a
+dedicated test confirms a large-but-representable lookback (1,000,000
+hours) still succeeds.
+
+**H2 — strict external URL validation.** `_safe_external_url`
+previously validated only the URL's own scheme, accepting `"http://"`
+(empty host), `"http:evil.com"` (no authority at all), and a URL
+containing an embedded newline/NUL/space -- any of which could
+represent a malformed or unsafe link. Now rejects: any ASCII control
+character or literal space (`\x00`-`\x20`, `\x7f`, one regex sweep
+covering NUL/newline/tab/CR/space together, since a legitimate URL
+never contains a raw space -- it must be percent-encoded); a missing
+or empty hostname (`parsed.hostname` falsy); and a malformed
+authority that raises `ValueError` from the `hostname` property
+itself (e.g. unbalanced IPv6 brackets). `javascript:`/`data:`/`ftp:`/
+etc. remain rejected via the pre-existing scheme allowlist. A
+positive/negative matrix test (7 valid URLs including IPv6, userinfo,
+uppercase scheme, query/fragment; 19 invalid URLs covering every gap
+above) directly exercises `_safe_external_url`, plus two through-the-
+view regression cases.
+
+**H3 — complete provenance detail presentation.** The view model
+ALREADY carried `revision_sequence`/`left_item_revision_sequence`/
+`right_item_revision_sequence` (on each relation), `source_content_
+type` and `source_published_at` (on each member), and `evidence` (on
+each entity) -- FX-61's own review finding was that the client-side
+expandable story-detail renderer (`buildStoryDetail` in `market_
+context_page.py`) never displayed them, not that the data was
+missing. Fixed by extending the existing template-string rendering
+for relations (now shows relation + both endpoint revisions) and
+members (now shows content type, and a clearly-labelled "provider
+publication time (context only, never used for PIT filtering/
+sorting/window eligibility)" line, and entities now show their own
+`[EVIDENCE_KIND, ...]` categories). No new source data, semantic
+annotation, or provenance record of any kind -- purely a presentation
+fix; FX-60's own availability and PIT semantics are completely
+unaffected. Confirmed via a static source-presence test on the served
+page's own script text, a real-data test confirming the underlying
+fields are genuinely present in the API payload, and a temporary
+real-browser (Playwright/Chromium) screenshot showing the detail
+panel actually renders all three new lines correctly -- installed,
+used, and fully removed (including the ~300MB Chromium cache) within
+this same story, leaving no persistent footprint.
+
+**Regression.** Every pre-existing FX-61 test (49 across the news-
+evidence view-model/real-Postgres/route-and-HTML suites) passed
+UNMODIFIED. 11 net new
+tests across 2 files (verified via `grep -c`/`git diff`): `test_
+market_context_routes.py` (+6), `test_news_evidence_view_model.py`
+(+5) -- all passing. Full deterministic suite: 2585 passed (up from
+2574). `ruff check .`, `ruff format --check .`, `mypy .` (526 source
+files), and `pre-commit run` on every changed file all pass clean.
+Single authoritative FX-60 snapshot construction, pure view-model
+transformation, historical reconstruction, full-canonical-vs-eligible
+membership, semantic-gap/completeness handling, existing accounting
+values, client-side filtering, active/withdrawn distinction, and
+zero directional interpretation are all unaffected -- confirmed by
+the complete pre-existing test suite passing without modification.
+No schema change, no migration.
+
+**Explicitly confirmed NOT done**: no FX-58/58H/59/59H/60/60H/60H.1
+file touched; no `EconomicEvent` linkage; no sentiment/scoring/
+directional logic of any kind; no Decision/Risk Engine integration.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-61H entry; `docs/CURRENT_
+STATE.md` carries its own FX-61H entry immediately after the
+preserved FX-61 entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-EPIC-09 or any Decision/Risk Engine work.

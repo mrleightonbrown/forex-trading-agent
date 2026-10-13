@@ -747,12 +747,17 @@ _SCRIPT = """<script>
       if (m.summary) card.appendChild(htmlEl("div", { class: "mc-card-meta" }, m.summary));
       card.appendChild(htmlEl("div", { class: "mc-card-meta" },
         "First seen " + m.first_seen_at + " · vintage availability " + m.news_vintage_availability +
-        " (rev " + m.basis_news_item_revision_sequence + ") · status " + m.source_status));
+        " (rev " + m.basis_news_item_revision_sequence + ") · status " + m.source_status +
+        " · content type " + (m.source_content_type || "(unspecified)")));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" },
+        "Provider publication time (context only, never used for PIT filtering/sorting/" +
+        "window eligibility): " + (m.source_published_at || "not provided")));
       card.appendChild(htmlEl("div", { class: "mc-card-meta" },
         "Semantic annotation: rev " + m.semantic_annotation_revision_sequence + " · available " +
         m.semantic_annotation_availability + " · algorithm " + m.semantic_algorithm_version));
       const topics = m.classification.topics.join(", ") || "(none)";
-      const entities = m.classification.entities.map(e => e.entity_type + ":" + e.entity_key).join(", ") || "(none)";
+      const entities = m.classification.entities.map(e =>
+        e.entity_type + ":" + e.entity_key + " [" + e.evidence.join(", ") + "]").join(", ") || "(none)";
       const relevance = m.classification.currency_relevance.map(r => r.currency_code + " [" + r.reasons.join(", ") + "]").join("; ") || "(none)";
       card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Topics: " + topics));
       card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Entities: " + entities));
@@ -767,7 +772,10 @@ _SCRIPT = """<script>
       group.relation_provenance.forEach(r => {
         wrap.appendChild(htmlEl("div", { class: "mc-news-relation" },
           r.left_news_item_key + " <-> " + r.right_news_item_key + " · " + r.relation_kind +
-          " · " + r.method + " (" + r.algorithm_version + ") · available " + r.availability));
+          " · " + r.method + " (" + r.algorithm_version + ") · available " + r.availability +
+          " · relation rev " + r.revision_sequence + " · endpoint revs " +
+          r.left_news_item_key + "=rev" + r.left_item_revision_sequence + ", " +
+          r.right_news_item_key + "=rev" + r.right_item_revision_sequence));
       });
     } else {
       wrap.appendChild(htmlEl("div", { class: "mc-card-meta" }, "No canonical relationships -- singleton story."));
