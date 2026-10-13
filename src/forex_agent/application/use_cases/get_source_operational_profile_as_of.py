@@ -10,16 +10,29 @@ a composite rank, or a PASS/FAIL judgment (`fx63_v1`'s own
 **Two genuinely different evidence bases, kept explicit, never
 merged into one blanket judgment**: acquisition metrics (Section 8.1)
 come ONLY from `SourceOperationalObservation` rows this story itself
-records going forward -- `coverage` is honestly `UNAVAILABLE` for any
-window before this story's own instrumentation began recording, NEVER
-inferred or fabricated from the mere existence of successfully-
-ingested `NewsItem`s. Content metrics (Section 8.2) come ONLY from
+records going forward. Content metrics (Section 8.2) come ONLY from
 FX-56/57's own already-complete, durable evidence -- a successfully
 ingested `NewsItemVintage` IS the durable record of "this was
 retrieved and parsed," so no second, independently-maintained
 "successful parse" observation is needed for THAT fact; `coverage` is
 `OBSERVED` whenever this technical source_key has any source-native
 evidence at all, `NOT_APPLICABLE` when it has none.
+
+**FX-63H Section H2 -- acquisition coverage is truthful, never
+inferred from a single earliest timestamp.** An observation existing
+before a window's own `window_start` does NOT prove the window was
+continuously instrumented: this codebase has no heartbeat/liveness
+signal, only discrete attempt events, so "instrumentation existed
+earlier" and "this window was exhaustively observed" are genuinely
+different claims. `AcquisitionMetrics.coverage` is `UNAVAILABLE` when
+zero attempts were recorded anywhere in the requested window, and
+`PARTIAL` when at least one was -- `OBSERVED` is reserved for a
+future, explicit complete-coverage contract (e.g. a dedicated
+instrumentation-liveness record) and is DELIBERATELY never emitted by
+this method today; building that larger monitoring subsystem is
+out of scope for this correction (see ADR 0011's own FX-63H
+addendum). `success_rate`/other descriptive attempt metrics and their
+own denominators are unaffected by this change.
 
 **Technical feed identity, never publisher judgment (Section 5)**:
 `source_key` throughout this module is ALWAYS the technical feed
@@ -89,13 +102,23 @@ class AcquisitionMetrics:
     availability score (see the module docstring)."""
 
     coverage: OperationalMetricCoverage
+    """`UNAVAILABLE` when zero attempts were recorded in this window;
+    `PARTIAL` when at least one was -- `OBSERVED` is never emitted for
+    acquisition metrics today (FX-63H Section H2; see `Operational
+    MetricCoverage.OBSERVED`'s own docstring)."""
     recorded_runs: int
+    """The count of DISTINCT `run_id`s represented in this window --
+    never requiring a run's own first attempt to itself fall inside
+    the window (FX-63H Section H3)."""
     recorded_attempts: int
     successful_attempts: int
     failed_attempts: int
     retry_attempts: int
-    """Attempts beyond the first, within any single run -- Section 6's
-    own "repeated attempts within a run" count."""
+    """Count of in-window observations with `attempt_number > 1` --
+    each one IS a retry by definition, even when its own preceding
+    attempt(s) fall outside this window (FX-63H Section H3); never
+    reconstructed from an in-window run's own attempt COUNT, which
+    would undercount a run whose first attempt was observed earlier."""
     outcome_breakdown: dict[SourceAcquisitionOutcome, int]
     http_status_breakdown: dict[int, int]
     success_rate: Decimal | None
@@ -223,10 +246,20 @@ class GetSourceOperationalProfileAsOf:
     async def _build_acquisition_metrics(
         self, source_key: str, window_start: UtcTimestamp, as_of: UtcTimestamp
     ) -> AcquisitionMetrics:
-        earliest = await self._observation_repository.earliest_observation_availability_for_source(
-            source_key, as_of
+        """FX-63H Section H2: coverage is truthful, never inferred from
+        an earliest-ever-recorded timestamp alone (an observation
+        existing before `window_start` does NOT prove the window was
+        continuously instrumented -- this codebase has no heartbeat/
+        liveness signal, only discrete attempt events). `PARTIAL` when
+        at least one attempt was recorded IN this window; `UNAVAILABLE`
+        when none was. `OBSERVED` is reserved for a future complete-
+        coverage contract (e.g. an explicit instrumentation-liveness
+        record) and is never emitted by this method today -- see the
+        module docstring and ADR 0011's own FX-63H addendum."""
+        observations = await self._observation_repository.list_observations_for_source_as_of(
+            source_key, window_start, as_of
         )
-        if earliest is None:
+        if not observations:
             return AcquisitionMetrics(
                 coverage=OperationalMetricCoverage.UNAVAILABLE,
                 recorded_runs=0,
@@ -239,25 +272,22 @@ class GetSourceOperationalProfileAsOf:
                 success_rate=None,
             )
 
-        coverage = (
-            OperationalMetricCoverage.OBSERVED
-            if earliest.value <= window_start.value
-            else OperationalMetricCoverage.PARTIAL
-        )
-        observations = await self._observation_repository.list_observations_for_source_as_of(
-            source_key, window_start, as_of
-        )
         recorded_attempts = len(observations)
         successful_attempts = sum(
             1 for o in observations if o.outcome is SourceAcquisitionOutcome.SUCCESS
         )
         failed_attempts = recorded_attempts - successful_attempts
 
-        attempts_by_run: dict[str, int] = {}
-        for observation in observations:
-            attempts_by_run[observation.run_id] = attempts_by_run.get(observation.run_id, 0) + 1
-        recorded_runs = len(attempts_by_run)
-        retry_attempts = sum(count - 1 for count in attempts_by_run.values() if count > 1)
+        # FX-63H Section H3: `recorded_runs` is the count of distinct
+        # run identifiers REPRESENTED in this window (never requiring
+        # a run's own first attempt to itself be in-window). A retry
+        # is identified directly from `attempt_number > 1` -- an
+        # observation's own recorded attempt number already proves it
+        # is a retry, even when its preceding attempt(s) fall outside
+        # this window; no extra query reconstructs runs that began
+        # earlier.
+        recorded_runs = len({observation.run_id for observation in observations})
+        retry_attempts = sum(1 for observation in observations if observation.attempt_number > 1)
 
         outcome_breakdown: dict[SourceAcquisitionOutcome, int] = {}
         http_status_breakdown: dict[int, int] = {}
@@ -277,7 +307,7 @@ class GetSourceOperationalProfileAsOf:
         )
 
         return AcquisitionMetrics(
-            coverage=coverage,
+            coverage=OperationalMetricCoverage.PARTIAL,
             recorded_runs=recorded_runs,
             recorded_attempts=recorded_attempts,
             successful_attempts=successful_attempts,

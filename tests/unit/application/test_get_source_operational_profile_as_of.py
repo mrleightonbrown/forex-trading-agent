@@ -139,7 +139,10 @@ async def test_all_success_window() -> None:
 
     profile = await h.get_profile("FED", _ts(9), _ts(12))
 
-    assert profile.acquisition.coverage is OperationalMetricCoverage.OBSERVED
+    # FX-63H Section H2: OBSERVED is never emitted for acquisition
+    # metrics -- recorded attempts existing in-window only ever prove
+    # PARTIAL coverage, never complete continuous coverage.
+    assert profile.acquisition.coverage is OperationalMetricCoverage.PARTIAL
     assert profile.acquisition.recorded_attempts == 2
     assert profile.acquisition.successful_attempts == 2
     assert profile.acquisition.failed_attempts == 0
@@ -182,6 +185,56 @@ async def test_multiple_retries_in_one_logical_run() -> None:
     assert profile.acquisition.recorded_runs == 1
     assert profile.acquisition.recorded_attempts == 3
     assert profile.acquisition.retry_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_counted_even_when_its_own_preceding_attempt_is_outside_the_window() -> None:
+    """FX-63H Section H3: the exact regression this correction fixes.
+    Attempt 1 of `run-1` happened BEFORE the requested window; attempt
+    2 (a genuine retry) happened INSIDE it. The window query only ever
+    returns attempt 2 -- but `attempt_number > 1` on its own already
+    proves it is a retry, regardless of whether attempt 1 is visible
+    in this window at all."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.HTTP_FAILURE, _ts(5), 503
+    )
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 2, SourceAcquisitionOutcome.SUCCESS, _ts(9)
+    )
+
+    # Window starts AFTER attempt 1's own availability -- only attempt
+    # 2 is visible to this query.
+    profile = await h.get_profile("FED", _ts(8), _ts(12))
+
+    assert profile.acquisition.recorded_attempts == 1
+    assert profile.acquisition.recorded_runs == 1
+    assert profile.acquisition.retry_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_recorded_runs_counts_distinct_run_ids_in_window_only() -> None:
+    """FX-63H Section H3: `recorded_runs` is the count of distinct
+    `run_id`s represented IN the window -- a run whose only in-window
+    observation is itself a retry (attempt_number > 1) still counts
+    as exactly one represented run, never zero and never requiring its
+    own first attempt to be in-window."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.HTTP_FAILURE, _ts(5), 503
+    )
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 2, SourceAcquisitionOutcome.SUCCESS, _ts(9)
+    )
+    await h.record_attempt(
+        "FED", "press_monetary", "run-2", 1, SourceAcquisitionOutcome.SUCCESS, _ts(10)
+    )
+
+    profile = await h.get_profile("FED", _ts(8), _ts(12))
+
+    assert profile.acquisition.recorded_runs == 2
+    assert profile.acquisition.recorded_attempts == 2
+    assert profile.acquisition.retry_attempts == 1
 
 
 @pytest.mark.asyncio
@@ -546,7 +599,11 @@ def test_naive_timestamp_is_rejected_by_utc_timestamp_itself() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fully_observed_bounded_window() -> None:
+async def test_bounded_window_with_a_recorded_attempt_is_partial_never_observed() -> None:
+    """FX-63H Section H2: even a window whose own `window_start`
+    exactly matches the earliest recorded attempt is only PARTIAL --
+    a single recorded attempt never proves continuous instrumentation
+    throughout the window."""
     h = _Harness()
     await h.record_attempt(
         "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.SUCCESS, _ts(1)
@@ -554,7 +611,7 @@ async def test_fully_observed_bounded_window() -> None:
 
     profile = await h.get_profile("FED", _ts(1), _ts(12))
 
-    assert profile.acquisition.coverage is OperationalMetricCoverage.OBSERVED
+    assert profile.acquisition.coverage is OperationalMetricCoverage.PARTIAL
 
 
 @pytest.mark.asyncio
@@ -579,6 +636,89 @@ async def test_no_instrumentation_before_instrumentation_start() -> None:
 
     assert profile.acquisition.coverage is OperationalMetricCoverage.UNAVAILABLE
     assert profile.acquisition.recorded_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_single_observation_strictly_before_window_start_is_unavailable() -> None:
+    """FX-63H Section H2: an observation recorded BEFORE `window_start`
+    is excluded from the window query entirely -- it must never be
+    used to infer that the window itself (which contains zero actual
+    attempts) has any coverage at all."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.SUCCESS, _ts(5)
+    )
+
+    profile = await h.get_profile("FED", _ts(10), _ts(20))
+
+    assert profile.acquisition.coverage is OperationalMetricCoverage.UNAVAILABLE
+    assert profile.acquisition.recorded_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_gap_between_observed_attempts_is_still_partial() -> None:
+    """FX-63H Section H2: two recorded attempts with a large,
+    completely uninstrumented gap between them are still only PARTIAL
+    -- the gap itself is never detected or reported as a separate
+    coverage state (no monitoring subsystem is built for this), but
+    coverage must never be reported as anything stronger than PARTIAL
+    either."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.SUCCESS, _ts(1)
+    )
+    await h.record_attempt(
+        "FED", "press_monetary", "run-2", 1, SourceAcquisitionOutcome.SUCCESS, _ts(20)
+    )
+
+    profile = await h.get_profile("FED", _ts(0), _ts(23))
+
+    assert profile.acquisition.coverage is OperationalMetricCoverage.PARTIAL
+    assert profile.acquisition.recorded_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_future_observation_never_promotes_historical_coverage() -> None:
+    """FX-63H Section H2 (combined with PIT safety): recording a LATER
+    attempt must never change an EARLIER, already-computed profile's
+    own coverage judgment."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.SUCCESS, _ts(9)
+    )
+
+    before = await h.get_profile("FED", _ts(0), _ts(9, 30))
+    await h.record_attempt(
+        "FED", "press_monetary", "run-2", 1, SourceAcquisitionOutcome.SUCCESS, _ts(11)
+    )
+    after = await h.get_profile("FED", _ts(0), _ts(9, 30))
+
+    assert before.acquisition.coverage is OperationalMetricCoverage.PARTIAL
+    assert after.acquisition.coverage is OperationalMetricCoverage.PARTIAL
+    assert before == after
+
+
+@pytest.mark.asyncio
+async def test_historical_profile_reconstruction_after_later_observations_arrive() -> None:
+    """FX-63H Section H2: re-running the SAME historical `(window_
+    start, as_of)` query after MORE observations (at later instants)
+    have since been recorded must reproduce the IDENTICAL coverage and
+    metrics -- never drifting as the database accumulates more rows."""
+    h = _Harness()
+    await h.record_attempt(
+        "FED", "press_monetary", "run-1", 1, SourceAcquisitionOutcome.SUCCESS, _ts(9)
+    )
+    first = await h.get_profile("FED", _ts(0), _ts(10))
+
+    for hour in range(11, 15):
+        await h.record_attempt(
+            "FED", "press_monetary", f"run-{hour}", 1, SourceAcquisitionOutcome.SUCCESS, _ts(hour)
+        )
+    second = await h.get_profile("FED", _ts(0), _ts(10))
+
+    assert first == second
+    assert first.acquisition.coverage is OperationalMetricCoverage.PARTIAL
+    assert first.acquisition.recorded_attempts == 1
 
 
 @pytest.mark.asyncio

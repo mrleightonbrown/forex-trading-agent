@@ -20,6 +20,7 @@ call it again for the same response.
 """
 
 import asyncio
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -70,6 +71,49 @@ class FetchAttemptOutcome:
 
 
 OnAttemptFn = Callable[[FetchAttemptOutcome], Awaitable[None]]
+
+OnAttemptErrorFn = Callable[[Exception, FetchAttemptOutcome], None]
+"""FX-63H: diagnostic sink for a failure WITHIN the optional `on_
+attempt` hook itself -- see `fetch_text`'s own docstring for the
+isolation guarantee this exists to support. Synchronous and
+deliberately minimal: this is a diagnostic reporting step, never
+itself part of the acquisition decision path, so it must never be
+awaited in a way that could introduce a second place for a failure to
+propagate from."""
+
+
+def _default_on_attempt_error(exc: Exception, outcome: FetchAttemptOutcome) -> None:
+    print(
+        f"WARNING: operational observation persistence failed for attempt "
+        f"{outcome.attempt_number} ({outcome.outcome_kind.value}): {exc!r} -- "
+        "the underlying fetch outcome is unaffected and was NOT durably recorded "
+        "for this attempt",
+        file=sys.stderr,
+    )
+
+
+async def _report_attempt(
+    on_attempt: OnAttemptFn,
+    on_attempt_error: OnAttemptErrorFn,
+    outcome: FetchAttemptOutcome,
+) -> None:
+    """FX-63H: the ONE narrow failure boundary around the optional
+    `on_attempt` hook -- a telemetry/observation-persistence failure
+    must never change an otherwise successful (or failed) fetch
+    outcome, corrupt this call's own retry/raise/return decision, or
+    be silently swallowed with no diagnostic. Any exception `on_
+    attempt` itself raises is caught HERE, reported via `on_attempt_
+    error`, and then dropped for THIS attempt -- never retried (which
+    could duplicate the underlying HTTP attempt itself) and never
+    re-raised. This is the ONLY `try/except` in this module that
+    catches a bare `Exception`; every other exception in `fetch_text`
+    (a genuine transport/HTTP failure) is handled by its own existing,
+    narrower logic, completely unaffected by this one."""
+    try:
+        await on_attempt(outcome)
+    except Exception as exc:  # deliberate: see docstring above
+        on_attempt_error(exc, outcome)
+
 
 AcquisitionAttemptRecorder = Callable[[str, str, str, FetchAttemptOutcome], Awaitable[None]]
 """FX-63: the shape every adapter's own optional `on_acquisition_
@@ -149,6 +193,7 @@ async def fetch_text(
     sleep: SleepFn = _default_sleep,
     before_attempt: BeforeAttemptFn | None = None,
     on_attempt: OnAttemptFn | None = None,
+    on_attempt_error: OnAttemptErrorFn = _default_on_attempt_error,
 ) -> FetchedResponse:
     """GET `url`, retrying only a transport failure, HTTP 429, or HTTP
     5xx, up to `max_attempts` total attempts. An ordinary 4xx (other
@@ -175,7 +220,17 @@ async def fetch_text(
     `fetch_text`'s own internal retry attempts are individually
     observable -- a caller that wants durable, forward-looking
     acquisition-attempt evidence (FX-63) supplies this hook; one that
-    does not is completely unaffected."""
+    does not is completely unaffected.
+
+    **FX-63H: `on_attempt` is isolated from this call's own
+    acquisition decision path.** Any exception `on_attempt` itself
+    raises (e.g. a database write failing) is caught via `_report_
+    attempt`, reported through `on_attempt_error` (default: a visible
+    stderr diagnostic), and dropped for that one attempt -- it NEVER
+    propagates into the retry/raise/return logic below, so a
+    successful fetch stays successful, and a genuine HTTP/transport
+    failure keeps its own original category, regardless of whether
+    the optional telemetry write for that attempt succeeded."""
     last_error: str = "no attempt was made"
     for attempt in range(1, max_attempts + 1):
         if before_attempt is not None:
@@ -190,7 +245,11 @@ async def fetch_text(
                     if isinstance(exc, httpx.TimeoutException)
                     else FetchAttemptOutcomeKind.NETWORK_FAILURE
                 )
-                await on_attempt(FetchAttemptOutcome(attempt, kind, None, clock()))
+                await _report_attempt(
+                    on_attempt,
+                    on_attempt_error,
+                    FetchAttemptOutcome(attempt, kind, None, clock()),
+                )
             if attempt < max_attempts:
                 await sleep(backoff_seconds(attempt))
                 continue
@@ -201,13 +260,15 @@ async def fetch_text(
         if response.status_code == 429 or response.status_code >= 500:
             last_error = f"{url} returned HTTP {response.status_code}"
             if on_attempt is not None:
-                await on_attempt(
+                await _report_attempt(
+                    on_attempt,
+                    on_attempt_error,
                     FetchAttemptOutcome(
                         attempt,
                         FetchAttemptOutcomeKind.HTTP_FAILURE,
                         response.status_code,
                         clock(),
-                    )
+                    ),
                 )
             if attempt < max_attempts:
                 retry_after = _parse_retry_after(response.headers.get("Retry-After"))
@@ -217,13 +278,15 @@ async def fetch_text(
 
         if response.status_code >= 400:
             if on_attempt is not None:
-                await on_attempt(
+                await _report_attempt(
+                    on_attempt,
+                    on_attempt_error,
                     FetchAttemptOutcome(
                         attempt,
                         FetchAttemptOutcomeKind.HTTP_FAILURE,
                         response.status_code,
                         clock(),
-                    )
+                    ),
                 )
             raise NewsSourceUnavailableError(
                 f"{url} returned HTTP {response.status_code} -- not retried"
@@ -231,13 +294,15 @@ async def fetch_text(
 
         retrieved_at = clock()
         if on_attempt is not None:
-            await on_attempt(
+            await _report_attempt(
+                on_attempt,
+                on_attempt_error,
                 FetchAttemptOutcome(
                     attempt,
                     FetchAttemptOutcomeKind.SUCCESS,
                     response.status_code,
                     retrieved_at,
-                )
+                ),
             )
         return FetchedResponse(
             text=response.text,

@@ -42,22 +42,17 @@ class SourceOperationalObservationRepository(Protocol):
         availability <= as_of` -- both bounds inclusive. Never returns
         an observation outside this window; never filters by anything
         else (channel, outcome, ...) -- that is the measurement
-        layer's own job."""
-        ...
+        layer's own job.
 
-    async def earliest_observation_availability_for_source(
-        self, source_key: str, as_of: UtcTimestamp
-    ) -> UtcTimestamp | None:
-        """The EARLIEST `availability` recorded for `source_key` with
-        `availability <= as_of` -- PIT-filtered, exactly like every
-        other `*_as_of` method in this codebase -- or `None` if no
-        such observation exists. **Must never consider an observation
-        whose own `availability` is after `as_of`**: a future attempt
-        that has not yet happened, as of this query's own historical
-        instant, must never influence a coverage judgment about an
-        earlier instant (historical immutability). Used ONLY to
-        determine acquisition-metric COVERAGE (Section 8.4) -- whether
-        instrumentation was even running before a requested `window_
-        start` -- never to backfill or infer a historical attempt
-        that was never actually recorded."""
+        **FX-63H Section H2**: this is now the ONLY read method this
+        port offers, and the ONLY evidence `GetSourceOperationalProfile
+        AsOf` uses to judge acquisition coverage for a window --
+        whether this window has ANY recorded attempt. An earlier
+        version of this port also offered `earliest_observation_
+        availability_for_source`, used to infer "coverage starts at
+        the earliest-ever-recorded instant" -- retired because an
+        observation existing before `window_start` does not prove the
+        window itself was continuously instrumented (this codebase has
+        no heartbeat/liveness signal, only discrete attempt events);
+        see ADR 0011's own FX-63H addendum."""
         ...

@@ -15,6 +15,10 @@ from forex_agent.infrastructure.news_sources.http_fetch import (
 )
 
 
+class _ObservationPersistenceError(Exception):
+    """Simulates a telemetry/database write failure inside `on_attempt`."""
+
+
 def _client(handler: httpx.MockTransport) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=handler, base_url="https://example.test")
 
@@ -282,6 +286,129 @@ async def test_no_on_attempt_hook_is_a_no_op() -> None:
     await client.aclose()
 
     assert result.text == "ok"
+
+
+# --- FX-63H: observation-persistence failure isolation ----------------------
+
+
+@pytest.mark.asyncio
+async def test_successful_fetch_survives_a_failing_on_attempt_hook() -> None:
+    async def failing_on_attempt(outcome: FetchAttemptOutcome) -> None:
+        raise _ObservationPersistenceError("db write failed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    result = await fetch_text(
+        client,
+        "/feed.xml",
+        sleep=_no_sleep,
+        on_attempt=failing_on_attempt,
+        on_attempt_error=lambda exc, outcome: None,
+    )
+    await client.aclose()
+
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_genuine_http_failure_keeps_its_own_category_despite_failing_hook() -> None:
+    async def failing_on_attempt(outcome: FetchAttemptOutcome) -> None:
+        raise _ObservationPersistenceError("db write failed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    client = _client(httpx.MockTransport(handler))
+    with pytest.raises(NewsSourceUnavailableError):
+        await fetch_text(
+            client,
+            "/feed.xml",
+            sleep=_no_sleep,
+            max_attempts=3,
+            on_attempt=failing_on_attempt,
+            on_attempt_error=lambda exc, outcome: None,
+        )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_internal_retries_unaffected_by_a_failing_on_attempt_hook() -> None:
+    attempts = {"count": 0}
+
+    async def failing_on_attempt(outcome: FetchAttemptOutcome) -> None:
+        raise _ObservationPersistenceError("db write failed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            return httpx.Response(503, text="unavailable")
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    result = await fetch_text(
+        client,
+        "/feed.xml",
+        sleep=_no_sleep,
+        max_attempts=3,
+        on_attempt=failing_on_attempt,
+        on_attempt_error=lambda exc, outcome: None,
+    )
+    await client.aclose()
+
+    # Exactly 3 real HTTP attempts -- the failing hook never caused an
+    # extra retry, and never suppressed one either.
+    assert attempts["count"] == 3
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_on_attempt_error_is_invoked_with_the_exception_and_outcome() -> None:
+    observed: list[tuple[Exception, FetchAttemptOutcome]] = []
+
+    async def failing_on_attempt(outcome: FetchAttemptOutcome) -> None:
+        raise _ObservationPersistenceError("db write failed")
+
+    def on_attempt_error(exc: Exception, outcome: FetchAttemptOutcome) -> None:
+        observed.append((exc, outcome))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    await fetch_text(
+        client,
+        "/feed.xml",
+        sleep=_no_sleep,
+        on_attempt=failing_on_attempt,
+        on_attempt_error=on_attempt_error,
+    )
+    await client.aclose()
+
+    assert len(observed) == 1
+    exc, outcome = observed[0]
+    assert isinstance(exc, _ObservationPersistenceError)
+    assert outcome.outcome_kind is FetchAttemptOutcomeKind.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_default_on_attempt_error_prints_a_visible_diagnostic(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def failing_on_attempt(outcome: FetchAttemptOutcome) -> None:
+        raise _ObservationPersistenceError("db write failed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    client = _client(httpx.MockTransport(handler))
+    await fetch_text(client, "/feed.xml", sleep=_no_sleep, on_attempt=failing_on_attempt)
+    await client.aclose()
+
+    captured = capsys.readouterr()
+    assert "operational observation persistence failed" in captured.err
+    assert "_ObservationPersistenceError" in captured.err or "db write failed" in captured.err
 
 
 @pytest.mark.asyncio

@@ -31,15 +31,3 @@ class FakeSourceOperationalObservationRepository:
             if o.source_key == source_key
             and window_start.value <= o.availability.value <= as_of.value
         )
-
-    async def earliest_observation_availability_for_source(
-        self, source_key: str, as_of: UtcTimestamp
-    ) -> UtcTimestamp | None:
-        candidates = [
-            o.availability
-            for o in self.observations.values()
-            if o.source_key == source_key and o.availability.value <= as_of.value
-        ]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda ts: ts.value)

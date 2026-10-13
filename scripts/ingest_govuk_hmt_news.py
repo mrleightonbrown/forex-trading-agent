@@ -42,14 +42,8 @@ from forex_agent.application.use_cases.ingest_news_source_once import (
     NewsIngestionResult,
 )
 from forex_agent.application.use_cases.record_news_observation import RecordNewsObservation
-from forex_agent.application.use_cases.record_source_operational_observation import (
-    RecordSourceOperationalObservation,
-)
 from forex_agent.infrastructure.db.news_repository import SqlAlchemyNewsRepository
 from forex_agent.infrastructure.db.session import get_engine
-from forex_agent.infrastructure.db.source_operational_observation_repository import (
-    SqlAlchemySourceOperationalObservationRepository,
-)
 from forex_agent.infrastructure.news_sources.acquisition_observation_wiring import (
     make_acquisition_recorder,
 )
@@ -58,20 +52,17 @@ from forex_agent.infrastructure.news_sources.govuk_content_api import SOURCE_KEY
 
 async def main() -> None:
     session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
-    source: GovUkHmtSource | None = None
+    # FX-63H: the acquisition recorder opens its OWN independent
+    # session per attempt (see `make_acquisition_recorder`'s own
+    # docstring) -- it never shares the session below used for
+    # NewsItem persistence, so a telemetry write failure can never
+    # commit or roll back unrelated pending work.
+    source = GovUkHmtSource(on_acquisition_attempt=make_acquisition_recorder(session_factory))
     try:
+        paths = await source.discover_current_paths()
+        print(f"discovered_paths: {len(paths)}")
+
         async with session_factory() as session:
-            observation_repository = SqlAlchemySourceOperationalObservationRepository(session)
-            record_acquisition_observation = RecordSourceOperationalObservation(
-                observation_repository
-            )
-            source = GovUkHmtSource(
-                on_acquisition_attempt=make_acquisition_recorder(record_acquisition_observation)
-            )
-
-            paths = await source.discover_current_paths()
-            print(f"discovered_paths: {len(paths)}")
-
             repository = SqlAlchemyNewsRepository(session)
             record_observation = RecordNewsObservation(repository)
             ingest_once = IngestNewsSourceOnce(SOURCE_KEY, record_observation)
@@ -82,8 +73,7 @@ async def main() -> None:
             result = await ingest_once(fetchers)
             await session.commit()
     finally:
-        if source is not None:
-            await source.aclose()
+        await source.aclose()
 
     _print_result(result)
 

@@ -63,22 +63,6 @@ class SqlAlchemySourceOperationalObservationRepository:
         await self._session.commit()
         return tuple(_row_to_domain(row) for row in rows)
 
-    async def earliest_observation_availability_for_source(
-        self, source_key: str, as_of: UtcTimestamp
-    ) -> UtcTimestamp | None:
-        stmt = (
-            select(SourceOperationalObservationRow.availability)
-            .where(
-                SourceOperationalObservationRow.source_key == source_key,
-                SourceOperationalObservationRow.availability <= as_of.value,
-            )
-            .order_by(SourceOperationalObservationRow.availability.asc())
-            .limit(1)
-        )
-        value = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
-        return None if value is None else UtcTimestamp(value)
-
 
 def _row_values(observation: SourceOperationalObservation) -> dict[str, object]:
     return {

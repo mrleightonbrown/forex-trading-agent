@@ -3,7 +3,10 @@
 ## Status
 
 **Accepted -- code/schema/tests complete, and real-data instrumentation
-ACTIVATED against all six live sources, 2026-10-13.**
+ACTIVATED against all six live sources, 2026-10-13. Three independent-
+review findings (FX-63H, 2026-10-13) are recorded in this ADR's own
+addendum at the end of this document -- the schema, instrumentation
+points, and real-data activation below are otherwise unchanged by it.**
 
 ## Context
 
@@ -183,3 +186,88 @@ this codebase already provides. No real data was ever written or read
 incorrectly under the old signature; this was caught and corrected
 entirely within application-layer logic before any production
 profile was computed.
+
+## FX-63H addendum (2026-10-13): three independent-review findings closed
+
+**H1 -- observation-persistence failures were not isolated from the
+acquisition decision path.** `on_attempt` was awaited directly inside
+`fetch_text`'s own retry loop; an exception raised by the hook itself
+(e.g. a database write failing) would have propagated out of
+`fetch_text`, turning an otherwise successful or correctly-categorized
+failed fetch into an unrelated crash. Separately, `make_acquisition_
+recorder` originally shared the CALLING script's own session with the
+observation repository -- a `commit()` inside `add_observation` could
+have committed (or a failure rolled back) unrelated, still-pending
+`NewsItem` work in that same session.
+
+Fixed with two independent, narrowly-scoped changes:
+1. `http_fetch.fetch_text` gained `on_attempt_error` (default: a
+   visible stderr diagnostic) and a single new helper, `_report_
+   attempt`, which is now the ONLY call site that invokes `on_attempt`
+   -- wrapped in a `try/except Exception`, reporting via `on_attempt_
+   error` and dropping the failure for that one attempt (never
+   retried, never re-raised, never silently discarded with no
+   diagnostic). Every other exception in `fetch_text` (a genuine
+   transport/HTTP failure) is handled by its own pre-existing,
+   completely unaffected logic.
+2. `make_acquisition_recorder` (`infrastructure.news_sources.
+   acquisition_observation_wiring`) now takes a `session_factory`
+   instead of an already-bound repository -- EVERY recorded attempt
+   opens, uses, and closes its OWN independent session/transaction,
+   proven by a dedicated real-Postgres test that a deliberately
+   uncommitted `NewsItemVintage` insert on a separate, still-open
+   session remains uncommitted after the recorder's own commit
+   completes. All six `scripts/ingest_*.py` entrypoints were updated
+   to pass their own `session_factory` through instead of a bound
+   recorder; the append-only contract and natural idempotency key are
+   completely unchanged.
+
+**H2 -- acquisition coverage was inferred from an earliest-observation
+timestamp alone, which does not prove continuous historical coverage.**
+The original rule (`OBSERVED` whenever the globally-earliest recorded
+observation was at or before `window_start`, `PARTIAL` otherwise)
+conflated "instrumentation existed at some point before this window"
+with "this window was continuously instrumented throughout" -- this
+codebase has no heartbeat/liveness signal, only discrete attempt
+events, so the stronger claim was never actually supported.
+
+Fixed by dropping the earliest-timestamp heuristic entirely: coverage
+is now `UNAVAILABLE` when zero attempts were recorded anywhere in the
+requested window, and `PARTIAL` when at least one was. `OBSERVED` is
+retained in the `OperationalMetricCoverage` enum (content metrics
+still use it legitimately) but is now DELIBERATELY unreachable for
+acquisition metrics -- reserved for a future, explicit complete-
+coverage contract (e.g. a dedicated instrumentation-liveness record),
+which this correction does not attempt to build. `earliest_
+observation_availability_for_source` -- now unused by any caller --
+was removed from the port, the fake, and the real repository rather
+than left as dead code. Real-data verification against all six live
+sources found NO coverage-status change (every source was, and
+remains, `PARTIAL`): the old heuristic's own `window_start` (2020)
+predated all real instrumentation anyway, so it never actually reached
+`OBSERVED` in practice -- this correction changes the JUDGMENT RULE,
+not today's real-world reported values.
+
+**H3 -- in-window retry counting undercounted a retry whose own
+preceding attempt fell outside the requested window.** The original
+`retry_attempts` computation counted `(attempts observed for a run
+in this window) - 1`, which assumes a run's first attempt is itself
+visible in the window -- an observation with `attempt_number == 2`
+whose own `attempt_number == 1` predecessor fell before `window_start`
+was incorrectly NOT counted as a retry at all.
+
+Fixed by computing `retry_attempts` directly from each in-window
+observation's own `attempt_number > 1` -- a retry is self-evident from
+that field alone, regardless of whether earlier attempts in the same
+run are visible in this particular window. No additional query was
+added to reconstruct a run's own out-of-window history (explicitly
+out of scope per the story's own instruction). `recorded_runs` is
+unchanged: the count of distinct `run_id`s represented in the window.
+
+**Scope.** All three fixes are narrowly scoped corrections to FX-63's
+own recording/measurement logic -- no schema change, no migration, no
+change to FX-56-62H's own behavior, no FX-62 identity/attribution
+reuse change, no reputation/forecasting/trading score introduced.
+13 new tests (5 `http_fetch` isolation tests, 2 real-Postgres wiring-
+isolation tests, 6 `GetSourceOperationalProfileAsOf` coverage/retry
+tests); full deterministic suite 2807 passed (up from 2794).
