@@ -127,7 +127,10 @@ def _print_entry(entry: NewsPairEvidenceGroup) -> None:
     print(f"  base_reasons: {base_reasons}")
     print(f"  quote_reasons: {quote_reasons}")
     print(f"  canonical_group_key: {entry.canonical_group_key}")
-    print(f"  member_count: {len(entry.member_news_item_keys)}")
+    print(f"  member_count (evidence-eligible): {len(entry.member_news_item_keys)}")
+    print(
+        f"  canonical_member_count (full FX-58 group): {len(entry.canonical_member_news_item_keys)}"
+    )
     if entry.relation_provenance:
         edges = ", ".join(
             f"{r.left_news_item_key}<->{r.right_news_item_key}" for r in entry.relation_provenance

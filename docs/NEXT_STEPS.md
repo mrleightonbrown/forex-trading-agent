@@ -6253,3 +6253,99 @@ FX-60H addendum.
 **Per this story's own explicit stop instruction**: do not start
 FX-61. FX-EPIC-09/Decision Engine/Risk Engine remain not started;
 FX-49/FX-52 remain DEFER; FX-53 remains BLOCKED.
+
+## FX-60H.1: canonical provenance correction (complete)
+
+A targeted correction to FX-60H's own H2 finding, authorized after
+architectural review found H1/H3 approved but H2 conditionally
+approved. Starting commit: `f25b1f9` (the FX-60H commit), verified
+via `git log`/`git status` before any work began.
+
+**Root cause.** H2's own `relation_provenance` construction filtered
+relation endpoints through `eligible_vintages` -- the snapshot-
+ELIGIBLE subset of a group's own members -- rather than the group's
+own FULL FX-58-derived canonical membership. For the mandatory
+example (`A-SAME-B-SAME-C`, `B` ineligible via quarantine/backfill),
+BOTH connecting edges (`A-B`, `B-C`) were silently discarded, even
+though FX-58 correctly derived one connected canonical group and
+FX-60 correctly let only `A`/`C` contribute evidence -- the resulting
+group had real canonical connectivity with NO recorded provenance to
+explain it.
+
+**Correction.** Canonical membership and evidence eligibility are now
+explicitly SEPARATE fields on `NewsPairEvidenceGroup`: the pre-
+existing `member_news_item_keys` keeps its EXACT original meaning
+(evidence-eligible members only, unchanged); a new, additive
+`canonical_member_news_item_keys: tuple[str, ...]` field carries
+EVERY PIT-visible member of the group's own FX-58 connected
+component -- sourced directly from `derive_canonical_groups`'s own
+`NewsCanonicalGroup.member_news_item_keys` (no re-derivation, no
+second canonicalization algorithm, no new repository query).
+`relation_provenance`'s own endpoint validation now checks against
+the FULL canonical set rather than the eligible-only subset. An
+ineligible intermediate member's own connecting edges now survive in
+provenance while that member itself still contributes ZERO evidence,
+relevance, topics, entities, or window-anchor influence -- `story_
+first_seen_at` remains computed from eligible members only, exactly
+as before. The fix reuses the SAME `group.member_news_item_keys`
+already produced by the SAME `derive_canonical_groups` call H2's own
+grouping step already made, so H3's own exactly-4-round-trip count is
+completely unaffected.
+
+**Regression.** Every pre-existing FX-60/FX-60H test (67 total)
+passed UNMODIFIED against both the in-memory fakes and real
+Postgres -- not one existing assertion was weakened, loosened, or
+removed.
+
+**Test outcomes.** 8 net new tests across 2 files (verified via `git
+diff -- tests/ | grep -c '^+.*def test_'`, not a raw assumption): unit
+(`test_get_pair_news_evidence_snapshot.py` 37→42, +5 -- an ineligible-
+intermediate-member case matching the spec's own mandatory example, a
+stale-but-eligible-intermediate-member case confirming no behavior
+change for an already-eligible member, a future-relationship PIT case
+combined with an ineligible connector proving the fix remains
+genuinely PIT-safe -- reconstructing an earlier snapshot after the
+future relation is added to storage produces an unchanged result --
+a fully-connected-triangle multiple-redundant-path case confirming
+deterministic no-duplicate ordering, and an accounting-non-regression
+case confirming an ineligible connector changes no item count,
+relevance category, topic/entity aggregation, or window anchor),
+integration (`test_pair_news_evidence_snapshot.py` 16→19, +3 -- the
+same ineligible-intermediate-member, future-relationship-PIT, and
+multiple-paths cases re-verified against real Postgres) -- all
+passing. Full deterministic suite: 2538 passed (up from 2530).
+`ruff check .`, `ruff format --check .`, `mypy .` (523 source files),
+and `pre-commit run` on every changed file all pass clean.
+
+**Independently confirmed unchanged, as required**: the already-
+documented BLS 403 persists unchanged in the `live_source` suite (1
+failed, 9 passed, identical signature); the previously-observed OANDA
+practice-API 401 was independently re-checked and now PASSES -- a
+transient external-credential condition, confirmed unrelated to this
+change (not newly broken, not newly fixed BY this story). The real
+358-item corpus (`news_items`/`news_semantic_annotation_vintages`/
+`news_canonical_relation_vintages` = `358`/`358`/`0`) is confirmed
+unchanged. `scripts/show_pair_news_snapshot.py` was re-run against
+EUR/USD and produced output byte-identical to the pre-correction run
+(69 active entries, 289/23/46/0 reconciling to 358, every real
+group's `canonical_member_count` equal to its own `member_count`) --
+expected, since the real corpus carries zero canonical relations
+today, so this fix changes no real-data observable outcome.
+
+**Scope discipline.** H1's accounting definitions and H3's batch-
+query architecture are both completely untouched. FX-58/58H
+canonicalization and FX-59/59H semantics remain untouched. Backfill
+policy, correction-does-not-revive policy, and source withdrawal
+semantics are unchanged. `fx60_v1` preserved unchanged. No migration
+was necessary -- no schema change of any kind. No `EconomicEvent`
+linkage, sentiment, scoring, source reputation, or Decision/Risk
+Engine change of any kind.
+
+Full details in `docs/DECISIONS.md`'s FX-60H.1 entry; `docs/
+CURRENT_STATE.md` carries its own FX-60H.1 entry immediately after
+the preserved FX-60H entry; `docs/adr/0009-pit-safe-pair-news-
+evidence-snapshot.md` carries the full FX-60H.1 addendum.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-61. The implementation will be reviewed independently before
+FX-60/FX-60H receives final approval.

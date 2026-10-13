@@ -772,3 +772,136 @@ async def test_accounting_reconciles_against_real_postgres(
         + acc.groups_both
         == acc.groups_total
     )
+
+
+# --- FX-60H.1: canonical membership vs evidence eligibility, real Postgres ---
+
+
+async def test_h2_1_ineligible_intermediate_member_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    """Mandatory example, real Postgres: A-SAME-B-SAME-C with B
+    QUARANTINED (never evidence-eligible). One canonical group forms;
+    only A and C contribute evidence; `relation_provenance` must
+    still retain BOTH the A-B and B-C edges."""
+    a = await _make_item(news_repo, "h2x1-a", first_seen_at=_ts(9))
+    b = await _make_item(
+        news_repo,
+        "h2x1-b",
+        first_seen_at=_ts(9, 5),
+        evidence_disposition=NewsEvidenceDisposition.QUARANTINED,
+    )
+    c = await _make_item(news_repo, "h2x1-c", first_seen_at=_ts(9, 10))
+    await _add_relation(canon_repo, a, b, availability=_ts(9, 20))
+    await _add_relation(canon_repo, b, c, availability=_ts(9, 25))
+    await _add_annotation(semantic_repo, a, availability=_ts(9, 1))
+    await _add_annotation(semantic_repo, c, availability=_ts(9, 11))
+
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert snapshot.accounting.groups_total == 1
+    assert len(snapshot.active_entries) == 1
+    entry = snapshot.active_entries[0]
+
+    assert set(entry.member_news_item_keys) == {a, c}
+    assert set(entry.canonical_member_news_item_keys) == {a, b, c}
+    assert b not in {m.news_item_key for m in entry.members}
+    assert b not in entry.semantic_gap_member_keys
+
+    provenance_pairs = {
+        frozenset((r.left_news_item_key, r.right_news_item_key)) for r in entry.relation_provenance
+    }
+    assert provenance_pairs == {frozenset((a, b)), frozenset((b, c))}
+
+
+async def test_h2_3_future_relationship_with_ineligible_connector_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    """A-SAME-B exists early (B ineligible throughout); B-SAME-C is
+    added only LATER. At the earlier `as_of`, the canonical group is
+    {A, B} only, with provenance containing just the A-B edge.
+    Reconstructing that SAME earlier `as_of` again, after the future
+    relation is added, must produce an unchanged result."""
+    a = await _make_item(news_repo, "h2x3-a", first_seen_at=_ts(9))
+    b = await _make_item(
+        news_repo,
+        "h2x3-b",
+        first_seen_at=_ts(9, 5),
+        evidence_disposition=NewsEvidenceDisposition.QUARANTINED,
+    )
+    c = await _make_item(news_repo, "h2x3-c", first_seen_at=_ts(9, 10))
+    await _add_relation(canon_repo, a, b, availability=_ts(9, 20))
+    await _add_annotation(semantic_repo, a, availability=_ts(9, 1))
+    await _add_annotation(semantic_repo, c, availability=_ts(9, 11))
+
+    earlier_first = await get_snapshot(EURUSD, _ts(0), _ts(9, 30))
+    assert earlier_first.accounting.groups_total == 2  # {A,B} and {C}
+    a_entry_first = next(
+        e for e in earlier_first.active_entries if a in e.canonical_member_news_item_keys
+    )
+    assert set(a_entry_first.canonical_member_news_item_keys) == {a, b}
+    assert set(a_entry_first.member_news_item_keys) == {a}
+    assert {
+        frozenset((r.left_news_item_key, r.right_news_item_key))
+        for r in a_entry_first.relation_provenance
+    } == {frozenset((a, b))}
+
+    # The future relationship, added AFTER the earlier as_of above.
+    await _add_relation(canon_repo, b, c, availability=_ts(9, 40))
+
+    # Reconstructing the SAME earlier as_of must be unchanged.
+    earlier_second = await get_snapshot(EURUSD, _ts(0), _ts(9, 30))
+    assert earlier_second.accounting.groups_total == 2
+    a_entry_second = next(
+        e for e in earlier_second.active_entries if a in e.canonical_member_news_item_keys
+    )
+    assert set(a_entry_second.canonical_member_news_item_keys) == {a, b}
+    assert {
+        frozenset((r.left_news_item_key, r.right_news_item_key))
+        for r in a_entry_second.relation_provenance
+    } == {frozenset((a, b))}
+
+    # A later as_of now includes the future relation and all 3 members.
+    later = await get_snapshot(EURUSD, _ts(0), _ts(10))
+    assert later.accounting.groups_total == 1
+    later_entry = later.active_entries[0]
+    assert set(later_entry.canonical_member_news_item_keys) == {a, b, c}
+    assert {
+        frozenset((r.left_news_item_key, r.right_news_item_key))
+        for r in later_entry.relation_provenance
+    } == {frozenset((a, b)), frozenset((b, c))}
+
+
+async def test_h2_4_multiple_connecting_paths_real_postgres(
+    news_repo: SqlAlchemyNewsRepository,
+    canon_repo: SqlAlchemyNewsCanonicalizationRepository,
+    semantic_repo: SqlAlchemyNewsSemanticRepository,
+    get_snapshot: GetPairNewsEvidenceSnapshot,
+) -> None:
+    """A fully-connected triangle (A-B, B-C, A-C all SAME_STORY) --
+    provenance must list all three real edges exactly once each, with
+    no duplicates, in canonical sorted order."""
+    a = await _make_item(news_repo, "h2x4-a", first_seen_at=_ts(9))
+    b = await _make_item(news_repo, "h2x4-b", first_seen_at=_ts(9, 5))
+    c = await _make_item(news_repo, "h2x4-c", first_seen_at=_ts(9, 10))
+    await _add_relation(canon_repo, a, b, availability=_ts(9, 20))
+    await _add_relation(canon_repo, b, c, availability=_ts(9, 25))
+    await _add_relation(canon_repo, a, c, availability=_ts(9, 30))
+    for key, ts in ((a, _ts(9, 1)), (b, _ts(9, 6)), (c, _ts(9, 11))):
+        await _add_annotation(semantic_repo, key, availability=ts)
+
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert len(snapshot.active_entries) == 1
+    provenance = snapshot.active_entries[0].relation_provenance
+    provenance_pairs = [(r.left_news_item_key, r.right_news_item_key) for r in provenance]
+    assert len(provenance_pairs) == len(set(provenance_pairs))
+    assert provenance_pairs == sorted(provenance_pairs)
+    provenance_frozensets = {frozenset(p) for p in provenance_pairs}
+    assert provenance_frozensets == {frozenset((a, b)), frozenset((b, c)), frozenset((a, c))}

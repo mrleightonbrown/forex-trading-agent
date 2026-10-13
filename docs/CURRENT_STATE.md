@@ -2961,6 +2961,44 @@ _Last updated: 2026-09-27 (FX-54V)_
   Decision/Risk Engine integration, or FX-58/58H/59/59H historical
   semantic change — none introduced.** **Stop after FX-60H — do not
   start FX-61.**
+- **FX-60H.1: canonical provenance correction (complete, ADR 0009
+  addendum)**. A targeted fix to H2's own `relation_provenance`
+  construction: the original implementation filtered relation
+  endpoints through `eligible_vintages` (the snapshot-ELIGIBLE
+  subset of a group), not the group's own FULL FX-58-derived
+  canonical membership — for `A-SAME-B-SAME-C` with `B` ineligible
+  (quarantined/backfill-only), BOTH connecting edges were silently
+  discarded, leaving a group with real canonical connectivity but
+  empty provenance. Fixed with a new, additive field on
+  `NewsPairEvidenceGroup`, `canonical_member_news_item_keys: tuple[
+  str, ...]` — every PIT-visible member of the group's own FX-58
+  connected component, sourced directly from `derive_canonical_
+  groups`'s own `NewsCanonicalGroup.member_news_item_keys` (never
+  re-derived, no new query) — always a superset of the pre-existing
+  `member_news_item_keys`, which keeps its EXACT original evidence-
+  eligible meaning unchanged. `relation_provenance`'s own endpoint
+  check now validates against the FULL canonical set; an ineligible
+  intermediate member's connecting edges survive while that member
+  itself still contributes zero evidence, relevance, topics,
+  entities, or window-anchor influence (`story_first_seen_at` stays
+  computed from eligible members only). 8 net new tests (5 unit, 3
+  real-Postgres integration; verified via `git diff`) covering an
+  ineligible-intermediate-member case, a stale-but-eligible
+  intermediate member (no behavior change), a future-relationship
+  PIT case with an ineligible connector (reconstructing an earlier
+  snapshot after the future relation is added produces an unchanged
+  result), a fully-connected-triangle multi-path case (deterministic,
+  no duplicates), and an accounting-non-regression case. Every
+  pre-existing FX-60/FX-60H test (67) passed UNMODIFIED. Full
+  deterministic suite: 2538 passed; the already-documented BLS 403
+  persists unchanged, and the OANDA 401 previously observed now
+  passes (confirmed transient/external, unrelated to this change).
+  Real 358-item corpus confirmed unchanged (`358`/`358`/`0`); the
+  real EUR/USD/GBP/USD/USD/CAD accounting totals are byte-identical
+  to the pre-correction run, since the real corpus has zero canonical
+  relations today. H1's accounting definitions and H3's batch-query
+  architecture both completely untouched; FX-58/58H/59/59H untouched.
+  **Stop after FX-60H.1 — do not start FX-61.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

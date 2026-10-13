@@ -15564,3 +15564,81 @@ reconciliation.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-61.
+
+## 2026-10-12 — FX-60H.1: canonical provenance correction (ADR 0009 addendum)
+
+A targeted correction to FX-60H's own H2 finding, triggered by
+architectural review. Starting commit: `f25b1f9` (the FX-60H commit),
+verified before any work began.
+
+**1. Root cause.** H2's own `relation_provenance` construction
+filtered relation endpoints through `eligible_vintages` -- the
+snapshot-ELIGIBLE subset of a group's own members -- rather than the
+group's own FULL FX-58-derived canonical membership. For the
+mandatory example (`A-SAME-B-SAME-C`, `B` ineligible), BOTH
+connecting edges (`A-B`, `B-C`) were silently discarded, even though
+FX-58 correctly derived one connected canonical group and FX-60
+correctly let only `A`/`C` contribute evidence. The resulting group
+had real canonical connectivity with NO recorded provenance to
+explain it.
+
+**2. Correction.** Canonical membership and evidence eligibility are
+now explicitly DISTINCT fields on `NewsPairEvidenceGroup`: the
+pre-existing `member_news_item_keys` keeps its EXACT original
+meaning (evidence-eligible members only); a new, additive
+`canonical_member_news_item_keys: tuple[str, ...]` field carries
+EVERY PIT-visible member of the group's own FX-58 connected
+component -- sourced directly from `derive_canonical_groups`'s own
+`NewsCanonicalGroup.member_news_item_keys` (no re-derivation, no
+second canonicalization algorithm, no new query). `relation_
+provenance`'s own endpoint validation now checks against the FULL
+canonical set. An ineligible intermediate member's connecting edges
+now survive in provenance while that member itself still
+contributes ZERO evidence, relevance, topics, entities, or window-
+anchor influence -- `story_first_seen_at` remains computed from
+eligible members only, exactly as before.
+
+**3. PIT correctness preserved.** The fix reuses the SAME `group.
+member_news_item_keys` already produced by the SAME `derive_
+canonical_groups` call H2's own grouping step already made -- no new
+repository round trip, no change to H3's batch-query count. A
+dedicated test proves a relationship connecting through an
+ineligible member, added after a requested `as_of`, still cannot
+appear in an earlier snapshot, and that reconstructing the earlier
+snapshot again after the future relation is added produces an
+unchanged result.
+
+**Test outcomes.** 8 net new tests (5 unit against in-memory fakes,
+3 integration against real Postgres, verified via `git diff -- tests/
+... | grep -c '^+.*def test_'`): an ineligible-intermediate-member
+case, a stale-but-eligible-intermediate-member case (confirming no
+behavior change for an already-eligible member), a future-
+relationship PIT case combined with an ineligible connector, a
+fully-connected-triangle multiple-path case (deterministic, no
+duplicates), and an accounting-non-regression case. Every pre-
+existing FX-60/FX-60H test (67) passed UNMODIFIED. Full deterministic
+suite: 2538 passed. `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean.
+
+**Explicitly confirmed unchanged**: H1's accounting definitions; H3's
+batch-query architecture and round-trip count; FX-58/58H
+canonicalization; FX-59/59H semantics; backfill policy; correction-
+does-not-revive policy; source withdrawal semantics; the snapshot's
+read-only, PIT-safe design; `fx60_v1`. No migration was necessary.
+The already-documented BLS 403 remains unchanged; the previously-
+observed OANDA 401 was independently re-checked and now passes (a
+transient external-credential condition, confirmed unrelated to this
+change). The real 358-item corpus (`358`/`358`/`0`) is confirmed
+unchanged, and the real EUR/USD/GBP/USD/USD/CAD accounting totals
+are byte-identical to the pre-correction run, since the real corpus
+carries zero canonical relations today -- every real group's
+`canonical_member_news_item_keys` trivially equals its own `member_
+news_item_keys`.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-60H.1 entry; `docs/
+CURRENT_STATE.md` carries its own FX-60H.1 entry immediately after
+the preserved FX-60H entry; `docs/adr/0009-pit-safe-pair-news-
+evidence-snapshot.md` carries the full FX-60H.1 addendum.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-61.

@@ -13,6 +13,7 @@ import pytest
 from forex_agent.application.ports.news_repository import (
     NewsVintageWriteOutcome,
 )
+from forex_agent.application.use_cases.get_news_semantic_state_as_of import NewsSemanticState
 from forex_agent.application.use_cases.get_pair_news_evidence_snapshot import (
     SNAPSHOT_POLICY_VERSION,
     GetPairNewsEvidenceSnapshot,
@@ -1030,6 +1031,243 @@ async def test_relation_provenance_pit_filtered_relation_after_as_of_excluded() 
     assert len(later_snapshot.active_entries[0].relation_provenance) == 1
 
 
+# --- FX-60H.1: canonical membership vs evidence eligibility ------------------
+
+
+@pytest.mark.asyncio
+async def test_h2_1_ineligible_intermediate_member_retains_connecting_relations() -> None:
+    """Mandatory example (FX-60H.1 Section 1): A-SAME-B-SAME-C, with B
+    QUARANTINED (PIT-visible, but never evidence-eligible). FX-58
+    still derives ONE canonical group of all three; FX-60 correctly
+    lets only A and C contribute evidence; `relation_provenance` must
+    still retain BOTH the A-B and B-C edges, since they are what
+    establishes A and C's own canonical connection -- the bug this
+    story corrects dropped both edges because B wasn't eligible."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item(
+        "B", first_seen_at=_ts(9, 5), evidence_disposition=NewsEvidenceDisposition.QUARANTINED
+    )
+    world.add_item("C", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_relation("B", "C", availability=_ts(9, 25))
+    world.add_annotation("A", availability=_ts(9, 1), classification=classification())
+    world.add_annotation("C", availability=_ts(9, 11), classification=classification())
+    # B has NO annotation either -- it contributes nothing, period.
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert snapshot.accounting.groups_total == 1  # one canonical group, not 3
+    assert len(snapshot.active_entries) == 1
+    entry = snapshot.active_entries[0]
+
+    # Evidence eligibility: B is excluded entirely.
+    assert entry.member_news_item_keys == ("A", "C")
+    assert {m.news_item_key for m in entry.members} == {"A", "C"}
+    assert "B" not in entry.semantic_gap_member_keys
+    assert "B" not in entry.active_relevant_member_keys
+    assert "B" not in entry.withdrawn_relevant_member_keys
+
+    # Canonical membership: B is present.
+    assert entry.canonical_member_news_item_keys == ("A", "B", "C")
+
+    # Both connecting edges survive, even though B itself is ineligible.
+    provenance_pairs = {
+        (r.left_news_item_key, r.right_news_item_key) for r in entry.relation_provenance
+    }
+    assert provenance_pairs == {("A", "B"), ("B", "C")}
+
+
+@pytest.mark.asyncio
+async def test_h2_2_stale_intermediate_member_retains_connecting_relations() -> None:
+    """A PIT-visible, evidence-ELIGIBLE intermediate member (B) whose
+    semantics are STALE (not UNCLASSIFIED/ineligible) -- the
+    connecting relations must remain in provenance, and B's own
+    existing semantic-gap behavior (surfaced, not hidden, not treated
+    as confirmed-irrelevant) must be unchanged."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 5), revision_sequence=0, availability=_ts(9, 5))
+    # A second, later vintage revision for B -- its stored annotation
+    # (basis_news_item_revision_sequence=0) no longer matches B's own
+    # latest eligible vintage revision (1), so B resolves to STALE.
+    world.add_item("B", first_seen_at=_ts(9, 5), revision_sequence=1, availability=_ts(9, 16))
+    world.add_item("C", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_relation("B", "C", availability=_ts(9, 25))
+    world.add_annotation("A", availability=_ts(9, 1), classification=classification())
+    world.add_annotation(
+        "B",
+        availability=_ts(9, 6),
+        basis_news_item_revision_sequence=0,
+        classification=classification(),
+    )
+    world.add_annotation("C", availability=_ts(9, 11), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert snapshot.accounting.groups_total == 1
+    assert len(snapshot.active_entries) == 1
+    entry = snapshot.active_entries[0]
+
+    # B is evidence-ELIGIBLE (unlike H2-1) but STALE -- it surfaces as
+    # a semantic gap, never silently hidden, never confirmed-irrelevant.
+    assert "B" in entry.semantic_gap_member_keys
+    assert len(snapshot.semantic_gaps) == 1
+    assert snapshot.semantic_gaps[0].news_item_key == "B"
+    assert snapshot.semantic_gaps[0].semantic_state is NewsSemanticState.STALE
+
+    # The connecting relations remain, regardless of B's semantic state.
+    provenance_pairs = {
+        (r.left_news_item_key, r.right_news_item_key) for r in entry.relation_provenance
+    }
+    assert provenance_pairs == {("A", "B"), ("B", "C")}
+    assert entry.canonical_member_news_item_keys == ("A", "B", "C")
+
+
+@pytest.mark.asyncio
+async def test_h2_3_future_relationship_pit_filtered_with_ineligible_connector() -> None:
+    """A-SAME-B exists early; B-SAME-C is added only LATER (after the
+    requested `as_of`), and B is ineligible throughout. At the
+    earlier `as_of`, the canonical group is {A, B} only -- C is its
+    own singleton. Provenance for {A, B} contains only the A-B edge.
+    After the B-C relation becomes visible, the group grows to
+    {A, B, C} with both edges. Reconstructing the EARLIER snapshot
+    again, after the future relation has been added to storage, must
+    produce the exact SAME earlier result -- proving the fix is
+    genuinely PIT-safe, not merely "correct at the latest instant."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item(
+        "B", first_seen_at=_ts(9, 5), evidence_disposition=NewsEvidenceDisposition.QUARANTINED
+    )
+    world.add_item("C", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_annotation("A", availability=_ts(9, 1), classification=classification())
+    world.add_annotation("C", availability=_ts(9, 11), classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+
+    earlier_first = await get_snapshot(EURUSD, _ts(0), _ts(9, 30))
+    assert earlier_first.accounting.groups_total == 2  # {A,B} and {C}
+    a_entry_first = next(
+        e for e in earlier_first.active_entries if "A" in e.canonical_member_news_item_keys
+    )
+    assert a_entry_first.canonical_member_news_item_keys == ("A", "B")
+    assert a_entry_first.member_news_item_keys == ("A",)
+    assert {
+        (r.left_news_item_key, r.right_news_item_key) for r in a_entry_first.relation_provenance
+    } == {("A", "B")}
+
+    # The future relationship, added AFTER the earlier as_of above.
+    world.add_relation("B", "C", availability=_ts(9, 40))
+
+    # Reconstructing the SAME earlier as_of must be unchanged.
+    earlier_second = await get_snapshot(EURUSD, _ts(0), _ts(9, 30))
+    assert earlier_second.accounting.groups_total == 2
+    a_entry_second = next(
+        e for e in earlier_second.active_entries if "A" in e.canonical_member_news_item_keys
+    )
+    assert a_entry_second.canonical_member_news_item_keys == ("A", "B")
+    assert {
+        (r.left_news_item_key, r.right_news_item_key) for r in a_entry_second.relation_provenance
+    } == {("A", "B")}
+
+    # A later as_of now includes the future relation and all 3 members.
+    later = await get_snapshot(EURUSD, _ts(0), _ts(10))
+    assert later.accounting.groups_total == 1
+    later_entry = later.active_entries[0]
+    assert later_entry.canonical_member_news_item_keys == ("A", "B", "C")
+    assert {
+        (r.left_news_item_key, r.right_news_item_key) for r in later_entry.relation_provenance
+    } == {("A", "B"), ("B", "C")}
+
+
+@pytest.mark.asyncio
+async def test_h2_4_multiple_connecting_paths_deterministic_no_duplicates() -> None:
+    """A fully-connected triangle (A-B, B-C, A-C all SAME_STORY) --
+    multiple redundant paths connect the same three members.
+    Provenance must list all three real edges exactly once each, in
+    canonical sorted order, with no duplicates."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9))
+    world.add_item("B", first_seen_at=_ts(9, 5))
+    world.add_item("C", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 20))
+    world.add_relation("B", "C", availability=_ts(9, 25))
+    world.add_relation("A", "C", availability=_ts(9, 30))
+    for key, ts in (("A", _ts(9, 1)), ("B", _ts(9, 6)), ("C", _ts(9, 11))):
+        world.add_annotation(key, availability=ts, classification=classification())
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    assert len(snapshot.active_entries) == 1
+    provenance = snapshot.active_entries[0].relation_provenance
+    provenance_pairs = [(r.left_news_item_key, r.right_news_item_key) for r in provenance]
+    assert len(provenance_pairs) == len(set(provenance_pairs))  # no duplicates
+    assert set(provenance_pairs) == {("A", "B"), ("A", "C"), ("B", "C")}
+    assert provenance_pairs == sorted(provenance_pairs)  # canonical sorted order
+
+
+@pytest.mark.asyncio
+async def test_h2_5_ineligible_connector_does_not_affect_accounting() -> None:
+    """An ineligible intermediate member must not change any item-
+    level count, pair-relevant count, relevance category, topic/
+    entity aggregation, or window anchor -- it only ever establishes
+    canonical connectivity, never evidence."""
+    world = FakeWorld()
+    world.add_item("A", first_seen_at=_ts(9, 30))
+    world.add_item(
+        "B", first_seen_at=_ts(9, 5), evidence_disposition=NewsEvidenceDisposition.QUARANTINED
+    )
+    world.add_item("C", first_seen_at=_ts(9, 10))
+    world.add_relation("A", "B", availability=_ts(9, 40))
+    world.add_relation("B", "C", availability=_ts(9, 45))
+    usd_relevance = (
+        NewsCurrencyRelevance(
+            currency_code="USD", reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,)
+        ),
+    )
+    world.add_annotation(
+        "A",
+        availability=_ts(9, 31),
+        classification=classification(currency_relevance=usd_relevance),
+    )
+    world.add_annotation(
+        "C",
+        availability=_ts(9, 11),
+        classification=classification(currency_relevance=usd_relevance),
+    )
+
+    get_snapshot = _make_snapshot_getter(world)
+    snapshot = await get_snapshot(EURUSD, _ts(0), _ts(10))
+
+    acc = snapshot.accounting
+    assert acc.items_pit_visible == 3
+    assert acc.items_snapshot_eligible == 2  # A and C only, never B
+    assert acc.items_window_eligible == 2
+    assert acc.items_current == 2
+    assert acc.items_stale == 0
+    assert acc.items_unclassified == 0
+    assert acc.items_pair_relevant == 2
+    assert acc.groups_total == 1
+    assert acc.groups_quote_only == 1  # USD-only relevance, quote side
+    assert acc.groups_base_only == acc.groups_both == 0
+
+    entry = snapshot.active_entries[0]
+    # story_first_seen_at is the MIN first_seen_at among ELIGIBLE
+    # members only (Section 13) -- B's earlier first_seen_at (9:05)
+    # must NOT anchor the window even though B is a canonical member.
+    assert entry.story_first_seen_at == _ts(
+        9, 10
+    )  # C's own first_seen_at, the earliest ELIGIBLE one
+    assert entry.topics == ()
+    assert len(entry.entities) == 2  # institution + jurisdiction, unioned from A and C only
+
+
 def test_group_rejects_relation_provenance_edge_outside_membership() -> None:
     relation = NewsCanonicalRelationVintage(
         left_news_item_key="A",
@@ -1067,6 +1305,7 @@ def test_group_rejects_relation_provenance_edge_outside_membership() -> None:
             story_first_seen_at=_ts(9),
             display_member_news_item_key="A",
             member_news_item_keys=("A",),
+            canonical_member_news_item_keys=("A",),
             pair_relevance_side=NewsPairRelevanceSide.BOTH,
             base_relevance_reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),
             quote_relevance_reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),

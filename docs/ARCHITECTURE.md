@@ -3206,6 +3206,20 @@ completely untouched. No cache, materialized snapshot, or schema
 change was introduced -- every call still recomputes its answer
 fresh.
 
+**FX-60H.1 correction (ADR 0009 addendum)**: H2's own first
+implementation conflated canonical membership with evidence
+eligibility by filtering `relation_provenance`'s own endpoints
+through the snapshot-eligible subset of a group -- for `A-SAME-B-
+SAME-C` with `B` ineligible, both connecting edges were silently
+discarded. `NewsPairEvidenceGroup` gains a second, additive field,
+`canonical_member_news_item_keys` -- every PIT-visible member of the
+group's own FX-58 connected component, sourced directly from
+`derive_canonical_groups`'s own output, always a superset of the
+pre-existing (unchanged-meaning) `member_news_item_keys`.
+`relation_provenance` is now filtered against the FULL canonical set,
+so an ineligible intermediate member's connecting edges survive
+while that member itself still contributes zero evidence.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

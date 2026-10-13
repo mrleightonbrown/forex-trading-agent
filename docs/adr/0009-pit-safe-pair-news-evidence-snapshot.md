@@ -273,3 +273,61 @@ and after this story, and the real EUR/USD (289 irrelevant + 23
 base-only + 46 quote-only + 0 both = 358), GBP/USD (143 + 169 + 45 +
 1 = 358), and USD/CAD (191 + 46 + 121 + 0 = 358) accounting totals
 each reconcile exactly against it.
+
+## FX-60H.1 addendum (2026-10-12): canonical membership vs evidence
+eligibility were conflated in H2's own first implementation
+
+**Finding.** H2's `relation_provenance` construction filtered a
+group's relation endpoints through `eligible_vintages` (the
+SNAPSHOT-ELIGIBLE subset of a group's members), not through the
+group's own FULL FX-58-derived canonical membership. For A-SAME-B-
+SAME-C with B ineligible (e.g. quarantined or backfill-only), BOTH
+the A-B and B-C edges were silently discarded -- a group with real
+canonical connectivity ended up with EMPTY provenance, unable to
+explain why A and C were grouped together at all.
+
+**Correction.** `NewsPairEvidenceGroup` gains a second, additive
+field, `canonical_member_news_item_keys: tuple[str, ...]` -- every
+PIT-visible member of the group's own FX-58 connected component
+(sourced directly from `derive_canonical_groups`'s own
+`NewsCanonicalGroup.member_news_item_keys`, never re-derived, never
+a second canonicalization pass), always a superset of the pre-
+existing `member_news_item_keys` (which keeps its EXACT original
+evidence-eligible meaning). `relation_provenance`'s own endpoint
+filter now checks against the FULL canonical set, not the eligible
+subset -- an ineligible intermediate member's connecting edges
+survive, even though that member itself still contributes zero
+evidence, relevance, topics, entities, or window-anchor influence
+(`story_first_seen_at` remains computed from eligible members only,
+unchanged). No new repository query -- the fix reuses the SAME
+`group.member_news_item_keys` already produced by the SAME
+`derive_canonical_groups` call H2's own grouping step already made.
+
+**Verification.** 8 net new tests (5 unit against in-memory fakes, 3
+integration against real Postgres, verified via `git diff`): an
+ineligible-intermediate-member case (the mandatory A-B-C example), a
+stale-but-eligible-intermediate-member case (confirming no behavior
+change for an already-eligible member), a future-relationship PIT
+case combined with an ineligible connector (proving the fix remains
+PIT-safe -- reconstructing an earlier snapshot after a future
+relation is added produces an unchanged result), a fully-connected-
+triangle case (multiple redundant paths, deterministic no-duplicate
+ordering), and an accounting-non-regression case (confirming an
+ineligible connector changes no item count, relevance category,
+topic/entity aggregation, or window anchor). Every pre-existing
+FX-60/FX-60H test (67 total before this correction) passed
+UNMODIFIED. Full deterministic suite: 2538 passed (the same, already-
+documented, unrelated BLS 403 persists in `live_source`; the
+previously-observed OANDA 401 was independently re-checked and now
+passes -- a transient external-credential condition, not caused by
+this change). The real 358-item corpus (`358`/`358`/`0`) remains
+unchanged, and the real EUR/USD snapshot is byte-identical to the
+pre-correction run (69 active entries, 289/23/46/0 reconciling to
+358) -- expected, since the real corpus has zero canonical relations
+today, so every real group's `canonical_member_news_item_keys`
+trivially equals its own `member_news_item_keys`.
+
+**Scope.** H1's accounting definitions and H3's batch-query
+architecture are both completely untouched by this correction;
+FX-58/58H canonicalization and FX-59/59H semantics remain untouched.
+`fx60_v1` preserved unchanged. No migration was necessary.

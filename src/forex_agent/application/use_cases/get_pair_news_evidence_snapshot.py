@@ -73,16 +73,32 @@ unchanged:**
   `groups_incomplete_semantics` now names that bucket explicitly, so
   "groups with unresolved semantic relevance are never counted as
   confirmed irrelevant" is a structural invariant, not a convention.
-- **H2 (canonical relation provenance)**: `NewsPairEvidenceGroup`
-  gains a new `relation_provenance: tuple[NewsCanonicalRelationVintage,
-  ...]` field -- the REAL FX-58 relation vintage rows (reused
-  directly, never a new DTO, never a new persisted relationship)
-  whose both endpoints are members of this group, PIT-filtered by the
-  SAME `list_latest_relation_states_as_of(as_of)` call this use case
-  already makes for grouping itself (no new query). For a singleton
-  group this is empty; for a transitive 3-member group (A-SAME-B,
-  B-SAME-C, no direct A-C edge) it lists exactly the two REAL edges
-  that justify the merge, never a synthesized phantom edge.
+- **H2 (canonical relation provenance), corrected FX-60H.1**:
+  `NewsPairEvidenceGroup` gains a new `relation_provenance: tuple[
+  NewsCanonicalRelationVintage, ...]` field -- the REAL FX-58 relation
+  vintage rows (reused directly, never a new DTO, never a new
+  persisted relationship), PIT-filtered by the SAME `list_latest_
+  relation_states_as_of(as_of)` call this use case already makes for
+  grouping itself (no new query). For a singleton group this is
+  empty; for a transitive 3-member group (A-SAME-B, B-SAME-C, no
+  direct A-C edge) it lists exactly the two REAL edges that justify
+  the merge, never a synthesized phantom edge. **FX-60H.1 correction**:
+  H2's own first implementation filtered relation endpoints through
+  `eligible_vintages` (the SNAPSHOT-ELIGIBLE subset), which silently
+  discarded a relation whenever either endpoint had no qualifying
+  evidence-eligible vintage -- for A-SAME-B-SAME-C with B ineligible,
+  BOTH connecting edges vanished, leaving a group with real canonical
+  connectivity but zero recorded provenance. Canonical membership and
+  evidence eligibility are deliberately DIFFERENT concepts (Section
+  H2.1): `relation_provenance` is now filtered against the group's
+  own FULL canonical membership (`canonical_member_news_item_keys`,
+  a new field sourced directly from `derive_canonical_groups`'s own
+  `NewsCanonicalGroup.member_news_item_keys` -- never re-derived) so
+  B's own connecting edges remain present even though B itself still
+  contributes zero evidence, relevance, topics, entities, or window-
+  anchor influence (those all remain scoped to `eligible_vintages`,
+  unchanged). `member_news_item_keys` (the evidence-eligible field)
+  keeps its EXACT original meaning.
 - **H3 (query efficiency)**: the N+1-shaped per-member/per-group
   repository access pattern FX-60's own original implementation had
   (one `latest_evidence_eligible_vintage_as_of` call per member, PLUS
@@ -287,9 +303,11 @@ class NewsPairEvidenceGroup:
     """FX-60 Section 38: one canonical story group's own pair-
     evidence entry -- at most ONE per canonical group (Section 8).
 
-    `relation_provenance` (FX-60H Section H2) is the REAL, PIT-
-    filtered FX-58 `SAME_STORY` relation vintage(s) connecting this
-    group's own members -- empty for a singleton group."""
+    `relation_provenance` (FX-60H Section H2, corrected FX-60H.1) is
+    the REAL, PIT-filtered FX-58 `SAME_STORY` relation vintage(s)
+    connecting this group's own FULL canonical membership (`canonical_
+    member_news_item_keys`) -- NOT merely its snapshot-eligible
+    subset (`member_news_item_keys`) -- empty for a singleton group."""
 
     canonical_group_key: str
     story_first_seen_at: UtcTimestamp
@@ -299,7 +317,23 @@ class NewsPairEvidenceGroup:
     merely the ones that happen to be pair-relevant -- includes
     `CURRENT` members with no pair relevance at all (visible via
     `members`) alongside gap members (visible via `semantic_gap_
-    member_keys`)."""
+    member_keys`). Evidence eligibility (this field) and canonical
+    membership (`canonical_member_news_item_keys`, below) are
+    deliberately DIFFERENT concepts (FX-60H.1 Section H2.1): an
+    ineligible member may still establish canonical connectivity
+    without ever contributing evidence here."""
+    canonical_member_news_item_keys: tuple[str, ...]
+    """FX-60H.1 Section H2.1: EVERY PIT-visible member of this
+    group's own FX-58-derived canonical connected component --
+    including a member with no qualifying evidence-eligible vintage
+    at all, which `member_news_item_keys` above excludes entirely.
+    Always a superset of `member_news_item_keys`. Sourced directly
+    from `derive_canonical_groups`'s own `NewsCanonicalGroup.
+    member_news_item_keys` -- never re-derived, never a second
+    canonicalization algorithm. Exists so `relation_provenance`'s own
+    endpoints -- which may include a member excluded from `member_
+    news_item_keys` entirely -- remain interpretable against this
+    group's own membership."""
 
     pair_relevance_side: NewsPairRelevanceSide
     base_relevance_reasons: tuple[NewsCurrencyRelevanceReason, ...]
@@ -326,6 +360,9 @@ class NewsPairEvidenceGroup:
             raise ValueError("a group entry requires at least one relevant member")
 
         _require_sorted_unique("member_news_item_keys", self.member_news_item_keys)
+        _require_sorted_unique(
+            "canonical_member_news_item_keys", self.canonical_member_news_item_keys
+        )
         _require_sorted_unique("active_relevant_member_keys", self.active_relevant_member_keys)
         _require_sorted_unique(
             "withdrawn_relevant_member_keys", self.withdrawn_relevant_member_keys
@@ -333,6 +370,12 @@ class NewsPairEvidenceGroup:
         _require_sorted_unique("semantic_gap_member_keys", self.semantic_gap_member_keys)
 
         member_key_set = set(self.member_news_item_keys)
+        canonical_member_key_set = set(self.canonical_member_news_item_keys)
+        if not member_key_set <= canonical_member_key_set:
+            raise ValueError(
+                "member_news_item_keys must be a subset of canonical_member_news_item_keys "
+                "-- every snapshot-eligible member is also a canonical member"
+            )
         for key in (*self.active_relevant_member_keys, *self.withdrawn_relevant_member_keys):
             if key not in member_key_set:
                 raise ValueError(f"relevant member {key!r} is not in member_news_item_keys")
@@ -388,10 +431,18 @@ class NewsPairEvidenceGroup:
             if relation.relation_kind is not NewsCanonicalRelationKind.SAME_STORY:
                 raise ValueError("relation_provenance must contain only SAME_STORY relations")
             if (
-                relation.left_news_item_key not in member_key_set
-                or relation.right_news_item_key not in member_key_set
+                relation.left_news_item_key not in canonical_member_key_set
+                or relation.right_news_item_key not in canonical_member_key_set
             ):
-                raise ValueError("relation_provenance edges must connect this group's own members")
+                # FX-60H.1 Section H2.1: checked against the FULL
+                # canonical membership, not merely the evidence-
+                # eligible subset -- an ineligible intermediate member
+                # (e.g. a quarantined/backfill-only connector) may
+                # legitimately appear as a relation endpoint here even
+                # though it never appears in member_news_item_keys.
+                raise ValueError(
+                    "relation_provenance edges must connect this group's own canonical members"
+                )
         provenance_identities = [
             (r.left_news_item_key, r.right_news_item_key) for r in self.relation_provenance
         ]
@@ -829,15 +880,25 @@ class GetPairNewsEvidenceSnapshot:
                     groups_incomplete_semantics += 1
                 continue
 
-            # FX-60H Section H2: the REAL SAME_STORY edges connecting
-            # this group's own members, PIT-filtered already (same
-            # `relation_states` fetched once above).
+            # FX-60H.1 Section H2.1: the REAL SAME_STORY edges
+            # connecting this group's own FULL canonical membership
+            # (`group.member_news_item_keys`, FX-58-derived) -- NOT
+            # merely its snapshot-eligible subset (`eligible_
+            # vintages`). An evidence-ineligible intermediate member
+            # (e.g. quarantined, or backfill-only) may still establish
+            # canonical connectivity between two eligible members on
+            # either side of it; filtering by eligibility alone would
+            # silently discard the very edges that explain a
+            # transitive group's own membership. PIT-filtered already
+            # (same `relation_states` fetched once above, no new
+            # query).
+            canonical_member_key_set = set(group.member_news_item_keys)
             relation_provenance = tuple(
                 sorted(
                     (
                         relation
                         for (left, right), relation in same_story_relations_by_pair.items()
-                        if left in eligible_vintages and right in eligible_vintages
+                        if left in canonical_member_key_set and right in canonical_member_key_set
                     ),
                     key=lambda r: (r.left_news_item_key, r.right_news_item_key),
                 )
@@ -852,6 +913,7 @@ class GetPairNewsEvidenceSnapshot:
                 dict(relevant),
                 group_gaps,
                 relation_provenance,
+                group.member_news_item_keys,
             )
             if entry.pair_relevance_side is NewsPairRelevanceSide.BASE_ONLY:
                 groups_base_only += 1
@@ -924,6 +986,7 @@ def _build_group_entry(
     relevant_by_key: dict[str, NewsPairRelevance],
     group_gaps: list[NewsPairSemanticGap],
     relation_provenance: tuple[NewsCanonicalRelationVintage, ...],
+    canonical_member_news_item_keys: tuple[str, ...],
 ) -> NewsPairEvidenceGroup:
     active_relevant: list[str] = []
     withdrawn_relevant: list[str] = []
@@ -1021,6 +1084,7 @@ def _build_group_entry(
         story_first_seen_at=story_first_seen_at,
         display_member_news_item_key=display_member,
         member_news_item_keys=member_news_item_keys,
+        canonical_member_news_item_keys=tuple(sorted(canonical_member_news_item_keys)),
         pair_relevance_side=side,
         base_relevance_reasons=tuple(sorted(base_reason_union, key=lambda r: r.value)),
         quote_relevance_reasons=tuple(sorted(quote_reason_union, key=lambda r: r.value)),
