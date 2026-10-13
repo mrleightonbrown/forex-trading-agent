@@ -31,6 +31,9 @@ from forex_agent.application.use_cases.get_event_risk_evidence_snapshot import (
 from forex_agent.application.use_cases.get_fundamental_rate_evidence import (
     GetFundamentalRateEvidence,
 )
+from forex_agent.application.use_cases.get_pair_news_evidence_snapshot import (
+    GetPairNewsEvidenceSnapshot,
+)
 from forex_agent.application.use_cases.get_policy_rate_history import GetPolicyRateHistory
 from forex_agent.apps.api.market_context_page import render_market_context_page
 from forex_agent.apps.api.pairs import SUPPORTED_PAIRS, resolve_pair
@@ -40,6 +43,7 @@ from forex_agent.apps.api.view_models.fundamentals_view_model import (
     build_policy_rate_history_view,
 )
 from forex_agent.apps.api.view_models.fx46_view_model import build_fx46_view
+from forex_agent.apps.api.view_models.news_evidence_view_model import build_news_evidence_view
 from forex_agent.domain.instrument import Instrument
 from forex_agent.domain.policy_rate_differential import RateSemantics
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -49,6 +53,11 @@ from forex_agent.infrastructure.db.economic_event_repository import (
 from forex_agent.infrastructure.db.macro_observation_repository import (
     SqlAlchemyMacroObservationRepository,
 )
+from forex_agent.infrastructure.db.news_canonicalization_repository import (
+    SqlAlchemyNewsCanonicalizationRepository,
+)
+from forex_agent.infrastructure.db.news_repository import SqlAlchemyNewsRepository
+from forex_agent.infrastructure.db.news_semantic_repository import SqlAlchemyNewsSemanticRepository
 from forex_agent.infrastructure.db.session import get_session
 from forex_agent.infrastructure.research.fx46_research_artifact import (
     Fx46ResearchArtifact,
@@ -64,6 +73,13 @@ _DEFAULT_LOOKAHEAD = timedelta(hours=24)
 _DEFAULT_LOOKBACK = timedelta(hours=48)
 _DEFAULT_RATE_SEMANTICS = RateSemantics.ANNOUNCED
 _DEFAULT_FX46_EXPERIMENT = "LEVEL"
+
+#: FX-61 Section 4.1: a PRESENTATION convenience default only, never a
+#: trading or news-importance policy -- independently configurable,
+#: and deliberately NOT shared with `_DEFAULT_LOOKBACK` above (the
+#: existing economic-event lookback must never be silently repurposed
+#: for news, Section 4.1's own explicit requirement).
+_DEFAULT_NEWS_LOOKBACK = timedelta(days=7)
 
 #: FX-46's own committed research artifact never changes at runtime
 #: (FX-54V Section 41: "may be cached in-process after validated
@@ -187,6 +203,50 @@ async def get_events(
     return build_events_view(snapshot)
 
 
+def _resolve_news_lookback_hours(news_lookback_hours: float) -> timedelta:
+    """FX-61 Section 4.1/6: a presentation convenience default only
+    (`_DEFAULT_NEWS_LOOKBACK`), always explicit/overridable -- never a
+    news-importance policy. Must be strictly positive; never silently
+    substitutes a default on an invalid value."""
+    if news_lookback_hours <= 0:
+        raise HTTPException(status_code=400, detail="news_lookback_hours must be positive")
+    return timedelta(hours=news_lookback_hours)
+
+
+async def _build_news_evidence_view(
+    instrument: Instrument,
+    resolved_as_of: UtcTimestamp,
+    news_lookback: timedelta,
+    session: AsyncSession,
+) -> dict[str, object]:
+    """FX-61 Section 3: the ONLY place this story constructs `GetPair
+    NewsEvidenceSnapshot` -- both the JSON route and the HTML page
+    call this SAME function, so there is never a second, independently
+    -interpreting code path (Section 6's own explicit prohibition)."""
+    window_start = UtcTimestamp(resolved_as_of.value - news_lookback)
+    news_repository = SqlAlchemyNewsRepository(session)
+    canonicalization_repository = SqlAlchemyNewsCanonicalizationRepository(session, news_repository)
+    semantic_repository = SqlAlchemyNewsSemanticRepository(session, news_repository)
+    use_case = GetPairNewsEvidenceSnapshot(
+        news_repository, canonicalization_repository, semantic_repository
+    )
+    snapshot = await use_case(instrument, window_start, resolved_as_of)
+    return build_news_evidence_view(snapshot)
+
+
+@router.get("/api/market-context/{pair}/news")
+async def get_news_evidence(
+    pair: str,
+    as_of: str | None = Query(default=None),
+    news_lookback_hours: float = Query(default=_DEFAULT_NEWS_LOOKBACK.total_seconds() / 3600),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    instrument = _resolve_supported_pair(pair)
+    resolved_as_of = _resolve_as_of(as_of)
+    news_lookback = _resolve_news_lookback_hours(news_lookback_hours)
+    return await _build_news_evidence_view(instrument, resolved_as_of, news_lookback, session)
+
+
 @router.get("/api/research/fx46")
 async def get_fx46_research(
     pair: str = Query(default="GBP_USD"),
@@ -205,6 +265,7 @@ async def market_context_page(
     lookahead_hours: float = Query(default=_DEFAULT_LOOKAHEAD.total_seconds() / 3600),
     lookback_hours: float = Query(default=_DEFAULT_LOOKBACK.total_seconds() / 3600),
     fx46_experiment: str = Query(default=_DEFAULT_FX46_EXPERIMENT),
+    news_lookback_hours: float = Query(default=_DEFAULT_NEWS_LOOKBACK.total_seconds() / 3600),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """The full server-rendered dashboard page -- computes every
@@ -236,6 +297,9 @@ async def market_context_page(
     artifact = _get_fx46_artifact()
     fx46_pair_code = pair if pair in artifact.pairs else next(iter(sorted(artifact.pairs)), pair)
 
+    news_lookback = _resolve_news_lookback_hours(news_lookback_hours)
+    news_view = await _build_news_evidence_view(instrument, resolved_as_of, news_lookback, session)
+
     html = render_market_context_page(
         selected_pair=pair,
         as_of_param=as_of,
@@ -243,11 +307,13 @@ async def market_context_page(
         lookahead_hours=lookahead_hours,
         lookback_hours=lookback_hours,
         fx46_experiment=fx46_experiment,
+        news_lookback_hours=news_lookback_hours,
         fundamentals_view=build_fundamentals_view(fundamentals),
         history_view=build_policy_rate_history_view(history),
         events_view=build_events_view(snapshot),
         fx46_view=build_fx46_view(
             artifact, fx46_pair_code, resolved_semantics.value, fx46_experiment
         ),
+        news_view=news_view,
     )
     return HTMLResponse(content=html)

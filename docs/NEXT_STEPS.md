@@ -6349,3 +6349,193 @@ evidence-snapshot.md` carries the full FX-60H.1 addendum.
 **Per this story's own explicit stop instruction**: do not start
 FX-61. The implementation will be reviewed independently before
 FX-60/FX-60H receives final approval.
+
+## FX-61: pair-specific news evidence visualization (complete)
+
+A read-only "News Evidence" section added to the existing "Market
+Context" dashboard (FX-54V), consuming FX-60/60H/60H.1's own approved
+`GetPairNewsEvidenceSnapshot` directly — never a second, independently
+-interpreting query path. Explicitly NOT a Decision Engine, Risk
+Engine, sentiment analyzer, or source-reputation scorer. Starting
+commit: `ae5a574` (the FX-60H.1 commit), verified before any work
+began. No new ADR — same precedent as FX-54V itself, which also
+received no dedicated ADR; this references ADR 0009 rather than
+amending it.
+
+**Inspected the existing FX-54V layering before writing any code**,
+per this story's own explicit instruction — the router, the HTML/CSS/
+JS page assembly, the pure view-model modules, and the presentation-
+facing `SUPPORTED_PAIRS` registry (EUR/USD, GBP/USD, USD/CAD). FX-61
+reuses all of this unchanged: one new pure view-model module (`news_
+evidence_view_model.py`, `fx61_v1` presentation contract) is the only
+new view-model file; the existing router/page/pairs modules are
+extended, never replaced. A new, independently-configurable `news_
+lookback_hours` query param (default 7 days) is deliberately NOT
+shared with the existing economic-event lookback — each control feeds
+its own use case's own window explicitly, through one shared helper
+(`_build_news_evidence_view`) that both the JSON route and the HTML
+page call, so there is never a second, divergently-computed window.
+
+**Architect's three review notes, directly addressed:**
+
+1. **Provenance survives presentation.** `canonical_member_news_item_
+   keys` (FX-60H.1's own FULL FX-58 canonical membership) and `member_
+   news_item_keys` (the evidence-ELIGIBLE subset) are exposed as two
+   SEPARATE fields, never flattened. A dedicated real-Postgres test
+   (`test_ineligible_intermediate_member_survives_the_view`) proves an
+   ineligible intermediate connecting member remains visible in both
+   fields and in `relation_provenance` while contributing zero member
+   detail — directly protecting the FX-60H.1 correction.
+2. **Missing classification stays visible.** `coverage`/`empty_state`/
+   per-group `has_semantic_gaps`/`semantic_gaps` are always present in
+   the output, never omitted; Section 8's four distinct empty states
+   (`no_pit_visible_news`/`no_window_eligible_evidence`/`no_relevant_
+   stories`, or none when entries exist) are never collapsed into one
+   generic "No news" message, and a snapshot with BOTH relevant
+   entries AND semantic gaps shows both together, never one hiding
+   the other (`test_incomplete_semantics_does_not_suppress_existing_
+   entries`).
+3. **No directional interpretation of any kind.** A dedicated test
+   scans the view's own OUTPUT FIELD NAMES (never prose, which may
+   legitimately explain an absence by naming it) for a fixed forbidden
+   list (`direction`/`sentiment`/`stance`/`bullish`/`bearish`/
+   `hawkish`/`dovish`/`importance`/`score`/`weight`/`balance`/...) —
+   mirroring FX-60's own `test_no_direction_sentiment_or_score_field_
+   exists` precedent, applied to a dict-shaped view instead of a
+   dataclass. `pair_relevance_side` (`BASE_ONLY`/`QUOTE_ONLY`/`BOTH`)
+   remains purely categorical location evidence. The real GBP/USD
+   `BOTH` example (a Bank of England "US dollar dominance" speech)
+   was rendered against the real corpus and shows no directional
+   label of any kind.
+
+**Historical integrity, formalized and proven through the view
+layer, not just asserted.** `View(pair, window_start, T) = Present(
+FX60(pair, window_start, T))` — the view-model builder takes only an
+already-fetched `NewsPairEvidenceSnapshot` and returns a pure dict,
+with no repository access, no clock call, no re-fetch of any kind. A
+real-Postgres T1→T4 sequence test (`test_historical_sequence_t1_to_
+t4_view_matches_snapshot_at_each_instant`) builds exactly the
+sequence this story's own spec described — T1: an item exists with no
+semantics; T2: CURRENT semantics become available; T3: a second item
+becomes canonically linked; T4: the first item receives a revision,
+making its old annotation STALE — and proves re-querying an EARLIER
+`as_of` again, AFTER each later event is added to storage, produces a
+view byte-identical to the one originally rendered at that instant.
+
+**Filtering/sorting never re-query or re-interpret**, per this
+story's own explicit Section 5 requirement. Relevance-side/topic/
+source filters and newest/oldest sort order operate ENTIRELY client-
+side (vanilla JS) over the ONE already-embedded snapshot the page
+already fetched — confirmed by direct inspection (no `fetch()`/XHR/
+WebSocket call exists anywhere in the page's own script) and by the
+authoritative accounting counts remaining displayed UNCHANGED
+regardless of the active client-side filter, with a separate "N of M
+displayed" line making that distinction explicit rather than
+conflating it with the snapshot's own population counts. A simple
+client-side "show more" disclosure (25 at a time) keeps rendering
+stable for hundreds of singleton stories without server-side
+pagination, since the full snapshot is always fetched once.
+
+**Unsafe URLs are rejected at the source, never trusted to the client
+alone.** `_safe_external_url` (inside the pure view-model builder)
+validates `canonical_url`'s own scheme — `http`/`https` only — before
+it can ever reach the JSON response; a `javascript:`/`data:` URL is
+dropped to `None` at this single point. Proven against real Postgres,
+not just synthetic fixtures (`test_news_route_reflects_persisted_
+evidence_with_correct_pair_relevance`): a stored `javascript:alert(1)`
+canonical URL round-trips through the real repository and the real
+view model as `None`. Headline/summary/source text is rendered via
+`textContent`/`createTextNode` only, never `innerHTML` with
+interpolated content, matching FX-54V's own established pattern; a
+dedicated test (`test_news_evidence_page_escapes_headline_and_never_
+breaks_script_boundary`) confirms a headline containing a literal
+`</script>` sequence never breaks the page's own embedded-JSON
+`<script>` block, reusing the SAME `</` → `<\\/` neutralization every
+other FX-54V section's own payload already relies on.
+
+**Query efficiency preserved, per this story's own explicit Section
+10 requirement.** Exactly ONE `GetPairNewsEvidenceSnapshot`
+construction per news page/route request, through one shared call
+site (`_build_news_evidence_view`) — FX-60H's own O(1), 4-round-trip
+read path (FX-60H's own measured improvement) is completely
+unaffected; no per-story or per-member repository query exists
+anywhere in the renderer, and no client-side polling or repeated
+fetch exists.
+
+**Regression.** Every pre-existing FX-54V route/page assertion passed
+UNMODIFIED, extended (not replaced) with new News Evidence assertions
+in the SAME test functions where natural (e.g. the page-renders-for-
+every-supported-pair test). Every pre-existing FX-58/58H/59/59H/60/
+60H/60H.1 test passed UNMODIFIED and UNTOUCHED — not one byte of any
+of those files was changed this story.
+
+**Test outcomes.** 35 net new tests across 3 files (2 new, 1 modified;
+verified via `grep -c`/`git diff`, not assumed): unit (`test_news_
+evidence_view_model.py`, 22 new — base/quote/both rendering, zero
+directional field names via output-key scanning, grouping/member/
+relation-provenance passthrough, deterministic ordering passthrough,
+the four empty/incomplete states, exact accounting passthrough,
+active-vs-withdrawn separation, `javascript:`/`data:` URL rejection
+plus `https:` preservation, UTC ISO-8601 serialization, and a no-
+network/no-ORM static-source contract test mirroring FX-60's own
+precedent), integration (`test_news_evidence_view_model_real_
+postgres.py`, 2 new — the canonical-membership and T1-T4 historical
+tests described above, against real Postgres), and `test_market_
+context_routes.py` (13→25, +12 — JSON schema shape, unsupported pair,
+explicit `as_of` with no hidden default, malformed `as_of`, naive
+`as_of`, non-positive lookback (0 and negative), real-Postgres
+persisted-evidence reflection with unsafe-URL rejection, empty-corpus
+-window valid rendering (never a server error), control retention in
+the HTML form, script-boundary escaping, active/withdrawn canonical-
+group-key disjointness, and the extended page-rendering assertion
+covering every supported pair) — all passing. Full deterministic
+suite: 2574 passed (up from 2539 before this story). `ruff check .`,
+`ruff format --check .`, `mypy .` (526 source files), and `pre-commit
+run` on every changed file all pass clean.
+
+**Real-data reconciliation against the FX-60H baseline reference
+table**, via the new `GET /api/market-context/{pair}/news` route
+against the real, unchanged 358-item corpus: EUR/USD reconciles as
+`289 (irrelevant) + 23 (base-only) + 46 (quote-only) + 0 (both) = 358`
+(69 active entries); GBP/USD as `143 + 169 + 45 + 1 = 358` (215 active
+entries, including the ONE real `BOTH` entry — verified to render
+with no directional label); USD/CAD as `191 + 46 + 121 + 0 = 358`
+(167 active entries) — each matching the reference table exactly. The
+real corpus (`news_items`/`news_semantic_annotation_vintages`/`news_
+canonical_relation_vintages` = `358`/`358`/`0`) is confirmed unchanged
+before and after this story; zero canonical relations still produce
+358 singleton story cards, and multi-member provenance rendering was
+separately demonstrated via the new controlled real-Postgres test
+fixtures (the ineligible-intermediate-member and T1-T4 tests).
+
+**Limitations, stated transparently.** No browser-automation tooling
+is available in this environment, so no screenshot or rendered-pixel
+evidence of the new dashboard section could be captured this story —
+HTTP-level response/HTML-structure assertions (Section 11.D/E) are the
+verification evidence instead, consistent with every other FX-54V
+section's own test coverage, which also never included screenshots.
+Deep database-unavailable/fault-injection error-handling scenarios
+were not separately tested, matching the existing FX-54V precedent
+(no prior Market Context route test injects a database failure
+either).
+
+**Scope discipline.** No `EconomicEvent` linkage; no source-
+reputation weighting; no sentiment/stance/directional/hawkish-dovish
+inference of any kind; no importance/urgency/severity/confidence/
+impact score; no AI-generated summary or interpretation; no Decision/
+Risk Engine integration; no trading-state/execution change; no
+persisted visualization materialization; no live ingestion or
+background polling; no new database table or migration; no new
+external runtime dependency; no FX-58/58H/59/59H/60/60H/60H.1 file
+touched (confirmed via `git status` — zero bytes of any of those
+files changed).
+
+Full details in `docs/DECISIONS.md`'s FX-61 entry; `docs/
+ARCHITECTURE.md` carries the News Evidence section under the existing
+FX-54V/FX-61 Market Context section (renamed to reflect both); `docs/
+CURRENT_STATE.md` carries its own FX-61 entry immediately after the
+preserved FX-60H.1 entry.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-EPIC-09 or any Decision/Risk Engine work. Return FX-61 for
+independent architectural approval alongside FX-60/FX-60H/FX-60H.1.

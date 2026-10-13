@@ -1248,7 +1248,7 @@ data, never persisted themselves. The only addition is the
 `known_releases_in_window` repository method (no schema change at
 all). Full details in `docs/DECISIONS.md`'s own FX-54 entry.
 
-## Market Context dashboard (FX-54V, read-only visualization)
+## Market Context dashboard (FX-54V/FX-61, read-only visualization)
 
 The first trader-facing visualization: a server-rendered "Market
 Context" page (`GET /market-context`) plus small JSON routes, all
@@ -1333,6 +1333,55 @@ registry, deliberately not a domain concept.
 
 **No new migration, no schema change** -- every view is computed on
 request. Full details in `docs/DECISIONS.md`'s own FX-54V entry.
+
+**FX-61 extends this exact layering with a News Evidence section,**
+consuming FX-60/60H/60H.1's own approved `GetPairNewsEvidenceSnapshot`
+directly -- never a second, independently-interpreting query path.
+`apps.api.view_models.news_evidence_view_model.build_news_evidence_
+view` is a pure function, no I/O, converting one already-fetched
+`NewsPairEvidenceSnapshot` into a JSON-safe dict (`fx61_v1`
+presentation contract, independent of `fx60_v1`'s own snapshot policy
+version, both passed through to the client). A new, independently-
+configurable `news_lookback_hours` query param (default 7 days) feeds
+`window_start = resolved_as_of - news_lookback` explicitly into the
+SAME use case every other route call already uses -- deliberately NOT
+shared with the existing economic-event lookback, so neither control
+silently repurposes the other's own policy.
+
+**Provenance survives presentation (architect's review note 1).**
+The view model exposes `canonical_member_news_item_keys` (FX-60H.1's
+own FULL FX-58 canonical membership) and `member_news_item_keys`
+(the evidence-ELIGIBLE subset) as two SEPARATE fields, exactly as
+FX-60H.1 itself distinguishes them -- an ineligible intermediate
+member connecting two eligible members may appear in `canonical_
+member_news_item_keys`/`relation_provenance` without ever having its
+own member-detail record; this view never fabricates one to
+compensate, and never flattens the two fields into one list.
+
+**Missing classification stays visible (review note 2).** `coverage`/
+`empty_state`/per-group `has_semantic_gaps`/per-group `semantic_gaps`
+are always present in the output, never omitted when entries exist --
+Section 8's own four distinct empty states (`no_pit_visible_news`/
+`no_window_eligible_evidence`/`no_relevant_stories`, or `None` when
+entries exist regardless of coverage) are never collapsed into a
+single generic "No news" message, and an INCOMPLETE_SEMANTICS
+snapshot with relevant entries shows BOTH the entries and the
+incomplete-coverage flag together, never one hiding the other.
+
+**No directional interpretation of any kind (review note 3).** This
+view model emits no `direction`/`sentiment`/`stance`/`bullish`/
+`bearish`/`hawkish`/`dovish`/`importance`/`score`/`weight`/`balance`
+field anywhere, confirmed by a dedicated test scanning the view's own
+output field names (never prose, which may legitimately explain an
+absence by naming it). `pair_relevance_side` (`BASE_ONLY`/`QUOTE_ONLY`/
+`BOTH`) remains purely categorical location evidence, exactly as
+FX-60 itself defines it. Sorting/filtering (relevance side, topic,
+source/channel, newest/oldest) operate entirely client-side over the
+ALREADY-fetched snapshot embedded in the page -- no additional
+repository query, no re-interpretation, and the authoritative
+accounting counts shown are never affected by a client-side filter
+(a separate "N of M displayed" line makes this explicit). No cache,
+no persisted visualization materialization, no new migration.
 
 ## News Intelligence source feasibility (FX-55, hardened FX-55H, FX-EPIC-08's first story)
 

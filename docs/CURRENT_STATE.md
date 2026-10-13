@@ -2999,6 +2999,83 @@ _Last updated: 2026-09-27 (FX-54V)_
   relations today. H1's accounting definitions and H3's batch-query
   architecture both completely untouched; FX-58/58H/59/59H untouched.
   **Stop after FX-60H.1 — do not start FX-61.**
+- **FX-61: pair-specific news evidence visualization (complete, no new
+  ADR — same precedent as FX-54V)**. A read-only "News Evidence"
+  section added to the existing "Market Context" dashboard (FX-54V),
+  consuming FX-60/60H/60H.1's own approved `GetPairNewsEvidenceSnapshot`
+  directly — never a second, independently-interpreting query path.
+  New pure view-model module `apps.api.view_models.news_evidence_
+  view_model.build_news_evidence_view` (`fx61_v1` presentation
+  contract, independent of `fx60_v1`'s own snapshot policy version);
+  the existing `market_context.py`/`market_context_page.py`/
+  `pairs.py` modules are extended, never replaced. New independently-
+  configurable `news_lookback_hours` query param (default 7 days,
+  deliberately NOT shared with the existing economic-event lookback)
+  feeds `window_start = resolved_as_of - news_lookback` explicitly
+  into the SAME use case both the new JSON route
+  (`GET /api/market-context/{pair}/news`) and the HTML page use via
+  one shared helper. **Provenance survives presentation**: the view
+  exposes `canonical_member_news_item_keys` (FX-60H.1's own FULL FX-58
+  canonical membership) and `member_news_item_keys` (the evidence-
+  ELIGIBLE subset) as two separate fields, proven via a dedicated
+  real-Postgres test that an ineligible intermediate connecting member
+  remains visible in both fields/`relation_provenance` while
+  contributing zero member detail — directly protecting the FX-60H.1
+  correction from being flattened away. **Missing classification
+  stays visible**: `coverage`/`empty_state`/per-group `has_semantic_
+  gaps`/`semantic_gaps` are always present; an INCOMPLETE_SEMANTICS
+  snapshot with relevant entries shows both the entries and the
+  incomplete-coverage flag together, never one hiding the other.
+  **No directional interpretation of any kind**: a dedicated test
+  scans the view's own output FIELD NAMES (never prose) for a
+  forbidden list (`direction`/`sentiment`/`bullish`/`bearish`/
+  `hawkish`/`dovish`/`score`/`weight`/`balance`/...), mirroring FX-60's
+  own field-name-contract precedent; the real GBP/USD `BOTH` example
+  (a Bank of England "US dollar dominance" speech) renders with no
+  directional label. **Historical integrity formalized and proven**:
+  `View(pair, window_start, T) = Present(FX60(pair, window_start, T))`
+  — a real-Postgres T1→T4 sequence test (item exists with no
+  semantics → CURRENT semantics arrive → a second item becomes
+  canonically linked → the first item is revised, making its old
+  annotation STALE) proves re-querying an earlier `as_of` after later
+  data is added produces a byte-identical view. **Filtering/sorting
+  (relevance side, topic, source/channel, newest/oldest) are entirely
+  client-side** over the one already-embedded snapshot per page load
+  — no `fetch()`/XHR exists in the page's own script, and the
+  authoritative accounting counts are never affected by an active
+  filter (a separate "N of M displayed" line makes this explicit).
+  **Unsafe URLs rejected at the source**: `_safe_external_url`
+  validates `canonical_url`'s own scheme (`http`/`https` only) INSIDE
+  the pure view-model builder — proven against real Postgres that a
+  stored `javascript:alert(1)` URL round-trips as `None`; headline/
+  summary text renders via `textContent` only, and a dedicated test
+  confirms a headline containing a literal `</script>` sequence never
+  breaks the page's own embedded-JSON script boundary. **Query
+  efficiency preserved**: exactly ONE `GetPairNewsEvidenceSnapshot`
+  construction per request, via one shared call site — FX-60H's own
+  O(1), 4-round-trip read path is unchanged. 35 net new tests across 3
+  files (2 new, 1 modified; verified via `grep -c`/`git diff`) — unit
+  (`test_news_evidence_view_model.py`, 22 new), integration (`test_
+  news_evidence_view_model_real_postgres.py`, 2 new — the canonical-
+  membership and T1-T4 tests above), `test_market_context_routes.py`
+  (13→25, +12) — all passing. Full deterministic suite: 2574 passed
+  (up from 2539). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean.
+  **Real-data reconciliation**: EUR/USD (289 irrelevant + 23 base-only
+  + 46 quote-only + 0 both = 358, 69 active entries), GBP/USD (143 +
+  169 + 45 + 1 = 358, 215 active entries, including the one real
+  `BOTH` entry), USD/CAD (191 + 46 + 121 + 0 = 358, 167 active
+  entries) reconciled exactly against the FX-60H baseline reference
+  table via the new route; the real 358/358/0 corpus confirmed
+  unchanged. **Explicitly NOT built**: no `EconomicEvent` linkage; no
+  source-reputation weighting; no sentiment/stance/directional/
+  hawkish-dovish inference; no importance/urgency/severity/confidence/
+  impact score; no AI-generated summary; no Decision/Risk Engine
+  integration; no trading-state/execution change; no persisted
+  visualization materialization; no live ingestion/background
+  polling; no new database table/migration; no new external runtime
+  dependency; no FX-58/58H/59/59H/60/60H/60H.1 file touched. **Stop
+  after FX-61 — do not start FX-EPIC-09 or any Decision/Risk Engine
+  work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

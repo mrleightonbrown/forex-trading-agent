@@ -21,6 +21,18 @@ from forex_agent.domain.availability_confidence import AvailabilityConfidence
 from forex_agent.domain.economic_event_occurrence import EconomicEventOccurrence
 from forex_agent.domain.economic_event_schedule_vintage import EconomicEventScheduleVintage
 from forex_agent.domain.economic_event_status import EconomicEventStatus
+from forex_agent.domain.news_currency_relevance import NewsCurrencyRelevance
+from forex_agent.domain.news_currency_relevance_reason import NewsCurrencyRelevanceReason
+from forex_agent.domain.news_entity_annotation import NewsEntityAnnotation
+from forex_agent.domain.news_entity_evidence_kind import NewsEntityEvidenceKind
+from forex_agent.domain.news_entity_type import NewsEntityType
+from forex_agent.domain.news_evidence_disposition import NewsEvidenceDisposition
+from forex_agent.domain.news_item_vintage import NewsItemVintage
+from forex_agent.domain.news_observation_mode import NewsObservationMode
+from forex_agent.domain.news_semantic_annotation_vintage import NewsSemanticAnnotationVintage
+from forex_agent.domain.news_semantic_classification import NewsSemanticClassification
+from forex_agent.domain.news_source_identity import NewsSourceIdentity
+from forex_agent.domain.news_source_status import NewsSourceStatus
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.economic_event_repository import (
     SqlAlchemyEconomicEventRepository,
@@ -31,6 +43,14 @@ from forex_agent.infrastructure.db.models.economic_event_occurrence import (
 from forex_agent.infrastructure.db.models.economic_event_schedule_vintage import (
     EconomicEventScheduleVintageRow,
 )
+from forex_agent.infrastructure.db.models.news_item import NewsItemRow
+from forex_agent.infrastructure.db.models.news_item_vintage import NewsItemVintageRow
+from forex_agent.infrastructure.db.models.news_semantic_annotation_vintage import (
+    NewsSemanticAnnotationVintageRow,
+)
+from forex_agent.infrastructure.db.models.news_source_mapping import NewsSourceMappingRow
+from forex_agent.infrastructure.db.news_repository import SqlAlchemyNewsRepository
+from forex_agent.infrastructure.db.news_semantic_repository import SqlAlchemyNewsSemanticRepository
 from forex_agent.infrastructure.db.session import get_engine
 
 TEST_OCCURRENCE_PREFIX = "__fx54v_route_test__"
@@ -250,6 +270,12 @@ async def test_market_context_page_renders_for_every_supported_pair(client: Asyn
         assert 'id="fundamentals-card"' in body
         assert 'id="event-timeline"' in body
         assert 'id="coverage-content"' in body
+        # FX-61: existing sections keep working, and the new News
+        # Evidence section is present for every supported pair too.
+        assert 'id="news-evidence-heading"' in body
+        assert 'id="news-active-stories"' in body
+        assert 'id="news-withdrawn-stories"' in body
+        assert 'id="news-accounting"' in body
         assert f'value="{pair}" selected' in body
 
 
@@ -258,3 +284,278 @@ async def test_market_context_page_rejects_unsupported_pair(client: AsyncClient)
     response = await client.get("/market-context", params={"pair": "AUD_USD"})
 
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# News Evidence (FX-61)
+# ---------------------------------------------------------------------------
+
+TEST_NEWS_SOURCE_KEY = "__fx61_route_test__"
+
+
+@pytest.fixture
+async def news_session() -> AsyncIterator[AsyncSession]:
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+    async with session_factory() as db_session:
+        yield db_session
+
+    async with session_factory() as cleanup_session:
+        item_keys = (
+            (
+                await cleanup_session.execute(
+                    delete(NewsSourceMappingRow)
+                    .where(NewsSourceMappingRow.source_key == TEST_NEWS_SOURCE_KEY)
+                    .returning(NewsSourceMappingRow.news_item_key)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for key in item_keys:
+            await cleanup_session.execute(
+                delete(NewsSemanticAnnotationVintageRow).where(
+                    NewsSemanticAnnotationVintageRow.news_item_key == key
+                )
+            )
+            await cleanup_session.execute(
+                delete(NewsItemVintageRow).where(NewsItemVintageRow.news_item_key == key)
+            )
+            await cleanup_session.execute(
+                delete(NewsItemRow).where(NewsItemRow.news_item_key == key)
+            )
+        await cleanup_session.commit()
+
+
+async def _make_news_item(
+    session: AsyncSession,
+    suffix: str,
+    *,
+    first_seen_at: UtcTimestamp,
+    headline: str = "Headline",
+) -> str:
+    news_repo = SqlAlchemyNewsRepository(session)
+    registration = await news_repo._register_source_item_for_test_setup(
+        NewsSourceIdentity(source_key=TEST_NEWS_SOURCE_KEY, external_item_id=suffix),
+        first_seen_at,
+        NewsObservationMode.PROSPECTIVE,
+    )
+    vintage = NewsItemVintage(
+        news_item_key=registration.news_item_key,
+        revision_sequence=0,
+        availability=first_seen_at,
+        observation_mode=NewsObservationMode.PROSPECTIVE,
+        headline=headline,
+        source_channel="test_channel",
+        observed_source_channels=("test_channel",),
+        source_status=NewsSourceStatus.ACTIVE,
+        evidence_disposition=NewsEvidenceDisposition.EVIDENCE_ELIGIBLE,
+        canonical_url="javascript:alert(1)",
+    )
+    await news_repo.add_vintage(vintage)
+    semantic_repo = SqlAlchemyNewsSemanticRepository(session, news_repo)
+    await semantic_repo.add_annotation_vintage(
+        NewsSemanticAnnotationVintage(
+            news_item_key=registration.news_item_key,
+            revision_sequence=0,
+            availability=first_seen_at,
+            basis_news_item_revision_sequence=0,
+            algorithm_version="fx59_v1",
+            classification=NewsSemanticClassification(
+                entities=(
+                    NewsEntityAnnotation(
+                        entity_type=NewsEntityType.INSTITUTION,
+                        entity_key="FEDERAL_RESERVE",
+                        evidence=(NewsEntityEvidenceKind.SOURCE_PROFILE,),
+                    ),
+                    NewsEntityAnnotation(
+                        entity_type=NewsEntityType.JURISDICTION,
+                        entity_key="UNITED_STATES",
+                        evidence=(NewsEntityEvidenceKind.SOURCE_PROFILE,),
+                    ),
+                ),
+                topics=(),
+                currency_relevance=(
+                    NewsCurrencyRelevance(
+                        currency_code="USD",
+                        reasons=(NewsCurrencyRelevanceReason.SOURCE_JURISDICTION,),
+                    ),
+                ),
+            ),
+        )
+    )
+    return registration.news_item_key
+
+
+@pytest.mark.asyncio
+async def test_news_route_returns_schema_for_supported_pair(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/market-context/EUR_USD/news",
+        params={"as_of": "2026-01-01T00:00:00+00:00", "news_lookback_hours": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    for key in (
+        "presentation_version",
+        "snapshot_policy_version",
+        "pair",
+        "as_of",
+        "window_start",
+        "coverage",
+        "accounting",
+        "active_entries",
+        "withdrawn_only_entries",
+        "semantic_gaps",
+    ):
+        assert key in body
+    assert body["pair"]["base_currency"] == "EUR"
+    assert body["pair"]["quote_currency"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_unsupported_pair(client: AsyncClient) -> None:
+    response = await client.get("/api/market-context/AUD_USD/news")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_news_route_accepts_explicit_as_of_with_no_hidden_default(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/market-context/GBP_USD/news",
+        params={"as_of": "2020-01-01T00:00:00+00:00", "news_lookback_hours": 24},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["as_of"] == "2020-01-01T00:00:00+00:00"
+    assert body["window_start"] == "2019-12-31T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_malformed_as_of(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/market-context/GBP_USD/news", params={"as_of": "not-a-timestamp"}
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_naive_as_of(client: AsyncClient) -> None:
+    response = await client.get(
+        "/api/market-context/GBP_USD/news", params={"as_of": "2026-01-01T00:00:00"}
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_news_route_rejects_non_positive_lookback(client: AsyncClient) -> None:
+    for bad_value in (0, -5):
+        response = await client.get(
+            "/api/market-context/USD_CAD/news", params={"news_lookback_hours": bad_value}
+        )
+        assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_news_route_reflects_persisted_evidence_with_correct_pair_relevance(
+    client: AsyncClient, news_session: AsyncSession
+) -> None:
+    await _make_news_item(news_session, "GBP_STORY", first_seen_at=_ts(2026, 9, 1))
+
+    response = await client.get(
+        "/api/market-context/GBP_USD/news",
+        params={"as_of": "2026-09-02T00:00:00+00:00", "news_lookback_hours": 48},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    matching = [
+        e for e in body["active_entries"] if any(m["headline"] == "Headline" for m in e["members"])
+    ]
+    assert len(matching) == 1
+    entry = matching[0]
+    assert entry["pair_relevance_side"] == "QUOTE_ONLY"
+    # FX-61 Section 4.6: an unsafe `javascript:` URL round-trips through
+    # real Postgres and the real view model as None -- never reaching
+    # the JSON response as a renderable link.
+    assert entry["members"][0]["canonical_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_news_route_empty_corpus_window_renders_valid_empty_state(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/market-context/EUR_USD/news",
+        params={"as_of": "2015-01-01T00:00:00+00:00", "news_lookback_hours": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_entries"] == []
+    assert body["empty_state"] is not None
+    assert body["empty_state_message"] is not None
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_section_controls_retain_query_params(client: AsyncClient) -> None:
+    response = await client.get(
+        "/market-context",
+        params={"pair": "GBP_USD", "news_lookback_hours": 36},
+    )
+
+    assert response.status_code == 200
+    assert 'name="news_lookback_hours" value="36"' in response.text
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_page_escapes_headline_and_never_breaks_script_boundary(
+    client: AsyncClient, news_session: AsyncSession
+) -> None:
+    """A headline containing a literal `</script>` sequence must never
+    allow the embedded JSON payload to break out of its own `<script>`
+    block -- the page's own JSON-embedding logic must neutralize this,
+    exactly like every other section's payload already relies on."""
+    await _make_news_item(
+        news_session,
+        "XSS_STORY",
+        first_seen_at=_ts(2026, 9, 1),
+        headline="</script><script>window.__pwned__=1</script>",
+    )
+
+    response = await client.get(
+        "/market-context",
+        params={
+            "pair": "GBP_USD",
+            "as_of": "2026-09-02T00:00:00+00:00",
+            "news_lookback_hours": 48,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "window.__pwned__" not in body or "<\\/script>" in body
+    assert "</script><script>window.__pwned__" not in body
+
+
+@pytest.mark.asyncio
+async def test_news_evidence_withdrawn_entries_distinct_key_from_active(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/market-context/EUR_USD/news",
+        params={"as_of": "2026-12-31T00:00:00+00:00", "news_lookback_hours": 99999},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["active_entries"], list)
+    assert isinstance(body["withdrawn_only_entries"], list)
+    active_keys = {e["canonical_group_key"] for e in body["active_entries"]}
+    withdrawn_keys = {e["canonical_group_key"] for e in body["withdrawn_only_entries"]}
+    assert active_keys.isdisjoint(withdrawn_keys)

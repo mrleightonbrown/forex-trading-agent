@@ -34,10 +34,12 @@ def render_market_context_page(
     lookahead_hours: float,
     lookback_hours: float,
     fx46_experiment: str,
+    news_lookback_hours: float,
     fundamentals_view: dict[str, object],
     history_view: dict[str, object],
     events_view: dict[str, object],
     fx46_view: dict[str, object],
+    news_view: dict[str, object],
 ) -> str:
     resolved_as_of = str(events_view["as_of"])
     payload = {
@@ -45,6 +47,7 @@ def render_market_context_page(
         "history": history_view,
         "events": events_view,
         "fx46": fx46_view,
+        "news": news_view,
     }
     payload_json = json.dumps(payload).replace(
         "</", "<\\/"
@@ -92,6 +95,9 @@ def render_market_context_page(
     </label>
     <label>FX-46 experiment
       <select name="fx46_experiment">{experiment_options}</select>
+    </label>
+    <label>News lookback (hours)
+      <input type="number" name="news_lookback_hours" value="{news_lookback_hours:g}" min="0" step="1">
     </label>
     <button type="submit">Apply</button>
   </form>
@@ -146,6 +152,50 @@ def render_market_context_page(
   <div class="panel">
     <h3>Coverage / limitations</h3>
     <div id="coverage-content"></div>
+  </div>
+</section>
+
+<section id="news-evidence" aria-labelledby="news-evidence-heading">
+  <h2 id="news-evidence-heading">News Evidence</h2>
+  <div class="panel">
+    <div id="news-status-banner"></div>
+    <p class="mc-research-note" id="news-relevance-note"></p>
+  </div>
+  <div class="panel">
+    <h3>Evidence summary</h3>
+    <div id="news-accounting"></div>
+  </div>
+  <div class="panel">
+    <h3>Canonical stories</h3>
+    <div class="mc-news-controls">
+      <label>Relevance
+        <select id="news-filter-side">
+          <option value="ALL">All relevant</option>
+          <option value="BASE_ONLY">Base-only</option>
+          <option value="QUOTE_ONLY">Quote-only</option>
+          <option value="BOTH">Both</option>
+        </select>
+      </label>
+      <label>Topic
+        <select id="news-filter-topic"><option value="ALL">All topics</option></select>
+      </label>
+      <label>Source
+        <select id="news-filter-source"><option value="ALL">All sources</option></select>
+      </label>
+      <label>Order
+        <select id="news-sort-order">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+        </select>
+      </label>
+    </div>
+    <p class="mc-card-meta" id="news-filtered-count"></p>
+    <div id="news-empty-state" class="mc-empty-message" hidden></div>
+    <div id="news-active-stories"></div>
+  </div>
+  <div class="panel">
+    <h3>Withdrawn-only evidence</h3>
+    <div id="news-withdrawn-stories"></div>
   </div>
 </section>
 
@@ -212,6 +262,22 @@ section h2 { font-size: 1.1rem; border-bottom: 1px solid var(--mc-border); paddi
 .mc-empty-message { color: var(--mc-muted); font-style: italic; }
 .mc-coverage-item { margin-bottom: 0.3rem; font-size: 0.85rem; }
 .mc-sr-only { position: absolute; left: -9999px; }
+.mc-news-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 0.6rem; }
+.mc-news-controls label { display: flex; flex-direction: column; font-size: 0.75rem; color: var(--mc-muted); gap: 0.25rem; }
+.mc-news-controls select { font-size: 0.85rem; padding: 0.25rem; }
+.mc-story-card { border: 1px solid var(--mc-border); border-radius: 5px; padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
+.mc-story-withdrawn { border-left: 4px solid var(--mc-status-postponed); background: color-mix(in srgb, var(--mc-status-postponed) 8%, var(--mc-panel-bg)); }
+.mc-story-title { font-weight: 600; margin-bottom: 0.2rem; }
+.mc-badge-side { color: var(--mc-accent); border-color: var(--mc-accent); }
+.mc-badge-gap { color: var(--mc-status-postponed); border-color: var(--mc-status-postponed); }
+.mc-badge-withdrawn { color: var(--mc-status-postponed); border-color: var(--mc-status-postponed); }
+.mc-news-detail { margin-top: 0.5rem; border-top: 1px solid var(--mc-border); padding-top: 0.5rem; font-size: 0.8rem; }
+.mc-news-detail dt { font-weight: 600; margin-top: 0.3rem; }
+.mc-news-detail dd { margin: 0 0 0.2rem; }
+.mc-news-member { border: 1px solid var(--mc-border); border-radius: 4px; padding: 0.4rem 0.5rem; margin: 0.3rem 0; }
+.mc-news-relation { font-size: 0.78rem; color: var(--mc-muted); }
+.mc-news-gap { font-size: 0.78rem; color: var(--mc-status-postponed); }
+.mc-show-more { font-size: 0.8rem; margin-top: 0.4rem; }
 </style>"""
 
 _SCRIPT = """<script>
@@ -535,11 +601,285 @@ _SCRIPT = """<script>
       ev.coverage.source_health_note));
   }
 
+  // --- News Evidence (FX-61) ------------------------------------------------
+  // Deliberately NEVER recomputes relevance/coverage/accounting here --
+  // every field rendered below is read directly from the ONE FX-60
+  // snapshot already embedded in DATA.news. Filtering/sorting below
+  // operate purely on that already-fetched array; neither ever issues
+  // a fetch or changes the authoritative accounting counts shown.
+  const NEWS_SHOW_BATCH = 25;
+  let newsVisibleCount = NEWS_SHOW_BATCH;
+
+  function renderNewsStatusBanner() {
+    const n = DATA.news;
+    const banner = document.getElementById("news-status-banner");
+    banner.innerHTML = "";
+    const lines = [
+      "Pair: " + n.pair.base_currency + "/" + n.pair.quote_currency,
+      "As of: " + n.as_of + " (UTC)",
+      "Window start: " + n.window_start + " (UTC)",
+      "Snapshot policy: " + n.snapshot_policy_version,
+      "Semantic coverage: " + n.coverage,
+    ];
+    lines.forEach(line => banner.appendChild(htmlEl("div", { class: "mc-card-meta" }, line)));
+    if (n.coverage === "INCOMPLETE_SEMANTICS") {
+      banner.appendChild(htmlEl("div", { class: "mc-badge mc-badge-gap" }, "INCOMPLETE SEMANTICS -- some evidence not yet classified"));
+    }
+    if (n.empty_state_message) {
+      banner.appendChild(htmlEl("div", { class: "mc-empty-message" }, n.empty_state_message));
+    }
+    document.getElementById("news-relevance-note").textContent = n.relevance_explanation_note;
+  }
+
+  function renderNewsAccounting() {
+    const acc = DATA.news.accounting;
+    const container = document.getElementById("news-accounting");
+    container.innerHTML = "";
+    const itemRows = [
+      ["PIT-visible NewsItems", acc.items_pit_visible],
+      ["Snapshot-eligible NewsItems", acc.items_snapshot_eligible],
+      ["Window-eligible NewsItems", acc.items_window_eligible],
+      ["CURRENT items", acc.items_current],
+      ["STALE items", acc.items_stale],
+      ["UNCLASSIFIED items", acc.items_unclassified],
+      ["Pair-relevant items", acc.items_pair_relevant],
+    ];
+    const groupRows = [
+      ["Canonical groups considered", acc.groups_total],
+      ["Outside window", acc.groups_outside_window],
+      ["No eligible evidence", acc.groups_without_eligible_evidence],
+      ["Pair-irrelevant", acc.groups_pair_irrelevant],
+      ["Incomplete semantics", acc.groups_incomplete_semantics],
+      ["Base-only", acc.groups_base_only],
+      ["Quote-only", acc.groups_quote_only],
+      ["Both", acc.groups_both],
+    ];
+    const table1 = htmlEl("table", { class: "mc-fallback-table" });
+    table1.appendChild(htmlEl("caption", {}, "Source-native item counts"));
+    itemRows.forEach(([label, value]) => {
+      const row = htmlEl("tr");
+      row.appendChild(htmlEl("td", {}, label));
+      row.appendChild(htmlEl("td", {}, String(value)));
+      table1.appendChild(row);
+    });
+    const table2 = htmlEl("table", { class: "mc-fallback-table" });
+    table2.appendChild(htmlEl("caption", {}, "Canonical group disposition counts (mutually exclusive, sum to groups considered)"));
+    groupRows.forEach(([label, value]) => {
+      const row = htmlEl("tr");
+      row.appendChild(htmlEl("td", {}, label));
+      row.appendChild(htmlEl("td", {}, String(value)));
+      table2.appendChild(row);
+    });
+    const grid = htmlEl("div", { class: "mc-grid-2" });
+    grid.appendChild(table1);
+    grid.appendChild(table2);
+    container.appendChild(grid);
+  }
+
+  function allNewsEntries() {
+    return DATA.news.active_entries.concat(DATA.news.withdrawn_only_entries);
+  }
+
+  function populateNewsFilterOptions() {
+    const topics = new Set();
+    const sources = new Set();
+    allNewsEntries().forEach(g => {
+      g.topics.forEach(t => topics.add(t));
+      g.source_channels.forEach(s => sources.add(s));
+    });
+    const topicSelect = document.getElementById("news-filter-topic");
+    Array.from(topics).sort().forEach(t => topicSelect.appendChild(htmlEl("option", { value: t }, t)));
+    const sourceSelect = document.getElementById("news-filter-source");
+    Array.from(sources).sort().forEach(s => sourceSelect.appendChild(htmlEl("option", { value: s }, s)));
+  }
+
+  function filteredSortedActiveEntries() {
+    const side = document.getElementById("news-filter-side").value;
+    const topic = document.getElementById("news-filter-topic").value;
+    const source = document.getElementById("news-filter-source").value;
+    const order = document.getElementById("news-sort-order").value;
+
+    let entries = DATA.news.active_entries.slice();
+    if (side !== "ALL") entries = entries.filter(g => g.pair_relevance_side === side);
+    if (topic !== "ALL") entries = entries.filter(g => g.topics.includes(topic));
+    if (source !== "ALL") entries = entries.filter(g => g.source_channels.includes(source));
+
+    // The snapshot's own order is already newest-first, canonical-
+    // group-key tie-broken (FX-60 Section 41) -- "oldest first" is a
+    // pure client-side reversal, never a re-sort against raw fields,
+    // so the tie-break ordering is preserved exactly, just flipped.
+    if (order === "oldest") entries = entries.slice().reverse();
+    return entries;
+  }
+
+  function safeLink(url, text) {
+    if (!url) return document.createTextNode(text);
+    const a = htmlEl("a", { href: url, target: "_blank", rel: "noopener noreferrer" });
+    a.textContent = text;
+    return a;
+  }
+
+  function buildStoryDetail(group) {
+    const wrap = htmlEl("div", { class: "mc-news-detail" });
+    const dl = htmlEl("dl");
+    function addRow(label, value) {
+      dl.appendChild(htmlEl("dt", {}, label));
+      dl.appendChild(htmlEl("dd", {}, value));
+    }
+    addRow("Canonical group key", group.canonical_group_key);
+    addRow("Canonical membership (full FX-58 group)", group.canonical_member_news_item_keys.join(", "));
+    addRow("Evidence-eligible membership", group.member_news_item_keys.join(", "));
+    const ineligible = group.canonical_member_news_item_keys.filter(k => !group.member_news_item_keys.includes(k));
+    if (ineligible.length > 0) {
+      addRow("Canonical members with no eligible evidence", ineligible.join(", "));
+    }
+    addRow("Display member", group.display_member_news_item_key);
+    addRow("Story first seen", group.story_first_seen_at);
+    wrap.appendChild(dl);
+
+    wrap.appendChild(htmlEl("div", { class: "mc-story-title" }, "Source-native members (" + group.members.length + ")"));
+    group.members.forEach(m => {
+      const card = htmlEl("div", { class: "mc-news-member" });
+      const titleLine = htmlEl("div", {});
+      titleLine.appendChild(document.createTextNode(m.news_item_key + " · " + m.source_channel + " · "));
+      titleLine.appendChild(safeLink(m.canonical_url, m.headline));
+      card.appendChild(titleLine);
+      if (m.summary) card.appendChild(htmlEl("div", { class: "mc-card-meta" }, m.summary));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" },
+        "First seen " + m.first_seen_at + " · vintage availability " + m.news_vintage_availability +
+        " (rev " + m.basis_news_item_revision_sequence + ") · status " + m.source_status));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" },
+        "Semantic annotation: rev " + m.semantic_annotation_revision_sequence + " · available " +
+        m.semantic_annotation_availability + " · algorithm " + m.semantic_algorithm_version));
+      const topics = m.classification.topics.join(", ") || "(none)";
+      const entities = m.classification.entities.map(e => e.entity_type + ":" + e.entity_key).join(", ") || "(none)";
+      const relevance = m.classification.currency_relevance.map(r => r.currency_code + " [" + r.reasons.join(", ") + "]").join("; ") || "(none)";
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Topics: " + topics));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Entities: " + entities));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Currency relevance: " + relevance));
+      card.appendChild(htmlEl("div", { class: "mc-card-meta" },
+        "Publisher: " + m.publisher_institution_entity_key + " (" + m.publisher_jurisdiction_entity_key + ")"));
+      wrap.appendChild(card);
+    });
+
+    if (group.relation_provenance.length > 0) {
+      wrap.appendChild(htmlEl("div", { class: "mc-story-title" }, "Canonical relationship provenance"));
+      group.relation_provenance.forEach(r => {
+        wrap.appendChild(htmlEl("div", { class: "mc-news-relation" },
+          r.left_news_item_key + " <-> " + r.right_news_item_key + " · " + r.relation_kind +
+          " · " + r.method + " (" + r.algorithm_version + ") · available " + r.availability));
+      });
+    } else {
+      wrap.appendChild(htmlEl("div", { class: "mc-card-meta" }, "No canonical relationships -- singleton story."));
+    }
+
+    if (group.semantic_gaps.length > 0) {
+      wrap.appendChild(htmlEl("div", { class: "mc-story-title" }, "Semantic gaps"));
+      group.semantic_gaps.forEach(g => {
+        const basis = g.annotation_basis_revision_sequence === null ? "none (UNCLASSIFIED)" : String(g.annotation_basis_revision_sequence);
+        wrap.appendChild(htmlEl("div", { class: "mc-news-gap" },
+          g.news_item_key + ": " + g.semantic_state + " (current rev " + g.current_news_revision_sequence +
+          ", annotation basis rev " + basis + ")"));
+      });
+    }
+    return wrap;
+  }
+
+  function renderStoryCard(group, isWithdrawn) {
+    const card = htmlEl("div", { class: "mc-story-card" + (isWithdrawn ? " mc-story-withdrawn" : "") });
+    const display = group.members.find(m => m.news_item_key === group.display_member_news_item_key);
+    const title = htmlEl("div", { class: "mc-story-title" });
+    title.appendChild(safeLink(display ? display.canonical_url : null, display ? display.headline : group.display_member_news_item_key));
+    card.appendChild(title);
+    if (isWithdrawn) card.appendChild(htmlEl("span", { class: "mc-badge mc-badge-withdrawn" }, "WITHDRAWN-ONLY"));
+    card.appendChild(htmlEl("span", { class: "mc-badge mc-badge-side" }, group.pair_relevance_side));
+    if (group.has_semantic_gaps) card.appendChild(htmlEl("span", { class: "mc-badge mc-badge-gap" }, "SEMANTIC GAP"));
+    card.appendChild(htmlEl("div", { class: "mc-card-meta" },
+      (display ? display.source_channel + " · " : "") + "First seen " + group.story_first_seen_at +
+      " · " + group.canonical_member_news_item_keys.length + " canonical member(s)"));
+    const topics = group.topics.join(", ") || "(none)";
+    card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Topics: " + topics));
+    const entities = group.entities.map(e => e.entity_type + ":" + e.entity_key).join(", ") || "(none)";
+    card.appendChild(htmlEl("div", { class: "mc-card-meta" }, "Entities: " + entities));
+
+    const toggle = htmlEl("button", { type: "button", class: "mc-show-more" }, "Show details");
+    let expanded = false;
+    let detailEl = null;
+    toggle.addEventListener("click", () => {
+      expanded = !expanded;
+      if (expanded) {
+        if (!detailEl) detailEl = buildStoryDetail(group);
+        card.appendChild(detailEl);
+        toggle.textContent = "Hide details";
+      } else {
+        if (detailEl) card.removeChild(detailEl);
+        toggle.textContent = "Show details";
+      }
+    });
+    card.appendChild(toggle);
+    return card;
+  }
+
+  function renderNewsStories() {
+    const container = document.getElementById("news-active-stories");
+    container.innerHTML = "";
+    const emptyEl = document.getElementById("news-empty-state");
+    const entries = filteredSortedActiveEntries();
+    const total = DATA.news.active_entries.length;
+
+    document.getElementById("news-filtered-count").textContent =
+      entries.length + " of " + total + " active stories displayed (snapshot accounting above is unaffected by this filter).";
+
+    if (DATA.news.active_entries.length === 0 && DATA.news.withdrawn_only_entries.length === 0) {
+      emptyEl.hidden = false;
+      emptyEl.textContent = DATA.news.empty_state_message || "No stories in this window.";
+      return;
+    }
+    emptyEl.hidden = true;
+
+    if (entries.length === 0) {
+      container.appendChild(htmlEl("p", { class: "mc-empty-message" }, "No stories match the current filters."));
+      return;
+    }
+
+    const shown = entries.slice(0, newsVisibleCount);
+    shown.forEach(g => container.appendChild(renderStoryCard(g, false)));
+    if (entries.length > shown.length) {
+      const more = htmlEl("button", { type: "button", class: "mc-show-more" },
+        "Show more (" + (entries.length - shown.length) + " remaining)");
+      more.addEventListener("click", () => { newsVisibleCount += NEWS_SHOW_BATCH; renderNewsStories(); });
+      container.appendChild(more);
+    }
+  }
+
+  function renderWithdrawnStories() {
+    const container = document.getElementById("news-withdrawn-stories");
+    container.innerHTML = "";
+    if (DATA.news.withdrawn_only_entries.length === 0) {
+      container.appendChild(htmlEl("p", { class: "mc-empty-message" }, "No withdrawn-only evidence in this window."));
+      return;
+    }
+    DATA.news.withdrawn_only_entries.forEach(g => container.appendChild(renderStoryCard(g, true)));
+  }
+
+  function renderNews() {
+    renderNewsStatusBanner();
+    renderNewsAccounting();
+    renderNewsStories();
+    renderWithdrawnStories();
+  }
+
+  populateNewsFilterOptions();
+  ["news-filter-side", "news-filter-topic", "news-filter-source", "news-sort-order"].forEach(id => {
+    document.getElementById(id).addEventListener("change", () => { newsVisibleCount = NEWS_SHOW_BATCH; renderNewsStories(); });
+  });
+
   renderFundamentals();
   renderRateHistory();
   renderFx46();
   renderTimeline();
   renderCards();
   renderCoverage();
+  renderNews();
 })();
 </script>"""
