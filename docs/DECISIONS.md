@@ -15885,3 +15885,99 @@ preserved FX-61 entry.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-EPIC-09 or any Decision/Risk Engine work.
+
+## 2026-10-13 — FX-62: source identity & provenance registry
+
+**Scope.** FX-EPIC-09's first story ("Evidence Infrastructure" Phase
+A): a durable, append-only, PIT-safe identity and attribution registry
+distinguishing institution/individual/publication, technical source/
+feed, publisher, originating claimant, and quoted actor. Explicitly
+NOT credibility/accuracy/trust scoring, NOT NLP-inferred authorship,
+NOT a change to any FX-56-61 file or behavior. Starting commit:
+`5920c0a` (the FX-61H commit), verified before any FX-62 code was
+written.
+
+**Design.** Three new tables (migration `e23aac921014`):
+`intelligence_sources` (minimal, immutable `IntelligenceSource`),
+`source_identity_vintages` (evolving, append-only `SourceIdentity
+Vintage` -- display name, aliases, authoritative identifier, canonical
+website), `source_attribution_vintages` (`SourceAttributionVintage`,
+role-scoped `PUBLISHER`/`ORIGINATING_CLAIMANT`/`QUOTED_ACTOR`, pinned
+to an exact `NewsItemVintage` basis via a composite FK mirroring FX-59's
+own pattern, deliberately binary `CONFIRMED`/`UNRESOLVED` status). One
+combined repository port (`SourceRegistryRepository`), a deliberate
+departure from FX-58/59's own per-concern port split, justified
+because attribution resolution directly depends on identity
+resolution. Full rationale in `docs/adr/0010-source-identity-
+provenance-registry.md`.
+
+**Design correction found via a failing test (the most significant
+engineering finding of this story).** The original attribution
+determinism key, `(news_item_key, role, evidence_basis_revision_
+sequence, algorithm_version)`, mirrored FX-59's own key too literally
+and incorrectly rejected a legitimate publisher correction (same
+basis/algorithm, A -> B, the story's own Section 9 worked example) as
+a determinism violation. Root cause: FX-59's "same basis always yields
+same output" is a pure-function assumption that does not hold here --
+a human can legitimately correct a prior confirmed fact without the
+underlying basis or algorithm changing. Fixed by including the FULL
+`evidence` object in the determinism key for both identity
+(`(source_key, algorithm_version, evidence)`) and attribution
+(adding `evidence`), so re-submitting the EXACT SAME evidence must
+yield the SAME output, but genuinely different evidence (even of the
+same `evidence_kind`) is a different historical basis, never compared.
+The same latent gap was found and fixed in each use case's own
+idempotent-no-op ("UNCHANGED") short-circuit, which had not been
+updated to match. No real data was ever written under the old,
+incorrect key.
+
+**Bootstrap.** `INTELLIGENCE_SOURCE_BOOTSTRAP_MAPPINGS` reuses FX-56's
+`news_source_registry` and FX-59's `news_semantic_source_profile`
+verbatim -- FED->FEDERAL_RESERVE, ECB->EUROPEAN_CENTRAL_BANK, BOE->
+BANK_OF_ENGLAND, GOVUK_HMT->HM_TREASURY, STATCAN->STATISTICS_CANADA,
+BOC->BANK_OF_CANADA. FED's three RSS channels (press_monetary/
+speeches/testimony) were directly confirmed to be the SAME institution
+via `fed_rss_source.py` before finalizing this 1:1 mapping. Run
+against the real, unchanged 358-item corpus via `scripts/bootstrap_
+source_registry.py`: 12 durable identities, 358 `PUBLISHER`
+attributions all `CONFIRMED` (counts matching the known per-feed
+corpus exactly: 45+22+150+20+111+10=358), zero `UNRESOLVED`. A second
+and third immediately-repeated real run both reported
+`total_attributions_created=0`, `total_attributions_unchanged=358`,
+confirming idempotency. The underlying `news_items`/`news_item_
+vintages` corpus was confirmed unchanged (358/358 before and after).
+
+**Regression.** Full deterministic suite: 2700 passed (up from 2585).
+`ruff check .`, `ruff format --check .`, `mypy .` (560 source files),
+and `pre-commit run --all-files` all pass clean. 74 new unit tests (10
+files: 4 domain + 6 application) + 13 new real-Postgres integration
+tests in `tests/integration/test_source_registry_repository.py`
+(migration-created FK/uniqueness constraints, PIT identity/attribution
+resolution, the full Section-9 correction worked example against real
+Postgres, out-of-order rejection, and concurrent/repeated identity-
+registration and bootstrap safety via `asyncio.gather`, mirroring
+FX-58H/FX-59's own established `test_canonical_relation_concurrency.py`/
+`test_semantic_annotation_concurrency.py` pattern). Every pre-existing
+FX-55-61H test passed UNMODIFIED, confirming FX-57-61 work unchanged
+against this new, partially-populated registry.
+
+**Explicitly confirmed NOT done**: no FX-56-61 file touched; no
+reliability/forecast-performance scoring (FX-63); no NLP/LLM-inferred
+claimant identity; no trustworthiness/popularity/composite reputation
+score; no `EconomicEvent` linkage; no Decision/Risk Engine
+integration.
+
+**One identity assumption flagged for future manual verification**:
+each feed maps 1:1 to exactly one publishing institution today (true
+for all six real sources, confirmed by direct adapter inspection); a
+future feed genuinely mixing content from more than one institution
+would need explicit review before reusing this same bootstrap pattern
+unmodified.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-62 entry; `docs/CURRENT_
+STATE.md` carries its own FX-62 entry immediately after the preserved
+FX-61H entry; `docs/adr/0010-source-identity-provenance-registry.md`
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-63, or any Decision/Risk Engine work.

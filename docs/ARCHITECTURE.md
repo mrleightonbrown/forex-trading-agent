@@ -3286,6 +3286,64 @@ pre-existing (unchanged-meaning) `member_news_item_keys`.
 so an ineligible intermediate member's connecting edges survive
 while that member itself still contributes zero evidence.
 
+## Source identity & provenance registry (FX-62, ADR 0010, FX-EPIC-09's first story)
+
+**FX-EPIC-09 ("Source Reputation & Forecast Performance") is now
+started, with FX-62 as its own Phase A ("Evidence Infrastructure")
+story.** This is a genuinely NEW, independent persistence layer --
+three new tables (`intelligence_sources`, `source_identity_vintages`,
+`source_attribution_vintages`, migration `e23aac921014`) -- added
+alongside FX-56-61's own tables without touching, mutating, or
+behaviorally changing any of them. Its entire purpose is distinguishing
+WHO is responsible for a piece of evidence (institution/person/
+publication, technical feed, publisher, originating claimant, quoted
+actor) from WHAT the evidence says (FX-59) or WHETHER it is the same
+story (FX-58) -- explicitly NOT a credibility, accuracy, or trust
+score of any kind.
+
+`IntelligenceSource` is a minimal, immutable durable identity
+(`source_key`, `source_kind`, `registered_at`); `SourceIdentityVintage`
+carries everything that can evolve (display name, aliases, authoritative
+identifier, canonical website), append-only, mirroring FX-56's own
+`NewsItem`/`NewsItemVintage` split exactly. `SourceAttributionVintage`
+names a `PUBLISHER`/`ORIGINATING_CLAIMANT`/`QUOTED_ACTOR` role against
+a specific `NewsItem`, pinned to an exact `NewsItemVintage` basis via a
+composite foreign key (mirroring FX-59's own `basis_news_item_revision_
+sequence` pattern); its status is deliberately binary (`CONFIRMED`/
+`UNRESOLVED`) -- a correction is always a new, higher-revision row,
+never a third status value, and the domain type itself makes an
+inconsistent status/key combination unconstructable.
+
+**Determinism required including the full evidence object, not
+merely its kind, in the historical-basis key** -- a design correction
+made during implementation, documented in ADR 0010's own Deviations
+section: a legitimate correction (same basis, same algorithm, genuinely
+different conclusion) is indistinguishable from a non-deterministic
+policy bug unless the evidence itself is part of what "same basis"
+means. `ResolvePublisherForNewsItemAsOf` never substitutes a technical
+feed's own identity when the actual publisher is unknown -- a `NOT_
+RECORDED` result stays `NOT_RECORDED`, by design and by a dedicated
+test.
+
+The real six-source bootstrap (`BootstrapSourceRegistry`, reusing
+FX-56's `news_source_registry` and FX-59's `news_semantic_source_
+profile` verbatim rather than inventing a third mapping) was run
+against the real, unchanged 358-item corpus: 12 durable identities (6
+technical feeds + 6 publishing organizations), 358 `PUBLISHER`
+attributions, all `CONFIRMED`, zero `UNRESOLVED`, fully idempotent
+across three repeated real-database runs. See ADR 0010 for the
+complete decision record, the full real-data verification, and the
+one identity assumption flagged for future manual review (each feed
+maps 1:1 to exactly one institution today; a future feed mixing
+content from more than one institution would need explicit handling).
+
+**Explicitly NOT built in FX-62**: no reliability/forecast-performance
+scoring (FX-63's own future job); no NLP/LLM-inferred claimant
+identity; no trustworthiness, popularity, or composite reputation
+score; no change to FX-58/59/60/61's own sentiment-free, score-free
+surface; no `EconomicEvent` linkage; no Decision/Risk Engine use of
+any kind. FX-64 through FX-67 remain behind Gate G09.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

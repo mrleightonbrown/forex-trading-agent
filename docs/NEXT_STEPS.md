@@ -6658,3 +6658,76 @@ preserved FX-61 entry.
 
 **Per this story's own explicit stop instruction**: do not start
 FX-EPIC-09 or any Decision/Risk Engine work.
+
+## FX-62: source identity & provenance registry (complete)
+
+FX-EPIC-09's first story ("Evidence Infrastructure" Phase A): a
+durable, append-only, PIT-safe identity and attribution registry
+distinguishing institution/individual/publication, technical source/
+feed, publisher, originating claimant, and quoted actor -- explicitly
+NOT credibility/accuracy/trust scoring. Starting commit: `5920c0a`
+(the FX-61H commit), verified before any work began.
+
+Three new tables (migration `e23aac921014`): `intelligence_sources`
+(minimal, immutable `IntelligenceSource`), `source_identity_vintages`
+(evolving, append-only `SourceIdentityVintage`), `source_attribution_
+vintages` (`SourceAttributionVintage`, role-scoped `PUBLISHER`/
+`ORIGINATING_CLAIMANT`/`QUOTED_ACTOR`, pinned to an exact `NewsItem
+Vintage` basis via a composite FK). One combined repository port
+(`SourceRegistryRepository`, covering both identity and attribution
+concerns). No FX-56-61 file touched.
+
+**The determinism key for both `RecordSourceIdentityVintage` and
+`RecordSourceAttribution` had to include the full evidence object,
+not merely its kind** -- discovered via a failing unit test
+(`test_publisher_and_claimant_roles_have_independent_revision_
+histories`) that caught an incorrect rejection of a legitimate
+publisher correction (the story's own Section 9 worked example: A is
+confirmed, then genuinely corrected to B under the same basis/
+algorithm). The fix, and the matching fix to each use case's own
+"UNCHANGED" short-circuit, is documented in full in `docs/adr/0010-
+source-identity-provenance-registry.md`'s own Deviations section.
+
+The real six-source bootstrap (`BootstrapSourceRegistry`, reusing
+FX-56's `news_source_registry` and FX-59's `news_semantic_source_
+profile` verbatim) was run against the real, unchanged 358-item
+corpus via `scripts/bootstrap_source_registry.py`: 12 durable
+identities (6 technical feeds + 6 publishing organizations), 358
+`PUBLISHER` attributions all `CONFIRMED` (FED->FEDERAL_RESERVE 45,
+ECB->EUROPEAN_CENTRAL_BANK 22, BOE->BANK_OF_ENGLAND 150, GOVUK_HMT->
+HM_TREASURY 20, STATCAN->STATISTICS_CANADA 111, BOC->BANK_OF_CANADA
+10), zero `UNRESOLVED`. Three repeated real-database runs all
+confirmed fully idempotent; the underlying news corpus confirmed
+unchanged (358/358 before and after).
+
+74 new unit tests (10 files: domain + application) + 13 new real-
+Postgres integration tests in `tests/integration/test_source_
+registry_repository.py` (migration-created FK/uniqueness
+constraints, PIT identity/attribution resolution, the full Section-9
+correction worked example against real Postgres, out-of-order
+rejection, and concurrent/repeated identity-registration and
+bootstrap safety via `asyncio.gather`, mirroring FX-58H/FX-59's own
+established concurrency-test pattern). Full deterministic suite: 2700
+passed (up from 2585). `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. Every pre-existing FX-55-61H test passed UNMODIFIED.
+
+**Explicitly confirmed NOT done**: no FX-56-61 file touched; no
+reliability/forecast-performance scoring (FX-63's own future job); no
+NLP/LLM-inferred claimant identity; no trustworthiness/popularity/
+composite reputation score; no `EconomicEvent` linkage; no Decision/
+Risk Engine integration.
+
+**One identity assumption flagged for future manual verification**:
+each feed maps 1:1 to exactly one publishing institution today (true
+for all six real sources, confirmed by direct adapter inspection); a
+future feed genuinely mixing content from more than one institution
+would need explicit review before reusing this same bootstrap pattern
+unmodified.
+
+Full details in `docs/DECISIONS.md`'s FX-62 entry; `docs/CURRENT_
+STATE.md` carries its own FX-62 entry immediately after the preserved
+FX-61H entry; `docs/adr/0010-source-identity-provenance-registry.md`
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not start
+FX-63, or any Decision/Risk Engine work.

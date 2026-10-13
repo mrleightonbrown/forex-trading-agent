@@ -3118,6 +3118,60 @@ _Last updated: 2026-09-27 (FX-54V)_
   format`/`mypy`/`pre-commit` all clean. Every pre-existing FX-61 test
   passed UNMODIFIED. **Stop after FX-61H — do not start FX-EPIC-09 or
   any Decision/Risk Engine work.**
+- **FX-62: source identity & provenance registry (complete, FX-EPIC-09's
+  first story, ADR 0010)**. A genuinely NEW persistence layer — three
+  new tables, migration `e23aac921014` (`intelligence_sources`,
+  `source_identity_vintages`, `source_attribution_vintages`) — added
+  alongside FX-56-61's own tables without touching any of them.
+  Distinguishes WHO is responsible for evidence (institution/person/
+  publication vs. the technical ingestion feed vs. the publisher vs.
+  an originating claimant/quoted actor) from WHAT the evidence says —
+  explicitly NOT a credibility/trust/reputation score. `Intelligence
+  Source` (minimal, immutable) + `SourceIdentityVintage` (evolving,
+  append-only) mirror FX-56's own `NewsItem`/`NewsItemVintage` split;
+  `SourceAttributionVintage` names a `PUBLISHER`/`ORIGINATING_CLAIMANT`/
+  `QUOTED_ACTOR` role pinned to an exact `NewsItemVintage` basis via a
+  composite FK (mirroring FX-59's own basis-pinning pattern), with a
+  deliberately binary `CONFIRMED`/`UNRESOLVED` status — a correction is
+  always a new, higher-revision row, never a third status value.
+  **Design correction found during implementation** (documented in ADR
+  0010's own Deviations section): determinism for both identity and
+  attribution recording must include the FULL evidence object, not
+  merely its `evidence_kind`, in the historical-basis comparison key —
+  otherwise a legitimate correction (same basis/algorithm, genuinely
+  different conclusion, e.g. a publisher correction from org A to org
+  B) is indistinguishable from a non-deterministic policy bug. Caught
+  by a failing unit test before any real data was written under the
+  old key; the same fix was applied to each use case's own idempotent-
+  no-op ("UNCHANGED") detection, which shared the identical gap.
+  `ResolvePublisherForNewsItemAsOf` never substitutes the technical
+  feed's own identity when the real publisher is unknown — pinned by a
+  dedicated test. The six-source bootstrap (`BootstrapSourceRegistry`)
+  reuses FX-56's `news_source_registry` and FX-59's `news_semantic_
+  source_profile` verbatim (no third parallel mapping); FED's three
+  RSS channels were directly verified to be the same institution
+  before finalizing its 1:1 mapping. Run against the real, unchanged
+  358-item corpus: 12 durable identities (6 technical feeds + 6
+  publishing organizations), 358 `PUBLISHER` attributions all
+  `CONFIRMED` (FED→FEDERAL_RESERVE 45, ECB→EUROPEAN_CENTRAL_BANK 22,
+  BOE→BANK_OF_ENGLAND 150, GOVUK_HMT→HM_TREASURY 20, STATCAN→
+  STATISTICS_CANADA 111, BOC→BANK_OF_CANADA 10), zero `UNRESOLVED`,
+  fully idempotent across three repeated real-database runs. 74 new
+  unit tests (10 files: domain + application) + 13 new real-Postgres
+  integration tests (migration/FK/uniqueness constraints, PIT identity/
+  attribution resolution, the Section-9 publisher-correction worked
+  example, out-of-order rejection, and concurrent/repeated identity-
+  registration and bootstrap safety via `asyncio.gather`, mirroring
+  FX-58H/FX-59's own established concurrency-test pattern). Full
+  deterministic suite: 2700 passed (up from 2585). `ruff`/`ruff
+  format`/`mypy`/`pre-commit` all clean. Every pre-existing FX-55-61H
+  test passed UNMODIFIED; FX-57-61 proven to work unchanged against
+  this registry. **One identity assumption flagged for future manual
+  verification**: each feed maps 1:1 to exactly one publishing
+  institution today (true for all six real sources); a future feed
+  mixing content from more than one institution would need explicit
+  review before reusing this same bootstrap pattern. **Stop after
+  FX-62 — do not start FX-63, or any Decision/Risk Engine work.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same
