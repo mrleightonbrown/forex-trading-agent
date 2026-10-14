@@ -11,6 +11,7 @@ import pytest
 from forex_agent.application.use_cases.record_forecast_outcome import (
     ForecastOutcomeDeterminismError,
     ForecastOutcomeIdentityConflictError,
+    ForecastOutcomeIdentityImmutabilityError,
     ForecastOutcomeOutcome,
     ForecastOutcomeProvenanceConsistencyError,
     OutOfOrderForecastOutcomeError,
@@ -225,3 +226,135 @@ async def test_different_target_period_is_not_a_conflict() -> None:
     )
 
     assert result.outcome is ForecastOutcomeOutcome.CREATED
+
+
+# --- FX-65H.2: immutable measurement identity (H2) --------------------------
+
+
+async def test_same_key_with_changed_target_period_is_rejected() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _candidate(
+                availability=_ts(10),
+                policy_meeting_identifier="BOC-2025-01-29",
+                document_identifier="DOC-OTHER-MEETING",
+            )
+        )
+
+
+async def test_same_key_with_changed_definition_is_rejected() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _candidate(
+                availability=_ts(10),
+                definition_key="SOME-OTHER-DEFINITION",
+                document_identifier="DOC-OTHER-DEFINITION",
+            )
+        )
+
+
+async def test_same_key_with_changed_outcome_type_is_rejected() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _candidate(
+                availability=_ts(10),
+                outcome_type=ForecastType.CATEGORICAL_EVENT,
+                numeric_value=None,
+                unit=None,
+                categorical_outcome="CUT",
+                document_identifier="DOC-OTHER-TYPE",
+            )
+        )
+
+
+async def test_same_key_with_changed_unit_is_rejected() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _candidate(
+                availability=_ts(10), unit="BASIS_POINTS", document_identifier="DOC-OTHER-UNIT"
+            )
+        )
+
+
+async def test_rejected_immutability_conflict_writes_nothing() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _candidate(
+                availability=_ts(10),
+                unit="BASIS_POINTS",
+                document_identifier="DOC-OTHER-UNIT",
+            )
+        )
+
+    history = await repo.list_vintages_for_outcome(_candidate().outcome_key)
+    assert len(history) == 1
+
+
+async def test_same_key_with_revised_value_and_unchanged_identity_is_accepted() -> None:
+    """A legitimate revision of the SAME observed variable/event --
+    same identity, new value -- is never flagged by H2."""
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    result = await record(
+        _candidate(
+            availability=_ts(10),
+            numeric_value=Decimal("3.00"),
+            document_identifier="DOC-REVISED-VALUE",
+        )
+    )
+
+    assert result.outcome is ForecastOutcomeOutcome.REVISION_ADDED
+
+
+async def test_dry_run_identity_conflict_check_is_read_only() -> None:
+    """A dry-run that WOULD conflict raises the same exception, but
+    never mutates (H4: no `claim_outcome_identity_binding` call, since
+    `dry_run=True` skips the atomic claim entirely)."""
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate(outcome_key="BOC-RATE-DECISION-2024-12-11-A"))
+
+    with pytest.raises(ForecastOutcomeIdentityConflictError):
+        await record(
+            _candidate(
+                outcome_key="BOC-RATE-DECISION-2024-12-11-B",
+                numeric_value=Decimal("3.10"),
+                document_identifier="DOC-OTHER",
+            ),
+            dry_run=True,
+        )
+
+    assert "BOC-RATE-DECISION-2024-12-11-B" not in repo.identity_bindings
+    assert await repo.list_vintages_for_outcome("BOC-RATE-DECISION-2024-12-11-B") == ()
+
+
+async def test_dry_run_legitimate_new_identity_is_not_flagged() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+
+    result = await record(_candidate(), dry_run=True)
+
+    assert result.outcome is ForecastOutcomeOutcome.CREATED
+    assert repo.identity_bindings == {}

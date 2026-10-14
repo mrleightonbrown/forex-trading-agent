@@ -3388,6 +3388,25 @@ _Last updated: 2026-09-27 (FX-54V)_
   Real Bank of Canada pilot result (signed error -0.50pp) re-verified
   unchanged across four real re-runs.
   **Stop after FX-65H.1 — do not begin FX-66 or FX-67.**
+- **FX-65H.2: durable outcome identity integrity (complete)**.
+  FX-65H.1's own read-then-decide uniqueness check could not
+  guarantee exclusivity under concurrent PostgreSQL transactions, and
+  never verified that an EXISTING `outcome_key`'s own new vintage
+  retained the identity it first registered. New table `forecast_
+  outcome_identity_bindings` (migration `80877afdbe75`) carries two
+  unique constraints -- one identity binds to at most one
+  `outcome_key` (H1), one `outcome_key` binds to exactly one identity,
+  ever (H2) -- claimed atomically via new repository method `claim_
+  outcome_identity_and_add_first_vintage`, mirroring FX-62/64's own
+  atomic first-registration pattern. A revision of an already-bound
+  key performs a plain read instead and raises the new `ForecastOutcome
+  IdentityImmutabilityError` on a changed identity. Migration backfilled
+  one binding row per existing `outcome_key` with no renaming, after a
+  pre-flight conflict check found none in the real data. 29 unit tests
+  (10 new) + 14 real-Postgres integration tests (4 new); full suite
+  3136 passed. Real Bank of Canada pilot result (signed error -0.50pp)
+  re-verified unchanged, with its `outcome_key` now durably bound.
+  **Stop after FX-65H.2 — do not begin FX-66 or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

@@ -3576,6 +3576,26 @@ change; chosen over deriving `outcome_key` automatically specifically
 to avoid renaming the real pilot's own existing identity. See ADR
 0013's own FX-65H.1 addendum.
 
+**FX-65H.2 made identity binding database-enforced and genuinely
+atomic**: FX-65H.1's own read-then-decide check could not guarantee
+exclusivity under concurrent PostgreSQL transactions, and never
+checked that an EXISTING `outcome_key` retained its own identity
+across revisions. A new table, `forecast_outcome_identity_bindings`
+(migration `80877afdbe75`), carries two unique constraints -- one
+identity binds to at most one `outcome_key` (H1), one `outcome_key`
+binds to exactly one identity, ever (H2). A brand-new `outcome_key`
+claims its identity and writes its first vintage atomically via one
+repository method, `claim_outcome_identity_and_add_first_vintage`,
+mirroring FX-62/64's own atomic first-registration pattern (insert-
+no-commit, rollback on conflict with nothing written, else commit
+both together); a revision of an already-bound key instead performs
+one plain read and raises the new `ForecastOutcomeIdentityImmutability
+Error` if its identity has changed. `target_period` is flattened to a
+comparable string via `canonical_target_period_key` (and a sentinel
+for nullable `unit`) specifically to make the composite unique
+constraint work under Postgres's NULL-is-distinct-from-NULL
+semantics. See ADR 0013's own FX-65H.2 addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

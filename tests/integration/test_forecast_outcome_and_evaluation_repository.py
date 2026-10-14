@@ -5,7 +5,7 @@ persistence, concurrent idempotency, PIT outcome/evaluation reads, and
 the "no write survives a rejected candidate/inadmissible evaluation"
 guarantee.
 
-Requires a live Postgres with migration `0829067d81ae` applied (the
+Requires a live Postgres with migration `80877afdbe75` applied (the
 current head)."""
 
 import asyncio
@@ -37,6 +37,7 @@ from forex_agent.application.use_cases.record_forecast_evaluation_protocol impor
 )
 from forex_agent.application.use_cases.record_forecast_outcome import (
     ForecastOutcomeIdentityConflictError,
+    ForecastOutcomeIdentityImmutabilityError,
     RecordForecastOutcome,
 )
 from forex_agent.application.use_cases.record_forecast_outcome_definition import (
@@ -63,6 +64,10 @@ from forex_agent.domain.forecast_evaluation_protocol import ForecastEvaluationPr
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
 from forex_agent.domain.forecast_outcome_definition import ForecastOutcomeDefinition
+from forex_agent.domain.forecast_outcome_identity import (
+    ForecastOutcomeIdentityBinding,
+    canonical_target_period_key,
+)
 from forex_agent.domain.forecast_outcome_resolution_status import ForecastOutcomeResolutionStatus
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
@@ -86,6 +91,9 @@ from forex_agent.infrastructure.db.models.forecast_evaluation_protocol import (
 )
 from forex_agent.infrastructure.db.models.forecast_outcome_definition import (
     ForecastOutcomeDefinitionRow,
+)
+from forex_agent.infrastructure.db.models.forecast_outcome_identity_binding import (
+    ForecastOutcomeIdentityBindingRow,
 )
 from forex_agent.infrastructure.db.models.forecast_outcome_vintage import ForecastOutcomeVintageRow
 from forex_agent.infrastructure.db.models.intelligence_source import IntelligenceSourceRow
@@ -139,6 +147,11 @@ async def session() -> AsyncIterator[AsyncSession]:
         await cleanup_session.execute(
             delete(ForecastEvaluationProtocolRow).where(
                 ForecastEvaluationProtocolRow.protocol_key.startswith(TEST_PROTOCOL_PREFIX)
+            )
+        )
+        await cleanup_session.execute(
+            delete(ForecastOutcomeIdentityBindingRow).where(
+                ForecastOutcomeIdentityBindingRow.outcome_key.startswith(TEST_OUTCOME_PREFIX)
             )
         )
         await cleanup_session.execute(
@@ -455,6 +468,162 @@ async def test_concurrent_duplicate_outcome_registration(
     assert "CREATED" in outcomes
     history = await outcome_repo.list_vintages_for_outcome(f"{TEST_OUTCOME_PREFIX}concurrent")
     assert len(history) == 1
+
+
+async def test_concurrent_different_outcome_keys_same_identity_exactly_one_wins(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+) -> None:
+    """FX-65H.2 mandatory test: two DIFFERENT outcome_keys racing to
+    claim the SAME measurement identity under two independent real
+    Postgres sessions -- unlike FX-65H.1's own read-then-decide check,
+    the database's own unique constraint guarantees exactly one
+    winner, and the loser leaves no binding or vintage of its own."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}race")
+    )
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async def _register(outcome_key: str) -> str:
+        async with session_factory() as own_session:
+            own_repo = SqlAlchemyForecastOutcomeRepository(own_session)
+            candidate = _outcome_candidate(
+                outcome_key=outcome_key,
+                definition_key=f"{TEST_DEFINITION_PREFIX}race",
+                document_identifier=f"DOC-{outcome_key}",
+            )
+            try:
+                result = await RecordForecastOutcome(own_repo)(candidate)
+                return result.outcome.value
+            except ForecastOutcomeIdentityConflictError:
+                return "CONFLICT"
+
+    key_a = f"{TEST_OUTCOME_PREFIX}race-a"
+    key_b = f"{TEST_OUTCOME_PREFIX}race-b"
+    outcomes = await asyncio.gather(_register(key_a), _register(key_b))
+
+    assert set(outcomes) == {"CREATED", "CONFLICT"}
+    history_a = await outcome_repo.list_vintages_for_outcome(key_a)
+    history_b = await outcome_repo.list_vintages_for_outcome(key_b)
+    winner_history, loser_history = (
+        (history_a, history_b) if outcomes[0] == "CREATED" else (history_b, history_a)
+    )
+    assert len(winner_history) == 1
+    assert loser_history == ()
+
+
+async def test_existing_outcome_key_identity_immutability_enforced_on_real_postgres(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+) -> None:
+    """FX-65H.2 (H2), real-Postgres: an already-bound outcome_key
+    cannot change the target_period it first registered under, and
+    the rejected attempt writes no new vintage."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}immutable")
+    )
+    record = RecordForecastOutcome(outcome_repo)
+    outcome_key = f"{TEST_OUTCOME_PREFIX}immutable"
+    await record(
+        _outcome_candidate(
+            outcome_key=outcome_key, definition_key=f"{TEST_DEFINITION_PREFIX}immutable"
+        )
+    )
+
+    with pytest.raises(ForecastOutcomeIdentityImmutabilityError):
+        await record(
+            _outcome_candidate(
+                outcome_key=outcome_key,
+                definition_key=f"{TEST_DEFINITION_PREFIX}immutable",
+                availability=_ts(20),
+                policy_meeting_identifier="BOC-2025-01-29",
+                document_identifier="DOC-CHANGED-PERIOD",
+            )
+        )
+
+    history = await outcome_repo.list_vintages_for_outcome(outcome_key)
+    assert len(history) == 1
+
+
+async def test_identity_claim_failure_leaves_no_partial_vintage(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+) -> None:
+    """FX-65H.2 (H4), direct repository test: a `claim_outcome_
+    identity_and_add_first_vintage` call that loses on the identity
+    uniqueness constraint must leave NEITHER a binding row NOR the
+    vintage it would have accompanied -- a genuinely atomic failure,
+    not a partial write."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}atomic")
+    )
+    record = RecordForecastOutcome(outcome_repo)
+    owner_key = f"{TEST_OUTCOME_PREFIX}atomic-owner"
+    await record(
+        _outcome_candidate(outcome_key=owner_key, definition_key=f"{TEST_DEFINITION_PREFIX}atomic")
+    )
+
+    challenger_binding = await outcome_repo.get_identity_binding_for_key(owner_key)
+    assert challenger_binding is not None
+
+    challenger_key = f"{TEST_OUTCOME_PREFIX}atomic-challenger"
+    claim_result = await outcome_repo.claim_outcome_identity_and_add_first_vintage(
+        ForecastOutcomeIdentityBinding(
+            definition_key=challenger_binding.definition_key,
+            target_period_key=challenger_binding.target_period_key,
+            outcome_type=challenger_binding.outcome_type,
+            unit=challenger_binding.unit,
+            outcome_key=challenger_key,
+        ),
+        ForecastOutcomeVintage(
+            outcome_key=challenger_key,
+            revision_sequence=0,
+            definition_key=f"{TEST_DEFINITION_PREFIX}atomic",
+            definition_version_sequence=0,
+            availability=_ts(10),
+            target_period=ForecastTargetPeriod(
+                period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+                policy_meeting_identifier="BOC-2024-12-11",
+            ),
+            outcome_type=ForecastType.NUMERIC_POINT,
+            evidence=ForecastEvidenceReference(
+                evidence_kind=ForecastEvidenceKind.EXTERNAL_DOCUMENT_REFERENCE,
+                description="challenger",
+                document_identifier="DOC-CHALLENGER",
+            ),
+            authentication_review=_review(),
+            provenance_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+            numeric_value=Decimal("3.25"),
+            unit="PERCENT",
+        ),
+    )
+
+    assert claim_result.claimed is False
+    assert await outcome_repo.list_vintages_for_outcome(challenger_key) == ()
+    assert await outcome_repo.get_identity_binding_for_key(challenger_key) is None
+
+
+async def test_real_boc_identity_binding_matches_canonical_key(
+    session: AsyncSession,
+) -> None:
+    """FX-65H.2 (H3/migration): the real Bank of Canada pilot's own
+    pre-existing outcome, backfilled by migration `80877afdbe75`,
+    must be bound under the EXACT SAME canonical target-period key
+    `domain.forecast_outcome_identity.canonical_target_period_key`
+    computes at runtime -- the one real-data regression guard for
+    the migration's own SQL-vs-Python format parity."""
+    outcome_repo = SqlAlchemyForecastOutcomeRepository(session)
+    binding = await outcome_repo.get_identity_binding_for_key("BOC-RATE-DECISION-2024-12-11")
+    assert binding is not None
+    assert binding.target_period_key == canonical_target_period_key(
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+            policy_meeting_identifier="BOC-2024-12-11",
+        )
+    )
 
 
 # --- evaluation protocols / evaluation vintages -----------------------------

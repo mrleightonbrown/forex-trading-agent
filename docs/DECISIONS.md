@@ -16560,3 +16560,88 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## 2026-10-14 — FX-65H.2: durable outcome identity integrity
+
+**Scope.** FX-65H.1's own write-time uniqueness check had two gaps:
+(1) a read-then-decide `SELECT` followed by an `INSERT` is not atomic
+under concurrent PostgreSQL transactions; (2) it never verified that
+an EXISTING `outcome_key`'s own new vintage retained the identity it
+first registered. Starting commit: `6f8257f` (the FX-65H.1 commit).
+
+**Pre-migration integrity check (H3).** `forecast_outcome_vintages`
+was inspected directly for both conflict shapes before writing the
+migration -- two different `outcome_key`s sharing one identity, and
+one `outcome_key` spanning more than one identity. Neither existed in
+the real dataset (one row, `outcome_key=BOC-RATE-DECISION-2024-12-
+11`); the migration's own pre-flight check (below) now RAISES and
+stops rather than silently resolving either shape should it ever
+occur on a different database.
+
+**Decision: a database-enforced, concurrency-safe binding table,
+not a read-then-decide application check.** A new table, `forecast_
+outcome_identity_bindings`, carries TWO unique constraints -- `(
+definition_key, target_period_key, outcome_type, unit)` for H1 (one
+identity, at most one owning key) and `(outcome_key)` alone for H2
+(one key, exactly one identity, ever). `target_period` is flattened
+to a comparable string via a new pure function, `canonical_target_
+period_key`, to avoid Postgres's NULL-is-distinct-from-NULL semantics
+defeating the composite constraint; a sentinel (`__NO_UNIT__`) plays
+the same role for nullable `unit`. A new repository method, `claim_
+outcome_identity_and_add_first_vintage`, mirrors FX-62/64's own
+atomic first-registration pattern exactly: the binding insert is
+attempted with `ON CONFLICT DO NOTHING` and no commit; a conflict on
+EITHER constraint rolls back with nothing written, not even the
+vintage; success inserts the vintage in the same uncommitted
+transaction and commits both together. Used ONLY for a genuinely new
+`outcome_key` -- a revision of an already-bound key performs one
+plain read instead (`get_identity_binding_for_key`) and raises the
+new `ForecastOutcomeIdentityImmutabilityError` if the incoming
+identity differs from what that key first registered.
+
+**Why not extend the old read-then-decide check instead.** No
+read-then-decide sequence can close a genuine concurrent race --
+only the database's own unique-constraint enforcement at `INSERT`
+time can. Patching the old check to ALSO cover H2 would still have
+left H1's own concurrency gap open; the atomic table closes both at
+once, mirroring this codebase's own repeated "remove the trust
+boundary, don't verify around it" lesson (first applied in FX-65H's
+own H1 fix).
+
+**Migration.** `80877afdbe75` runs its own H3 pre-flight check,
+creates the table (two unique constraints, five `CHECK` constraints),
+and backfills one row per distinct existing `outcome_key` using SQL
+that mirrors `canonical_target_period_key` byte-for-byte (verified
+against the one real row). No existing `outcome_key` was renamed;
+`forecast_outcome_vintages` itself was neither touched nor mutated.
+`downgrade()` is guarded once the table holds a row, mirroring every
+prior FX-56+ migration's own precedent.
+
+**Regression.** 29 unit tests (10 new domain, 19 for `RecordForecast
+Outcome` including 8 new H2/dry-run cases) plus 14 real-Postgres
+integration tests (10 existing, 4 new: cross-key concurrent claim
+race via two independent sessions, a real-Postgres H2 immutability
+rejection, a direct atomicity test proving a lost claim leaves no
+partial binding or vintage, and a regression guard on the real
+backfilled binding). Full suite: 3136 passed. `ruff`/`ruff
+format`/`mypy`/`pre-commit` all clean. The real Bank of Canada pilot
+was re-run against real Postgres (including `--dry-run`) and
+continues to report `UNCHANGED` throughout, with `signed_error=
+-0.50`/`absolute_error=0.50` unchanged and `outcome_key=BOC-RATE-
+DECISION-2024-12-11` now durably bound in the new table. All twelve
+relevant tables' row counts match the FX-65H.1 baseline exactly, plus
+the one new binding row.
+
+**Explicitly confirmed NOT done**: no change to forecast capture,
+authentication semantics, evaluation metrics, source attribution, or
+protocol-selection rules; no outcome providers, `EconomicEvent`
+linkage, source-performance scores, trading functionality, or
+Decision/Risk Engine integration; no change to FIRST_RELEASE/LATEST_
+AVAILABLE_AS_OF/FIXED_RELEASE_VINTAGE semantics.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-65H.2 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.2
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

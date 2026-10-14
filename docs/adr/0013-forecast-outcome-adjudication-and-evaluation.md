@@ -354,3 +354,102 @@ legitimate holder, untouched by this change.
 
 Commits: starting `6108ce2` (FX-65H) -> resulting FX-65H.1 commit
 (see `docs/DECISIONS.md`'s own FX-65H.1 entry for the exact hash).
+
+## FX-65H.2 addendum (2026-10-14): durable outcome identity integrity
+
+FX-65H.1's own write-time uniqueness check had two gaps, both named
+explicitly in this story's own spec: (1) a plain `SELECT ... WHERE
+definition_key = ...` followed by an `INSERT` is a read-then-decide
+sequence, not atomic -- two concurrent PostgreSQL transactions could
+both pass the check before either commits, each believing itself the
+sole legitimate holder of an identity; (2) the check only ever
+compared the identity against OTHER outcome_keys' own vintages for
+the SAME `definition_key` -- it never verified that an EXISTING
+`outcome_key`'s own new vintage retained the SAME identity it first
+registered, so one key could silently drift its own target_period,
+outcome_type, or unit across revisions with nothing to stop it.
+
+**Existing-data integrity findings (H3, pre-migration)**: before
+writing the migration, `forecast_outcome_vintages` was inspected
+directly against both conflict shapes this story names -- two
+different `outcome_key`s sharing one identity, and one `outcome_key`
+spanning more than one identity. Neither existed: the real dataset
+holds exactly one `outcome_key`
+(`BOC-RATE-DECISION-2024-12-11`), making this migration's own H3
+pre-flight check (below) a precaution for future data, not a
+remediation of anything found.
+
+**Chosen atomic mechanism**: a new table, `forecast_outcome_identity_
+bindings`, with TWO unique constraints -- `(definition_key, target_
+period_key, outcome_type, unit)` (H1: one identity, at most one
+owning `outcome_key`) and `(outcome_key)` alone (H2: one `outcome_
+key`, exactly one identity, ever). `target_period` is flattened to one
+comparable string via a new pure function, `domain.forecast_outcome_
+identity.canonical_target_period_key`, because the period's own
+nullable per-kind columns would otherwise defeat the composite unique
+constraint under Postgres's NULL-is-distinct-from-NULL semantics; a
+sentinel string (`__NO_UNIT__`) plays the identical role for `unit`,
+which is itself nullable for `CATEGORICAL_EVENT` outcomes.
+
+**PostgreSQL uniqueness and transaction guarantees**: `RecordForecast
+Outcome` claims a brand-new `outcome_key`'s own identity via ONE
+atomic repository method, `claim_outcome_identity_and_add_first_
+vintage`, mirroring FX-62/64's own established atomic-first-
+registration pattern exactly -- the binding row is inserted first
+with `ON CONFLICT DO NOTHING` and no commit; a conflict on EITHER
+unique constraint rolls back immediately with NOTHING written, not
+even the vintage; success inserts the vintage in the SAME uncommitted
+transaction and commits both together. Postgres's own unique-
+constraint enforcement at `INSERT` time -- not a read followed by a
+decision -- is what makes two concurrent claims for the same identity
+under different keys structurally unable to both succeed, closing the
+exact gap FX-65H.1's own version left open.
+
+**Same-key identity immutability contract (H2)**: a REVISION of an
+already-bound `outcome_key` never re-claims the binding table (its
+own identity is already durably fixed) -- `RecordForecastOutcome`
+instead performs one plain read, `get_identity_binding_for_key`, and
+raises the new `ForecastOutcomeIdentityImmutabilityError` if the
+incoming submission's own `(definition_key, target_period, outcome_
+type, unit)` differs from what that key first registered. A revision
+sharing the IDENTICAL identity (a corrected value, new evidence) is
+unaffected -- only a change to one of those four fields is rejected.
+
+**Migration/backfill results**: migration `80877afdbe75` ran its own
+H3 pre-flight check (confirmed no conflicts, as above), created the
+table with both unique constraints plus five `CHECK` constraints, and
+backfilled one row per distinct `outcome_key` already present using
+SQL that mirrors `canonical_target_period_key` byte-for-byte (verified
+directly against the one real row: `'POLICY_MEETING:BOC-2024-12-11'`
+from both the Python function and the migration's own SQL `CASE`
+expression). No existing `outcome_key` was renamed; `forecast_outcome_
+vintages` itself was neither touched nor mutated. `downgrade()` is
+guarded, mirroring every prior FX-56+ migration's own precedent --
+once the table holds a row, dropping it would silently discard the
+durable exclusivity record.
+
+**Verification**: 29 unit tests (10 new domain tests for `canonical_
+target_period_key`/`ForecastOutcomeIdentityBinding`, 19 for `Record
+ForecastOutcome` including 8 new H2/dry-run cases) plus 14 real-
+Postgres integration tests (10 existing plus 4 new: two DIFFERENT
+outcome_keys racing for the same identity under two independent
+Postgres sessions -- exactly one winner, the loser leaves no binding
+or vintage; a real-Postgres H2 immutability rejection; a direct
+repository-level test proving a lost identity claim leaves neither a
+binding row nor its own vintage; and a regression guard confirming
+the real backfilled Bank of Canada binding matches the canonical key
+computed at runtime). Full suite: 3136 passed. `ruff`/`ruff
+format`/`mypy`/`pre-commit` all clean. The real Bank of Canada pilot
+was re-run against real Postgres (including `--dry-run`) and continues
+to report `UNCHANGED` throughout, with the evaluation's own
+`signed_error=-0.50`/`absolute_error=0.50` unchanged and the retained
+`outcome_key=BOC-RATE-DECISION-2024-12-11` now durably bound in the
+new table. Real-data row counts across all twelve relevant tables
+(394 news items, 358 semantic annotations, 12 intelligence sources,
+400 attribution vintages, 34 operational observations, 6 forecast
+claims, 7 forecast vintages, 1 outcome definition, 1 outcome vintage,
+1 identity binding, 1 protocol, 1 evaluation) match the FX-65H.1
+baseline exactly, plus the one new binding row.
+
+Commits: starting `6f8257f` (FX-65H.1) -> resulting FX-65H.2 commit
+(see `docs/DECISIONS.md`'s own FX-65H.2 entry for the exact hash).

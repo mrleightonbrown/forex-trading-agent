@@ -7095,3 +7095,41 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## FX-65H.2 -- durable outcome identity integrity (complete)
+
+Replaces FX-65H.1's own read-then-decide uniqueness check, which
+could not guarantee exclusivity under concurrent PostgreSQL
+transactions and never verified an EXISTING `outcome_key`'s own
+identity stayed fixed across revisions, with a database-enforced
+mechanism: a new `forecast_outcome_identity_bindings` table carrying
+two unique constraints -- one identity binds to at most one
+`outcome_key` (H1), one `outcome_key` binds to exactly one identity,
+ever (H2). A new atomic repository method, `claim_outcome_identity_
+and_add_first_vintage`, mirrors FX-62/64's own established atomic
+first-registration pattern (insert-no-commit, rollback on conflict
+with nothing written, else commit the binding and its first vintage
+together) -- closing the concurrency gap no read-then-decide check
+could close. A revision of an already-bound `outcome_key` performs a
+plain read instead and raises the new `ForecastOutcomeIdentity
+ImmutabilityError` if its identity has changed.
+
+Migration `80877afdbe75` ran its own pre-flight conflict check (none
+found in the real dataset) and backfilled one binding row per
+existing `outcome_key`, without renaming any key.
+
+29 unit tests (10 new) plus 14 real-Postgres integration tests (4
+new: cross-key concurrent claim race, real-Postgres H2 immutability
+rejection, atomicity-of-failure test, backfill regression guard).
+Full suite: 3136 passed. `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. The real Bank of Canada pilot was re-run against real Postgres
+(including `--dry-run`) and continues to report the exact same result
+(signed error -0.50pp, absolute error 0.50pp), with its own
+`outcome_key` now durably bound in the new table.
+
+Full details in `docs/DECISIONS.md`'s FX-65H.2 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.2
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

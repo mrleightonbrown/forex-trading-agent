@@ -12,11 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from forex_agent.application.ports.forecast_outcome_repository import (
     ForecastOutcomeDefinitionWriteResult,
     ForecastOutcomeVintageWriteResult,
+    OutcomeIdentityClaimResult,
 )
 from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
 from forex_agent.domain.forecast_outcome_definition import ForecastOutcomeDefinition
+from forex_agent.domain.forecast_outcome_identity import ForecastOutcomeIdentityBinding
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
 from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
@@ -26,6 +28,9 @@ from forex_agent.domain.outcome_vintage_selection_policy import OutcomeVintageSe
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.models.forecast_outcome_definition import (
     ForecastOutcomeDefinitionRow,
+)
+from forex_agent.infrastructure.db.models.forecast_outcome_identity_binding import (
+    ForecastOutcomeIdentityBindingRow,
 )
 from forex_agent.infrastructure.db.models.forecast_outcome_vintage import ForecastOutcomeVintageRow
 
@@ -108,15 +113,54 @@ class SqlAlchemyForecastOutcomeRepository:
         await self._session.commit()
         return tuple(_vintage_row_to_domain(row) for row in rows)
 
-    async def list_outcome_vintages_for_definition(
-        self, definition_key: str
-    ) -> tuple[ForecastOutcomeVintage, ...]:
-        stmt = select(ForecastOutcomeVintageRow).where(
-            ForecastOutcomeVintageRow.definition_key == definition_key
+    async def claim_outcome_identity_and_add_first_vintage(
+        self, binding: ForecastOutcomeIdentityBinding, first_vintage: ForecastOutcomeVintage
+    ) -> OutcomeIdentityClaimResult:
+        insert_binding_stmt = (
+            pg_insert(ForecastOutcomeIdentityBindingRow)
+            .values(
+                definition_key=binding.definition_key,
+                target_period_key=binding.target_period_key,
+                outcome_type=binding.outcome_type.value,
+                unit=binding.unit,
+                outcome_key=binding.outcome_key,
+            )
+            .on_conflict_do_nothing()
+            .returning(ForecastOutcomeIdentityBindingRow.id)
         )
-        rows = (await self._session.execute(stmt)).scalars().all()
+        inserted_id = (await self._session.execute(insert_binding_stmt)).scalar_one_or_none()
+        if inserted_id is None:
+            await self._session.rollback()
+            return OutcomeIdentityClaimResult(claimed=False)
+
+        await self._session.execute(
+            pg_insert(ForecastOutcomeVintageRow).values(_vintage_row_values(first_vintage))
+        )
         await self._session.commit()
-        return tuple(_vintage_row_to_domain(row) for row in rows)
+        return OutcomeIdentityClaimResult(claimed=True)
+
+    async def get_identity_binding_for_key(
+        self, outcome_key: str
+    ) -> ForecastOutcomeIdentityBinding | None:
+        stmt = select(ForecastOutcomeIdentityBindingRow).where(
+            ForecastOutcomeIdentityBindingRow.outcome_key == outcome_key
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        await self._session.commit()
+        return None if row is None else _binding_row_to_domain(row)
+
+    async def get_identity_binding_for_identity(
+        self, definition_key: str, target_period_key: str, outcome_type: ForecastType, unit: str
+    ) -> ForecastOutcomeIdentityBinding | None:
+        stmt = select(ForecastOutcomeIdentityBindingRow).where(
+            ForecastOutcomeIdentityBindingRow.definition_key == definition_key,
+            ForecastOutcomeIdentityBindingRow.target_period_key == target_period_key,
+            ForecastOutcomeIdentityBindingRow.outcome_type == outcome_type.value,
+            ForecastOutcomeIdentityBindingRow.unit == unit,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        await self._session.commit()
+        return None if row is None else _binding_row_to_domain(row)
 
     async def add_outcome_vintage(
         self, vintage: ForecastOutcomeVintage
@@ -282,4 +326,20 @@ def _vintage_row_to_domain(row: ForecastOutcomeVintageRow) -> ForecastOutcomeVin
         provider_published_at=_dt(row.provider_published_at),
         content_integrity_reference=row.content_integrity_reference,
         correction_reason=row.correction_reason,
+    )
+
+
+def _binding_row_to_domain(
+    row: ForecastOutcomeIdentityBindingRow,
+) -> ForecastOutcomeIdentityBinding:
+    try:
+        outcome_type = ForecastType(row.outcome_type)
+    except ValueError as exc:
+        raise MalformedForecastOutcomeRowError("outcome_type", row.outcome_type) from exc
+    return ForecastOutcomeIdentityBinding(
+        definition_key=row.definition_key,
+        target_period_key=row.target_period_key,
+        outcome_type=outcome_type,
+        unit=row.unit,
+        outcome_key=row.outcome_key,
     )

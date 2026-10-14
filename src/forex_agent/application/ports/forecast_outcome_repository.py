@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from forex_agent.domain.forecast_outcome_definition import ForecastOutcomeDefinition
+from forex_agent.domain.forecast_outcome_identity import ForecastOutcomeIdentityBinding
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
+from forex_agent.domain.forecast_type import ForecastType
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +21,19 @@ class ForecastOutcomeDefinitionWriteResult:
 @dataclass(frozen=True, slots=True)
 class ForecastOutcomeVintageWriteResult:
     inserted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeIdentityClaimResult:
+    claimed: bool
+    """`True` iff THIS call's own binding row AND its own first
+    vintage were BOTH inserted together, atomically -- a genuinely
+    new identity, a genuinely new `outcome_key`. `False` means the
+    attempted binding INSERT conflicted on EITHER unique constraint
+    (nothing was written, not even the vintage); the caller must then
+    inspect `get_identity_binding_for_key`/`get_identity_binding_for_
+    identity` to determine whether this is a legitimate concurrent
+    duplicate of the SAME key+identity, or a genuine H1/H2 conflict."""
 
 
 class ForecastOutcomeRepository(Protocol):
@@ -59,15 +74,39 @@ class ForecastOutcomeRepository(Protocol):
         check and by `ResolveForecastOutcomeAsOf`."""
         ...
 
-    async def list_outcome_vintages_for_definition(
-        self, definition_key: str
-    ) -> tuple[ForecastOutcomeVintage, ...]:
-        """FX-65H.1: every stored vintage captured under `definition_
-        key`, across EVERY `outcome_key` -- used ONLY by `RecordForecast
-        Outcome`'s own outcome-identity-binding check (Section 2): no
-        two DIFFERENT `outcome_key`s may share the same `(definition_
-        key, target_period, unit)` identity, since that would let an
-        evaluation caller silently substitute one for the other."""
+    async def claim_outcome_identity_and_add_first_vintage(
+        self, binding: ForecastOutcomeIdentityBinding, first_vintage: ForecastOutcomeVintage
+    ) -> OutcomeIdentityClaimResult:
+        """FX-65H.2 (H1/H4): ATOMICALLY claims `binding`'s own
+        `outcome_key` as the sole holder of its own measurement
+        identity AND inserts `first_vintage` TOGETHER -- mirrors
+        FX-62/64's own `register_source_with_first_identity_vintage`/
+        `register_claim_with_first_vintage` pattern exactly: the
+        binding insert is attempted first (no commit yet); a conflict
+        on EITHER of the binding table's two unique constraints rolls
+        back immediately and returns `claimed=False` with NOTHING
+        written (not even the vintage); success inserts the vintage
+        in the SAME uncommitted transaction, then commits both
+        together. Concurrent callers attempting to claim the SAME
+        identity under DIFFERENT `outcome_key`s can never both
+        succeed. Used ONLY for a genuinely NEW `outcome_key` -- a
+        revision of an already-bound key uses `add_outcome_vintage`
+        instead, since its own identity is only being VERIFIED, never
+        re-claimed."""
+        ...
+
+    async def get_identity_binding_for_key(
+        self, outcome_key: str
+    ) -> ForecastOutcomeIdentityBinding | None:
+        """The ONE measurement identity `outcome_key` is durably bound
+        to, or `None` if it has never claimed one."""
+        ...
+
+    async def get_identity_binding_for_identity(
+        self, definition_key: str, target_period_key: str, outcome_type: ForecastType, unit: str
+    ) -> ForecastOutcomeIdentityBinding | None:
+        """The `outcome_key` that durably owns this EXACT measurement
+        identity, or `None` if no one has claimed it yet."""
         ...
 
     async def add_outcome_vintage(
