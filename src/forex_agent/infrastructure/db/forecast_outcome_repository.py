@@ -142,16 +142,23 @@ class SqlAlchemyForecastOutcomeRepository:
     async def get_identity_binding_for_key(
         self, outcome_key: str
     ) -> ForecastOutcomeIdentityBinding | None:
+        """FX-65H.3 (H2): deliberately does NOT commit -- a read-only
+        lookup must never force-commit an unrelated pending write the
+        caller's own session may already be holding. See `claim_
+        outcome_identity_and_add_first_vintage` for the one place a
+        binding row is ever written, which commits its own atomic
+        unit of work explicitly."""
         stmt = select(ForecastOutcomeIdentityBindingRow).where(
             ForecastOutcomeIdentityBindingRow.outcome_key == outcome_key
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _binding_row_to_domain(row)
 
     async def get_identity_binding_for_identity(
         self, definition_key: str, target_period_key: str, outcome_type: ForecastType, unit: str
     ) -> ForecastOutcomeIdentityBinding | None:
+        """FX-65H.3 (H2): deliberately does NOT commit -- see `get_
+        identity_binding_for_key`'s own docstring."""
         stmt = select(ForecastOutcomeIdentityBindingRow).where(
             ForecastOutcomeIdentityBindingRow.definition_key == definition_key,
             ForecastOutcomeIdentityBindingRow.target_period_key == target_period_key,
@@ -159,7 +166,6 @@ class SqlAlchemyForecastOutcomeRepository:
             ForecastOutcomeIdentityBindingRow.unit == unit,
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _binding_row_to_domain(row)
 
     async def add_outcome_vintage(

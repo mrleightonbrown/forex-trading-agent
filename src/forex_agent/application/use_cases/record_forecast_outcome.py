@@ -29,7 +29,24 @@ table, mirroring FX-62/64's own atomic first-registration pattern
 exactly), not by a read-then-decide query -- see `docs/adr/0013...`'s
 own FX-65H.2 addendum for why FX-65H.1's own version of this check
 could not guarantee exclusivity under concurrent transactions, and
-silently never checked H2 at all."""
+silently never checked H2 at all.
+
+**FX-65H.3 (H1) -- same-key concurrent registration**: losing the
+atomic first-registration claim above does NOT by itself mean our own
+submission is a safe duplicate to discard -- it only means SOME
+concurrent submission under the SAME `outcome_key` won first. `__call__`
+is therefore a LOOP, not a single pass: after `_classify_identity`
+confirms the loss was a benign same-key/same-identity race (not a
+genuine H1/H2 conflict, which still raises), it loops back to the top
+and re-reads `latest_outcome_vintage` -- now authoritatively
+reflecting whatever the winner actually persisted. The existing
+full-history determinism/provenance checks and the UNCHANGED shortcut
+then run against that REAL vintage: a genuinely identical concurrent
+submission becomes UNCHANGED against the real persisted row (never
+the loser's own un-persisted one); genuinely different content
+(a different value, evidence, or provenance) is appended as the next
+revision via the ordinary `add_outcome_vintage` path, never silently
+discarded as if it had been an identical first registration."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -266,32 +283,6 @@ class RecordForecastOutcome:
             unit=candidate.unit if candidate.unit is not None else NO_UNIT_SENTINEL,
             outcome_key=candidate.outcome_key,
         )
-
-        latest = await self._repository.latest_outcome_vintage(candidate.outcome_key)
-        if latest is not None and candidate.availability.value < latest.availability.value:
-            raise OutOfOrderForecastOutcomeError(
-                candidate.outcome_key, latest.availability, candidate.availability
-            )
-
-        if latest is not None:
-            # An existing outcome_key's own identity is IMMUTABLE (H2)
-            # -- the atomic claim-and-first-vintage path below is only
-            # for a genuinely NEW outcome_key, so a revision's own
-            # identity is verified here instead of re-claimed.
-            existing_for_key = await self._repository.get_identity_binding_for_key(
-                candidate.outcome_key
-            )
-            assert existing_for_key is not None  # a vintage exists, so a binding always does too
-            if not existing_for_key.shares_identity_with(incoming_binding):
-                raise ForecastOutcomeIdentityImmutabilityError(
-                    candidate.outcome_key, existing_for_key, incoming_binding
-                )
-        elif dry_run:
-            # A genuinely new outcome_key, simulated: read-only
-            # classification only -- `dry_run` never mutates, so the
-            # atomic claim-and-first-vintage path is never attempted.
-            await self._classify_identity(incoming_binding)
-
         incoming_payload: _Payload = (
             candidate.outcome_type,
             validation.target_period,
@@ -304,109 +295,150 @@ class RecordForecastOutcome:
             candidate.provider_published_at,
         )
 
-        history = await self._repository.list_vintages_for_outcome(candidate.outcome_key)
-        for historical in history:
+        # FX-65H.3 (H1): a loop, not a single pass, because losing the
+        # atomic first-registration claim below means SOME concurrent
+        # submission under this SAME outcome_key won it first -- the
+        # only way to classify OUR OWN submission correctly against
+        # what actually got persisted (a genuine duplicate -> UNCHANGED;
+        # genuinely different content -> a new revision, never silently
+        # discarded) is to loop back and re-read authoritative state,
+        # exactly as if we had observed it as `latest` from the start.
+        while True:
+            latest = await self._repository.latest_outcome_vintage(candidate.outcome_key)
+            if latest is not None and candidate.availability.value < latest.availability.value:
+                raise OutOfOrderForecastOutcomeError(
+                    candidate.outcome_key, latest.availability, candidate.availability
+                )
+
+            if latest is not None:
+                # An existing outcome_key's own identity is IMMUTABLE
+                # (H2) -- the atomic claim-and-first-vintage path below
+                # is only for a genuinely NEW outcome_key, so a
+                # revision's own identity is verified here instead of
+                # re-claimed.
+                existing_for_key = await self._repository.get_identity_binding_for_key(
+                    candidate.outcome_key
+                )
+                assert existing_for_key is not None  # a vintage exists, so does its binding
+                if not existing_for_key.shares_identity_with(incoming_binding):
+                    raise ForecastOutcomeIdentityImmutabilityError(
+                        candidate.outcome_key, existing_for_key, incoming_binding
+                    )
+            elif dry_run:
+                # A genuinely new outcome_key, simulated: read-only
+                # classification only -- `dry_run` never mutates, so
+                # the atomic claim-and-first-vintage path is never
+                # attempted and this loop never retries.
+                await self._classify_identity(incoming_binding)
+
+            history = await self._repository.list_vintages_for_outcome(candidate.outcome_key)
+            for historical in history:
+                if (
+                    historical.definition_key != candidate.definition_key
+                    or historical.definition_version_sequence
+                    != candidate.definition_version_sequence
+                    or historical.evidence != validation.evidence
+                ):
+                    continue
+                if _payload_of(historical) != incoming_payload:
+                    raise ForecastOutcomeDeterminismError(
+                        candidate.outcome_key,
+                        validation.evidence,
+                        _payload_of(historical),
+                        incoming_payload,
+                    )
+                if _provenance_of(historical) != incoming_provenance:
+                    raise ForecastOutcomeProvenanceConsistencyError(
+                        candidate.outcome_key,
+                        validation.evidence,
+                        _provenance_of(historical),
+                        incoming_provenance,
+                    )
+
             if (
-                historical.definition_key != candidate.definition_key
-                or historical.definition_version_sequence != candidate.definition_version_sequence
-                or historical.evidence != validation.evidence
+                latest is not None
+                and latest.definition_key == candidate.definition_key
+                and latest.definition_version_sequence == candidate.definition_version_sequence
+                and latest.evidence == validation.evidence
+                and _payload_of(latest) == incoming_payload
+                and _provenance_of(latest) == incoming_provenance
             ):
-                continue
-            if _payload_of(historical) != incoming_payload:
-                raise ForecastOutcomeDeterminismError(
-                    candidate.outcome_key,
-                    validation.evidence,
-                    _payload_of(historical),
-                    incoming_payload,
-                )
-            if _provenance_of(historical) != incoming_provenance:
-                raise ForecastOutcomeProvenanceConsistencyError(
-                    candidate.outcome_key,
-                    validation.evidence,
-                    _provenance_of(historical),
-                    incoming_provenance,
-                )
-
-        if (
-            latest is not None
-            and latest.definition_key == candidate.definition_key
-            and latest.definition_version_sequence == candidate.definition_version_sequence
-            and latest.evidence == validation.evidence
-            and _payload_of(latest) == incoming_payload
-            and _provenance_of(latest) == incoming_provenance
-        ):
-            return ForecastOutcomeRecordResult(
-                outcome_key=candidate.outcome_key,
-                outcome=ForecastOutcomeOutcome.UNCHANGED,
-                eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
-                vintage=latest,
-            )
-
-        next_revision = 0 if latest is None else latest.revision_sequence + 1
-        new_vintage = ForecastOutcomeVintage(
-            outcome_key=candidate.outcome_key,
-            revision_sequence=next_revision,
-            definition_key=candidate.definition_key,
-            definition_version_sequence=candidate.definition_version_sequence,
-            availability=candidate.availability,
-            target_period=validation.target_period,
-            outcome_type=candidate.outcome_type,
-            evidence=validation.evidence,
-            authentication_review=validation.authentication_review,
-            provenance_mode=candidate.provenance_mode,
-            numeric_value=candidate.numeric_value,
-            unit=candidate.unit,
-            categorical_outcome=candidate.categorical_outcome,
-            provider_release_identifier=candidate.provider_release_identifier,
-            provider_published_at=candidate.provider_published_at,
-            content_integrity_reference=candidate.content_integrity_reference,
-            correction_reason=correction_reason,
-        )
-        outcome_label = (
-            ForecastOutcomeOutcome.CREATED
-            if latest is None
-            else ForecastOutcomeOutcome.REVISION_ADDED
-        )
-        if dry_run:
-            return ForecastOutcomeRecordResult(
-                outcome_key=candidate.outcome_key,
-                outcome=outcome_label,
-                eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
-                vintage=new_vintage,
-            )
-
-        if latest is None:
-            # FX-65H.2 (H1/H4): claim the identity AND write the first
-            # vintage ATOMICALLY -- the ONLY place this invariant is
-            # enforced for a brand-new outcome_key.
-            claim_result = await self._repository.claim_outcome_identity_and_add_first_vintage(
-                incoming_binding, new_vintage
-            )
-            if claim_result.claimed:
                 return ForecastOutcomeRecordResult(
                     outcome_key=candidate.outcome_key,
-                    outcome=ForecastOutcomeOutcome.CREATED,
+                    outcome=ForecastOutcomeOutcome.UNCHANGED,
+                    eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
+                    vintage=latest,
+                )
+
+            next_revision = 0 if latest is None else latest.revision_sequence + 1
+            new_vintage = ForecastOutcomeVintage(
+                outcome_key=candidate.outcome_key,
+                revision_sequence=next_revision,
+                definition_key=candidate.definition_key,
+                definition_version_sequence=candidate.definition_version_sequence,
+                availability=candidate.availability,
+                target_period=validation.target_period,
+                outcome_type=candidate.outcome_type,
+                evidence=validation.evidence,
+                authentication_review=validation.authentication_review,
+                provenance_mode=candidate.provenance_mode,
+                numeric_value=candidate.numeric_value,
+                unit=candidate.unit,
+                categorical_outcome=candidate.categorical_outcome,
+                provider_release_identifier=candidate.provider_release_identifier,
+                provider_published_at=candidate.provider_published_at,
+                content_integrity_reference=candidate.content_integrity_reference,
+                correction_reason=correction_reason,
+            )
+            outcome_label = (
+                ForecastOutcomeOutcome.CREATED
+                if latest is None
+                else ForecastOutcomeOutcome.REVISION_ADDED
+            )
+            if dry_run:
+                return ForecastOutcomeRecordResult(
+                    outcome_key=candidate.outcome_key,
+                    outcome=outcome_label,
                     eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
                     vintage=new_vintage,
                 )
-            # Lost the atomic claim -- classify authoritatively
-            # (raises on a genuine H1/H2 conflict); falling through
-            # means a concurrent, genuinely identical submission won
-            # the race first, which is benign (mirrors FX-64's own
-            # "lost the first-registration race" precedent exactly).
-            await self._classify_identity(incoming_binding)
+
+            if latest is None:
+                # FX-65H.2 (H1/H4): claim the identity AND write the
+                # first vintage ATOMICALLY -- the ONLY place this
+                # invariant is enforced for a brand-new outcome_key.
+                claim_result = await self._repository.claim_outcome_identity_and_add_first_vintage(
+                    incoming_binding, new_vintage
+                )
+                if claim_result.claimed:
+                    return ForecastOutcomeRecordResult(
+                        outcome_key=candidate.outcome_key,
+                        outcome=ForecastOutcomeOutcome.CREATED,
+                        eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
+                        vintage=new_vintage,
+                    )
+                # FX-65H.3 (H1): lost the atomic claim -- classify
+                # authoritatively first (raises on a genuine H1/H2
+                # conflict: a DIFFERENT owner holds this identity, or
+                # the SAME key raced us under a DIFFERENT identity).
+                # Falling through means the SAME outcome_key, SAME
+                # identity raced us: loop back to re-read what that
+                # concurrent submission actually persisted, so OUR OWN
+                # content is compared against it on the NEXT
+                # iteration -- a genuine duplicate becomes UNCHANGED
+                # against the real persisted vintage; genuinely
+                # different content becomes a new revision instead of
+                # being silently discarded.
+                await self._classify_identity(incoming_binding)
+                continue
+
+            write_result = await self._repository.add_outcome_vintage(new_vintage)
+            final_outcome = (
+                outcome_label if write_result.inserted else ForecastOutcomeOutcome.UNCHANGED
+            )
             return ForecastOutcomeRecordResult(
                 outcome_key=candidate.outcome_key,
-                outcome=ForecastOutcomeOutcome.UNCHANGED,
+                outcome=final_outcome,
                 eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
                 vintage=new_vintage,
             )
-
-        write_result = await self._repository.add_outcome_vintage(new_vintage)
-        final_outcome = outcome_label if write_result.inserted else ForecastOutcomeOutcome.UNCHANGED
-        return ForecastOutcomeRecordResult(
-            outcome_key=candidate.outcome_key,
-            outcome=final_outcome,
-            eligibility=ForecastOutcomeCaptureEligibility.ELIGIBLE,
-            vintage=new_vintage,
-        )

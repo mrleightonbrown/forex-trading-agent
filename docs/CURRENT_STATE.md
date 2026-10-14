@@ -3407,6 +3407,29 @@ _Last updated: 2026-09-27 (FX-54V)_
   3136 passed. Real Bank of Canada pilot result (signed error -0.50pp)
   re-verified unchanged, with its `outcome_key` now durably bound.
   **Stop after FX-65H.2 — do not begin FX-66 or FX-67.**
+- **FX-65H.3: outcome identity race and canonicalization hardening
+  (complete)**. Three remaining integrity issues in the otherwise-
+  accepted FX-65H.2 implementation, no architecture redesign. H1:
+  losing the atomic first-registration claim used to be an
+  unconditional, content-blind duplicate (silently discarding a
+  concurrent submission with different content) -- `RecordForecast
+  Outcome.__call__` is now a loop that re-reads the winner's own
+  persisted vintage and runs the existing determinism/provenance
+  checks against it, so a genuine duplicate becomes UNCHANGED, a
+  same-evidence/different-value race still raises `ForecastOutcome
+  DeterminismError`, and genuinely new evidence mints a real revision.
+  H2: `get_identity_binding_for_key`/`get_identity_binding_for_
+  identity` no longer commit after their own read-only SELECT (they
+  shared a session with the rest of a call and could force-commit an
+  unrelated pending write). H3: `canonical_target_period_key`'s own
+  `SPECIFIC_DATE` branch and migration `80877afdbe75`'s own SQL
+  equivalent disagreed on fractional-second handling -- fixed on both
+  sides to a fixed-width 6-digit microsecond format; new migration
+  `3b03a0c4f0ba` corrects any pre-existing `SPECIFIC_DATE` binding
+  (zero needed correcting) with its own pre-flight conflict check. 9
+  new tests; full suite 3144 passed. Real BoC pilot result (signed
+  error -0.50pp) re-verified unchanged.
+  **Stop after FX-65H.3 — do not begin FX-66 or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

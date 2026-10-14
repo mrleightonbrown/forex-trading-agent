@@ -7133,3 +7133,50 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## FX-65H.3 -- outcome identity race and canonicalization hardening (complete)
+
+Three remaining integrity issues in the otherwise-accepted FX-65H.2
+implementation, closed with no redesign of the identity-binding
+architecture:
+
+- **H1**: losing the atomic first-registration claim used to be
+  treated as an unconditional, content-blind duplicate. `RecordForecast
+  Outcome.__call__` is now a loop -- after confirming the loss is a
+  benign same-key/same-identity race, it re-reads the winner's own
+  persisted vintage and runs the SAME determinism/provenance checks
+  against it, so a genuine duplicate becomes UNCHANGED against the
+  real persisted row, a same-evidence/different-value race still
+  raises `ForecastOutcomeDeterminismError`, and genuinely new evidence
+  is appended as the next revision -- never silently discarded.
+- **H2**: `get_identity_binding_for_key`/`get_identity_binding_for_
+  identity` no longer commit after their own read-only `SELECT`,
+  since `RecordForecastOutcome` shares one session across a call and
+  a mid-call commit could force-commit an unrelated pending write.
+  Verified with a real-Postgres test proving an uncommitted insert on
+  the same session stays invisible to an independent session after
+  both lookups run.
+- **H3**: `canonical_target_period_key`'s own `SPECIFIC_DATE` branch
+  and migration `80877afdbe75`'s own SQL equivalent disagreed on
+  fractional-second handling (Python included microseconds only when
+  nonzero; SQL discarded them unconditionally) -- a genuine parity
+  break, demonstrated with synthetic instants, not just the one real
+  Bank of Canada row (`POLICY_MEETING`, unaffected either way). Fixed
+  on both sides to unconditionally emit a fixed-width 6-digit
+  microsecond component; new migration `3b03a0c4f0ba` corrects any
+  pre-existing `SPECIFIC_DATE` binding (zero needed correcting) with
+  its own pre-flight conflict check, and is reversible.
+
+9 new tests (3 unit, 3 domain, 3 real-Postgres integration). Full
+suite: 3144 passed. `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. The real Bank of Canada pilot was re-run against real Postgres
+(including `--dry-run`) and continues to report the exact same result
+(signed error -0.50pp, absolute error 0.50pp), with its own
+`outcome_key` and identity binding both untouched.
+
+Full details in `docs/DECISIONS.md`'s FX-65H.3 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.3
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

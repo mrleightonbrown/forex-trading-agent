@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import pytest
 
+from forex_agent.application.ports.forecast_outcome_repository import OutcomeIdentityClaimResult
 from forex_agent.application.use_cases.record_forecast_outcome import (
     ForecastOutcomeDeterminismError,
     ForecastOutcomeIdentityConflictError,
@@ -20,11 +21,19 @@ from forex_agent.application.use_cases.record_forecast_outcome import (
 from forex_agent.application.use_cases.validate_forecast_outcome_candidate import (
     ForecastOutcomeCandidate,
 )
+from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
+from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
 from forex_agent.domain.forecast_outcome_capture_eligibility import (
     ForecastOutcomeCaptureEligibility,
 )
+from forex_agent.domain.forecast_outcome_identity import (
+    ForecastOutcomeIdentityBinding,
+    canonical_target_period_key,
+)
+from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
+from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
 from forex_agent.domain.forecast_target_period_kind import ForecastTargetPeriodKind
 from forex_agent.domain.forecast_type import ForecastType
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -358,3 +367,139 @@ async def test_dry_run_legitimate_new_identity_is_not_flagged() -> None:
 
     assert result.outcome is ForecastOutcomeOutcome.CREATED
     assert repo.identity_bindings == {}
+
+
+# --- FX-65H.3 (H1): same-key concurrent first-registration races -----------
+
+
+def _winner_binding(**overrides: object) -> ForecastOutcomeIdentityBinding:
+    defaults: dict[str, object] = {
+        "definition_key": "BOC-RATE-OUTCOME",
+        "target_period_key": canonical_target_period_key(
+            ForecastTargetPeriod(
+                period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+                policy_meeting_identifier="BOC-2024-12-11",
+            )
+        ),
+        "outcome_type": ForecastType.NUMERIC_POINT,
+        "unit": "PERCENT",
+        "outcome_key": "BOC-RATE-DECISION-2024-12-11",
+    }
+    defaults.update(overrides)
+    return ForecastOutcomeIdentityBinding(**defaults)  # type: ignore[arg-type]
+
+
+def _winner_vintage(**overrides: object) -> ForecastOutcomeVintage:
+    defaults: dict[str, object] = {
+        "outcome_key": "BOC-RATE-DECISION-2024-12-11",
+        "revision_sequence": 0,
+        "definition_key": "BOC-RATE-OUTCOME",
+        "definition_version_sequence": 0,
+        "availability": _ts(9),
+        "target_period": ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+            policy_meeting_identifier="BOC-2024-12-11",
+        ),
+        "outcome_type": ForecastType.NUMERIC_POINT,
+        "evidence": ForecastEvidenceReference(
+            evidence_kind=ForecastEvidenceKind.EXTERNAL_DOCUMENT_REFERENCE,
+            description="Official press release",
+            document_identifier="BOC-PR-2024-12-11",
+        ),
+        "authentication_review": EvidenceAuthenticationReview(
+            reviewed_by="FTA research operator",
+            review_method="Direct review of official press release",
+            reviewed_at=_ts(9),
+        ),
+        "provenance_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        "numeric_value": Decimal("3.25"),
+        "unit": "PERCENT",
+    }
+    defaults.update(overrides)
+    return ForecastOutcomeVintage(**defaults)  # type: ignore[arg-type]
+
+
+class _RacingFakeRepository(FakeForecastOutcomeRepository):
+    """Simulates a concurrent writer that commits its OWN first
+    registration for the SAME `outcome_key` in the window between our
+    own `latest_outcome_vintage` read and our own atomic claim attempt
+    -- exercises FX-65H.3 (H1)'s own loop-based re-classification,
+    which a single-process fake repository cannot otherwise race."""
+
+    def __init__(
+        self, winner_binding: ForecastOutcomeIdentityBinding, winner_vintage: ForecastOutcomeVintage
+    ) -> None:
+        super().__init__()
+        self._pending_winner: (
+            tuple[ForecastOutcomeIdentityBinding, ForecastOutcomeVintage] | None
+        ) = (
+            winner_binding,
+            winner_vintage,
+        )
+
+    async def claim_outcome_identity_and_add_first_vintage(
+        self, binding: ForecastOutcomeIdentityBinding, first_vintage: ForecastOutcomeVintage
+    ) -> OutcomeIdentityClaimResult:
+        if self._pending_winner is not None:
+            winner_binding, winner_vintage = self._pending_winner
+            self._pending_winner = None
+            self.identity_bindings[winner_binding.outcome_key] = winner_binding
+            self.vintages.setdefault(winner_vintage.outcome_key, []).append(winner_vintage)
+            return OutcomeIdentityClaimResult(claimed=False)
+        return await super().claim_outcome_identity_and_add_first_vintage(binding, first_vintage)
+
+
+async def test_same_key_identical_concurrent_submission_is_unchanged_against_persisted_winner() -> (
+    None
+):
+    """A genuinely identical concurrent submission must be reported
+    UNCHANGED against what the WINNER actually persisted, never
+    against the loser's own un-persisted attempt."""
+    winner_vintage = _winner_vintage(correction_reason="winner's own marker")
+    repo = _RacingFakeRepository(_winner_binding(), winner_vintage)
+    record = RecordForecastOutcome(repo)
+
+    result = await record(_candidate())
+
+    assert result.outcome is ForecastOutcomeOutcome.UNCHANGED
+    assert result.vintage is winner_vintage
+    history = await repo.list_vintages_for_outcome("BOC-RATE-DECISION-2024-12-11")
+    assert len(history) == 1
+
+
+async def test_same_key_concurrent_different_value_same_evidence_is_not_silently_unchanged() -> (
+    None
+):
+    """A concurrent submission under the SAME evidentiary basis but a
+    DIFFERENT value must never be reported UNCHANGED -- this is
+    exactly the FX-65H.2-era bug: losing the atomic claim used to be
+    treated as an automatic, content-blind duplicate."""
+    winner_vintage = _winner_vintage()
+    repo = _RacingFakeRepository(_winner_binding(), winner_vintage)
+    record = RecordForecastOutcome(repo)
+
+    with pytest.raises(ForecastOutcomeDeterminismError):
+        await record(_candidate(numeric_value=Decimal("3.10")))
+
+    history = await repo.list_vintages_for_outcome("BOC-RATE-DECISION-2024-12-11")
+    assert len(history) == 1
+    assert history[0] is winner_vintage
+
+
+async def test_same_key_concurrent_different_evidence_mints_new_revision() -> None:
+    """A concurrent submission under genuinely NEW evidence is
+    appended as the next revision, never discarded as if it had lost
+    an identical first-registration race."""
+    winner_vintage = _winner_vintage()
+    repo = _RacingFakeRepository(_winner_binding(), winner_vintage)
+    record = RecordForecastOutcome(repo)
+
+    result = await record(
+        _candidate(numeric_value=Decimal("3.10"), document_identifier="BOC-PR-2024-12-11-CORR")
+    )
+
+    assert result.outcome is ForecastOutcomeOutcome.REVISION_ADDED
+    assert result.vintage is not None
+    assert result.vintage.revision_sequence == 1
+    history = await repo.list_vintages_for_outcome("BOC-RATE-DECISION-2024-12-11")
+    assert len(history) == 2

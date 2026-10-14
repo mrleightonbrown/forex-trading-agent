@@ -3596,6 +3596,23 @@ for nullable `unit`) specifically to make the composite unique
 constraint work under Postgres's NULL-is-distinct-from-NULL
 semantics. See ADR 0013's own FX-65H.2 addendum.
 
+**FX-65H.3 closed a same-key concurrency gap, a transaction-safety
+gap, and a canonicalization parity gap, all without redesigning the
+identity-binding architecture**: (1) losing the atomic first-
+registration claim no longer means an unconditional, content-blind
+duplicate -- `RecordForecastOutcome.__call__` loops back to re-read
+the winner's own persisted vintage and runs the existing determinism/
+provenance checks against it, so a same-key race with genuinely
+different content is never silently discarded; (2) `get_identity_
+binding_for_key`/`get_identity_binding_for_identity` no longer commit
+after their own read-only `SELECT`, since they can be called mid-call
+on a session that may be holding an unrelated pending write; (3)
+`canonical_target_period_key`'s own `SPECIFIC_DATE` branch now
+unconditionally emits a fixed-width 6-digit microsecond component on
+both the Python and migration-SQL sides, closing a parity break the
+original migration's lossy `to_char(...)` formula had. See ADR 0013's
+own FX-65H.3 addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

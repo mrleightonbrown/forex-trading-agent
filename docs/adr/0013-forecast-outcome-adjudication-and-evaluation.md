@@ -453,3 +453,107 @@ baseline exactly, plus the one new binding row.
 
 Commits: starting `6f8257f` (FX-65H.1) -> resulting FX-65H.2 commit
 (see `docs/DECISIONS.md`'s own FX-65H.2 entry for the exact hash).
+
+## FX-65H.3 addendum (2026-10-14): outcome identity race and canonicalization hardening
+
+Three remaining integrity issues in the otherwise-accepted FX-65H.2
+implementation, found by the architect's own narrow corrective
+review -- no redesign of the identity-binding architecture itself.
+
+**H1 root cause and correction (same-key concurrent registration).**
+FX-65H.2's own handling of a LOST atomic first-registration claim
+treated it as an unconditional, content-blind duplicate: `_classify_
+identity` would confirm the loss was a same-key/same-identity race
+and then return `UNCHANGED` WITHOUT ever comparing the loser's own
+submitted content against what the winner actually persisted. A
+concurrent submission under the SAME key but a genuinely DIFFERENT
+value (same evidence, or new evidence) would therefore have been
+silently discarded as if it had been an identical duplicate.
+`RecordForecastOutcome.__call__` is now a LOOP: losing the atomic
+claim, after `_classify_identity` confirms the loss is benign (not a
+genuine H1/H2 conflict, which still raises), loops back to the top
+and re-reads `latest_outcome_vintage` -- now authoritatively
+reflecting the winner's own persisted row. The SAME full-history
+determinism/provenance checks and `UNCHANGED` shortcut that already
+govern every ordinary revision then run against that REAL vintage: a
+genuinely identical concurrent submission becomes `UNCHANGED` against
+the winner's own persisted object (never the loser's un-persisted
+one); the same evidentiary basis producing a different value still
+raises `ForecastOutcomeDeterminismError` (never silently absorbed);
+and genuinely new evidence is appended as the next revision via the
+ordinary `add_outcome_vintage` path, never discarded as if it had
+been a lost duplicate. Out-of-order PIT precedence, full-history
+determinism, and the cross-key uniqueness constraints are all
+unchanged -- this reuses them, rather than replacing anything.
+
+**H2 root cause and correction (read-only transaction integrity).**
+`get_identity_binding_for_key`/`get_identity_binding_for_identity`
+both called `await self._session.commit()` after their own read-only
+`SELECT`, mirroring this repository's OTHER read methods (an
+established, deliberate convention elsewhere in the codebase for
+methods that own their entire unit of work). For these two methods
+specifically, that is unsafe: `RecordForecastOutcome.__call__` shares
+ONE session across an entire call, and these two lookups are invoked
+MID-call, after other reads but potentially before a write is still
+pending on the same session in a future caller's own usage pattern. A
+commit at that point would force-commit whatever the session was
+already holding, uninvited. Both methods now simply return after the
+`SELECT`, committing nothing -- the one place a binding row is ever
+written, `claim_outcome_identity_and_add_first_vintage`, already owns
+its own explicit commit/rollback boundary and is unaffected.
+Verified directly: a real-Postgres test inserts a vintage row on a
+session WITHOUT committing, calls both lookup methods on that SAME
+session, then confirms from an INDEPENDENT session that the pending
+insert is still invisible (i.e. still uncommitted) -- proving the
+lookups genuinely committed nothing.
+
+**H3 root cause and correction (canonical target-period identity).**
+`canonical_target_period_key`'s own `SPECIFIC_DATE` branch used
+`datetime.isoformat()` directly, which OMITS the fractional-second
+component whenever `microsecond == 0`; migration `80877afdbe75`'s own
+SQL equivalent, by contrast, discarded fractional seconds
+UNCONDITIONALLY via `to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"')`,
+which has no microsecond token at all. Two genuinely distinct instants
+differing only in their fractional second could therefore canonicalize
+to two DIFFERENT runtime strings while a migration backfill would
+have produced a THIRD, lossy string for either -- a genuine parity
+break, demonstrated with several SYNTHETIC instants (0, nonzero, and
+near-boundary microseconds), not merely the one real Bank of Canada
+row (which uses `POLICY_MEETING`, entirely unaffected either way).
+Fixed on BOTH sides to unconditionally emit a fixed-width, zero-padded
+6-digit microsecond component (`f"{dt.strftime('%Y-%m-%dT%H:%M:%S')}.
+{dt.microsecond:06d}+00:00"` in Python; the equivalent `to_char(...)
+|| '.' || lpad((EXTRACT(MICROSECONDS FROM ...)::bigint % 1000000)::
+text, 6, '0')` in SQL) -- verified byte-identical for several
+synthetic timestamps before writing either side. A new corrective
+migration, `3b03a0c4f0ba`, re-derives `target_period_key` for any
+PRE-EXISTING `SPECIFIC_DATE`-kind binding row from its own outcome's
+stored `specific_date` (full precision is preserved there; it was
+only ever lost in the DERIVED key), running its own pre-flight check
+that refuses to proceed if the correction would itself create a new
+identity conflict. Zero rows needed correcting (the real dataset has
+zero `SPECIFIC_DATE` outcomes); the migration is reversible (`downgrade
+()` restores the old lossy format) and was round-tripped against the
+real database before and after this story's other changes, confirming
+the real `POLICY_MEETING` binding (`BOC-RATE-DECISION-2024-12-11`) is
+untouched either way.
+
+**Verification**: 3 new unit tests simulating a lost first-
+registration race against a fake repository (identical content ->
+UNCHANGED against the real persisted winner; same evidence/different
+value -> `ForecastOutcomeDeterminismError`, never a false UNCHANGED;
+different evidence -> a new revision, never discarded), 3 new domain
+tests for `SPECIFIC_DATE` microsecond handling, and 3 new real-
+Postgres integration tests (a cross-key race where the two competing
+submissions carry DIFFERENT values; a read-only-transaction-integrity
+test; a Python/SQL canonicalization parity test covering all five
+period kinds with synthetic values, including fractional seconds).
+Full suite: 3144 passed. `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. The real Bank of Canada pilot was re-run against real Postgres
+(including `--dry-run`) and continues to report `UNCHANGED`
+throughout, with `signed_error=-0.50`/`absolute_error=0.50` unchanged
+and its `outcome_key` and identity binding both untouched. All twelve
+relevant tables' row counts match the FX-65H.2 baseline exactly.
+
+Commits: starting `966589e` (FX-65H.2) -> resulting FX-65H.3 commit
+(see `docs/DECISIONS.md`'s own FX-65H.3 entry for the exact hash).

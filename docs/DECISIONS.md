@@ -16645,3 +16645,81 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## 2026-10-14 — FX-65H.3: outcome identity race and canonicalization hardening
+
+**Scope.** Three remaining integrity issues in the otherwise-accepted
+FX-65H.2 implementation, found by a narrow corrective review -- no
+redesign of the identity-binding architecture. Starting commit:
+`966589e` (the FX-65H.2 commit).
+
+**H1 (same-key concurrent registration).** Losing the atomic first-
+registration claim used to be treated as an unconditional, content-
+blind duplicate -- `_classify_identity` confirmed the loss was a
+same-key/same-identity race and returned `UNCHANGED` without ever
+comparing the loser's own content against what the winner actually
+persisted. `RecordForecastOutcome.__call__` is now a LOOP: after
+confirming the loss is benign, it loops back and re-reads `latest_
+outcome_vintage`, now reflecting the winner's own persisted row, and
+runs the SAME full-history determinism/provenance checks and
+`UNCHANGED` shortcut against it -- a genuine duplicate becomes
+`UNCHANGED` against the real persisted object; the same evidence
+producing a different value still raises `ForecastOutcomeDeterminism
+Error`; genuinely new evidence is appended as the next revision.
+Nothing about PIT precedence, full-history determinism, or the
+cross-key uniqueness constraints changed -- this reuses them.
+
+**H2 (read-only transaction integrity).** `get_identity_binding_for_
+key`/`get_identity_binding_for_identity` both committed after their
+own read-only `SELECT`, mirroring an established but here-unsafe
+convention: `RecordForecastOutcome.__call__` shares ONE session
+across an entire call, so a commit mid-call could force-commit
+whatever else the session was holding. Both methods now return after
+the `SELECT` without committing. Verified directly: a real-Postgres
+test inserts a vintage row on a session WITHOUT committing, calls
+both lookup methods on that session, then confirms from an
+INDEPENDENT session the pending insert is still invisible.
+
+**H3 (canonical target-period identity).** `canonical_target_period_
+key`'s own `SPECIFIC_DATE` branch used `datetime.isoformat()`
+directly, which omits the fractional-second component when `microsecond
+== 0`; migration `80877afdbe75`'s own SQL equivalent discarded
+fractional seconds UNCONDITIONALLY, with no microsecond token at all.
+Two distinct instants differing only in their fractional second could
+canonicalize to two different runtime strings while a migration
+backfill would produce a third, lossy one for either -- demonstrated
+with several SYNTHETIC instants, not merely the one real Bank of
+Canada row (`POLICY_MEETING`, unaffected either way). Fixed on both
+sides to unconditionally emit a fixed-width, zero-padded 6-digit
+microsecond component, verified byte-identical before writing either
+side. New migration `3b03a0c4f0ba` re-derives `target_period_key` for
+any pre-existing `SPECIFIC_DATE` binding row from its own outcome's
+stored `specific_date`, with its own pre-flight conflict check; zero
+rows needed correcting; the migration is reversible and was round-
+tripped against the real database.
+
+**Regression.** 3 new unit tests (lost-race simulation against a fake
+repository), 3 new domain tests (`SPECIFIC_DATE` microsecond
+handling), 3 new real-Postgres integration tests (cross-key race with
+different values, read-only-transaction-integrity, Python/SQL
+canonicalization parity across all five period kinds with synthetic
+values). Full suite: 3144 passed. `ruff`/`ruff format`/`mypy`/`pre-
+commit` all clean. The real Bank of Canada pilot was re-run against
+real Postgres (including `--dry-run`) and continues to report
+`UNCHANGED` throughout, with `signed_error=-0.50`/`absolute_error=
+0.50` unchanged. All twelve relevant tables' row counts match the
+FX-65H.2 baseline exactly.
+
+**Explicitly confirmed NOT done**: no redesign of the identity-binding
+architecture; no change to forecast capture, authentication
+semantics, evaluation metrics, source attribution, or protocol-
+selection rules; no change to the real Bank of Canada outcome_key or
+binding; no change to FIRST_RELEASE/LATEST_AVAILABLE_AS_OF/FIXED_
+RELEASE_VINTAGE semantics.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-65H.3 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.3
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

@@ -18,7 +18,24 @@ deliberately, per Alembic's own "migrations stay self-contained"
 convention) -- any FUTURE change to this function's own output format
 would silently desynchronize newly-computed keys from already-
 migrated ones, breaking the uniqueness guarantee. Treat this format as
-immutable once any real data depends on it."""
+immutable once any real data depends on it.
+
+**FX-65H.3 (H3) correction**: the `SPECIFIC_DATE` branch originally
+used `datetime.isoformat()` directly, which OMITS the fractional-
+second component whenever `microsecond == 0` -- `80877afdbe75`'s own
+SQL `to_char(...)` equivalent, by contrast, ALWAYS discarded fractional
+seconds entirely, regardless of value. Two genuinely distinct instants
+differing only in their fractional second (or a zero-microsecond
+instant and a real migration-backfilled one) could therefore
+canonicalize to two DIFFERENT strings at runtime while a migration
+would have backfilled a THIRD, lossy string for either -- a real
+parity break, not merely a cosmetic one. Fixed by making the
+microsecond component UNCONDITIONALLY present and fixed-width (6
+digits, zero-padded) on BOTH sides -- see migration `3b03a0c4f0ba`
+for the corrected SQL equivalent, the conflict pre-check it runs
+before correcting any pre-existing `SPECIFIC_DATE` binding row, and
+why no real row needed correcting (zero `SPECIFIC_DATE` rows existed
+when it was written)."""
 
 from dataclasses import dataclass
 
@@ -43,7 +60,8 @@ def canonical_target_period_key(period: ForecastTargetPeriod) -> str:
         return f"CALENDAR_MONTH:{period.calendar_year}:{period.calendar_month:02d}"
     if period.period_kind is ForecastTargetPeriodKind.SPECIFIC_DATE:
         assert period.specific_date is not None
-        return f"SPECIFIC_DATE:{period.specific_date.value.isoformat()}"
+        dt = period.specific_date.value
+        return f"SPECIFIC_DATE:{dt.strftime('%Y-%m-%dT%H:%M:%S')}.{dt.microsecond:06d}+00:00"
     assert period.period_kind is ForecastTargetPeriodKind.POLICY_MEETING
     return f"POLICY_MEETING:{period.policy_meeting_identifier}"
 

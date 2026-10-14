@@ -99,14 +99,20 @@ class ForecastOutcomeRepository(Protocol):
         self, outcome_key: str
     ) -> ForecastOutcomeIdentityBinding | None:
         """The ONE measurement identity `outcome_key` is durably bound
-        to, or `None` if it has never claimed one."""
+        to, or `None` if it has never claimed one. FX-65H.3 (H2):
+        implementations MUST NOT commit the caller's own session --
+        a read-only lookup must never force-commit an unrelated
+        pending write the caller may already be holding."""
         ...
 
     async def get_identity_binding_for_identity(
         self, definition_key: str, target_period_key: str, outcome_type: ForecastType, unit: str
     ) -> ForecastOutcomeIdentityBinding | None:
         """The `outcome_key` that durably owns this EXACT measurement
-        identity, or `None` if no one has claimed it yet."""
+        identity, or `None` if no one has claimed it yet. FX-65H.3
+        (H2): implementations MUST NOT commit the caller's own
+        session -- see `get_identity_binding_for_key`'s own
+        docstring."""
         ...
 
     async def add_outcome_vintage(

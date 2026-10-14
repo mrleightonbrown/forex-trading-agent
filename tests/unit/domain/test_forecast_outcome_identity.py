@@ -39,12 +39,36 @@ def test_calendar_month_key_is_zero_padded() -> None:
     assert canonical_target_period_key(period) == "CALENDAR_MONTH:2025:03"
 
 
-def test_specific_date_key() -> None:
+def test_specific_date_key_with_zero_microseconds_is_fixed_width() -> None:
+    """FX-65H.3 (H3): the microsecond component is UNCONDITIONALLY
+    present, even when zero -- `datetime.isoformat()` alone would
+    omit it here, which is exactly the Python/SQL parity break this
+    story fixed (the migration's own SQL always produces 6 digits)."""
     period = ForecastTargetPeriod(
         period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
         specific_date=UtcTimestamp(datetime(2025, 1, 15, tzinfo=UTC)),
     )
-    assert canonical_target_period_key(period) == "SPECIFIC_DATE:2025-01-15T00:00:00+00:00"
+    assert canonical_target_period_key(period) == "SPECIFIC_DATE:2025-01-15T00:00:00.000000+00:00"
+
+
+def test_specific_date_key_preserves_microsecond_precision() -> None:
+    period = ForecastTargetPeriod(
+        period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
+        specific_date=UtcTimestamp(datetime(2024, 12, 11, 12, 30, 45, 654321, tzinfo=UTC)),
+    )
+    assert canonical_target_period_key(period) == "SPECIFIC_DATE:2024-12-11T12:30:45.654321+00:00"
+
+
+def test_specific_date_keys_differing_only_by_microsecond_are_distinct() -> None:
+    a = ForecastTargetPeriod(
+        period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
+        specific_date=UtcTimestamp(datetime(2024, 12, 11, 0, 0, 0, 1, tzinfo=UTC)),
+    )
+    b = ForecastTargetPeriod(
+        period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
+        specific_date=UtcTimestamp(datetime(2024, 12, 11, 0, 0, 0, tzinfo=UTC)),
+    )
+    assert canonical_target_period_key(a) != canonical_target_period_key(b)
 
 
 def test_policy_meeting_key() -> None:

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, insert, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -84,6 +84,7 @@ from forex_agent.infrastructure.db.forecast_evaluation_repository import (
 )
 from forex_agent.infrastructure.db.forecast_outcome_repository import (
     SqlAlchemyForecastOutcomeRepository,
+    _vintage_row_values,
 )
 from forex_agent.infrastructure.db.models.forecast_claim import ForecastClaimRow
 from forex_agent.infrastructure.db.models.forecast_evaluation_protocol import (
@@ -624,6 +625,197 @@ async def test_real_boc_identity_binding_matches_canonical_key(
             policy_meeting_identifier="BOC-2024-12-11",
         )
     )
+
+
+async def test_read_only_identity_lookups_do_not_commit_unrelated_pending_writes(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+    session: AsyncSession,
+) -> None:
+    """FX-65H.3 (H2): `get_identity_binding_for_key`/`get_identity_
+    binding_for_identity` must be genuinely read-only -- an uncommitted
+    INSERT pending on the SAME session must remain uncommitted (and
+    therefore invisible to an independent session) after both lookup
+    methods execute against that session."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}txn")
+    )
+    pending_outcome_key = f"{TEST_OUTCOME_PREFIX}txn-pending"
+    pending_vintage = ForecastOutcomeVintage(
+        outcome_key=pending_outcome_key,
+        revision_sequence=0,
+        definition_key=f"{TEST_DEFINITION_PREFIX}txn",
+        definition_version_sequence=0,
+        availability=_ts(10),
+        target_period=ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+            policy_meeting_identifier="BOC-2024-12-11",
+        ),
+        outcome_type=ForecastType.NUMERIC_POINT,
+        evidence=ForecastEvidenceReference(
+            evidence_kind=ForecastEvidenceKind.EXTERNAL_DOCUMENT_REFERENCE,
+            description="pending, never committed",
+            document_identifier="DOC-PENDING",
+        ),
+        authentication_review=_review(),
+        provenance_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        numeric_value=Decimal("1"),
+        unit="PERCENT",
+    )
+    await session.execute(
+        insert(ForecastOutcomeVintageRow).values(_vintage_row_values(pending_vintage))
+    )
+
+    await outcome_repo.get_identity_binding_for_key("__fx65h3_nonexistent_key__")
+    await outcome_repo.get_identity_binding_for_identity(
+        f"{TEST_DEFINITION_PREFIX}txn",
+        canonical_target_period_key(
+            ForecastTargetPeriod(
+                period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+                policy_meeting_identifier="BOC-2024-12-11",
+            )
+        ),
+        ForecastType.NUMERIC_POINT,
+        "PERCENT",
+    )
+
+    other_session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+    async with other_session_factory() as other_session:
+        other_repo = SqlAlchemyForecastOutcomeRepository(other_session)
+        visible = await other_repo.list_vintages_for_outcome(pending_outcome_key)
+        assert visible == ()
+
+    await session.rollback()
+
+
+async def test_concurrent_different_keys_same_identity_different_values_exactly_one_wins(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+) -> None:
+    """FX-65H.3 (H1), real-Postgres: two DIFFERENT outcome_keys racing
+    for the SAME identity, each with a DIFFERENT value -- the database
+    constraint still guarantees exactly one owner, and the loser's own
+    DIFFERENT content never silently becomes the winner's own."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}race2")
+    )
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async def _register(outcome_key: str, numeric_value: Decimal) -> str:
+        async with session_factory() as own_session:
+            own_repo = SqlAlchemyForecastOutcomeRepository(own_session)
+            candidate = _outcome_candidate(
+                outcome_key=outcome_key,
+                definition_key=f"{TEST_DEFINITION_PREFIX}race2",
+                document_identifier=f"DOC-{outcome_key}",
+                numeric_value=numeric_value,
+            )
+            try:
+                result = await RecordForecastOutcome(own_repo)(candidate)
+                return result.outcome.value
+            except ForecastOutcomeIdentityConflictError:
+                return "CONFLICT"
+
+    key_a = f"{TEST_OUTCOME_PREFIX}race2-a"
+    key_b = f"{TEST_OUTCOME_PREFIX}race2-b"
+    outcomes = await asyncio.gather(
+        _register(key_a, Decimal("3.25")), _register(key_b, Decimal("3.10"))
+    )
+
+    assert set(outcomes) == {"CREATED", "CONFLICT"}
+    history_a = await outcome_repo.list_vintages_for_outcome(key_a)
+    history_b = await outcome_repo.list_vintages_for_outcome(key_b)
+    winner_history, loser_history = (
+        (history_a, history_b) if outcomes[0] == "CREATED" else (history_b, history_a)
+    )
+    assert len(winner_history) == 1
+    assert loser_history == ()
+
+
+async def test_canonical_target_period_key_sql_parity_for_all_period_kinds(
+    session: AsyncSession,
+) -> None:
+    """FX-65H.3 (H3): Python/SQL parity demonstrated for ALL FIVE
+    period kinds using SYNTHETIC values -- not merely the one real
+    Bank of Canada row (which uses POLICY_MEETING only) -- including a
+    SPECIFIC_DATE value with microsecond precision, the exact shape
+    the original migration's own SQL formula got wrong."""
+    case_sql = """
+        CASE target_period_kind
+            WHEN 'CALENDAR_YEAR' THEN 'CALENDAR_YEAR:' || calendar_year::text
+            WHEN 'CALENDAR_QUARTER' THEN
+                'CALENDAR_QUARTER:' || calendar_year::text || ':' || calendar_quarter::text
+            WHEN 'CALENDAR_MONTH' THEN
+                'CALENDAR_MONTH:' || calendar_year::text || ':'
+                    || lpad(calendar_month::text, 2, '0')
+            WHEN 'SPECIFIC_DATE' THEN
+                'SPECIFIC_DATE:' || to_char(
+                    specific_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'
+                )
+                    || '.' || lpad(
+                        (EXTRACT(MICROSECONDS FROM specific_date AT TIME ZONE 'UTC')::bigint
+                            % 1000000)::text,
+                        6, '0'
+                    ) || '+00:00'
+            WHEN 'POLICY_MEETING' THEN 'POLICY_MEETING:' || policy_meeting_identifier
+        END
+    """
+    periods = (
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.CALENDAR_YEAR, calendar_year=2025
+        ),
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.CALENDAR_QUARTER,
+            calendar_year=2025,
+            calendar_quarter=3,
+        ),
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.CALENDAR_MONTH,
+            calendar_year=2025,
+            calendar_month=9,
+        ),
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
+            specific_date=UtcTimestamp(datetime(2024, 12, 11, 12, 30, 45, 654321, tzinfo=UTC)),
+        ),
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.SPECIFIC_DATE,
+            specific_date=UtcTimestamp(datetime(2024, 12, 11, 0, 0, 0, tzinfo=UTC)),
+        ),
+        ForecastTargetPeriod(
+            period_kind=ForecastTargetPeriodKind.POLICY_MEETING,
+            policy_meeting_identifier="BOC-2024-12-11",
+        ),
+    )
+    for period in periods:
+        row: str = (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT ({case_sql}) AS key
+                    FROM (VALUES (
+                        (:kind)::text, (:year)::int, (:quarter)::int, (:month)::int,
+                        (:date)::timestamptz, (:meeting)::text
+                    )) AS t(
+                        target_period_kind, calendar_year, calendar_quarter, calendar_month,
+                        specific_date, policy_meeting_identifier
+                    )
+                    """
+                ),
+                {
+                    "kind": period.period_kind.value,
+                    "year": period.calendar_year,
+                    "quarter": period.calendar_quarter,
+                    "month": period.calendar_month,
+                    "date": period.specific_date.value if period.specific_date else None,
+                    "meeting": period.policy_meeting_identifier,
+                },
+            )
+        ).scalar_one()
+        await session.rollback()
+        assert row == canonical_target_period_key(period)
 
 
 # --- evaluation protocols / evaluation vintages -----------------------------
