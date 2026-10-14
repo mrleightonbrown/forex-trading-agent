@@ -31,4 +31,17 @@ class ForecastCaptureEligibility(Enum):
     """The candidate's own supporting evidence reference is missing,
     structurally invalid, or insufficiently specific to audit (Section
     6) -- e.g. no document identifier at all for an external-document
-    reference."""
+    reference.
+
+    **FX-64H (H2) boundary, stated explicitly because this name invites
+    the opposite reading**: this is a STRUCTURAL check only. `ELIGIBLE`
+    (the absence of this verdict) NEVER means the referenced document
+    was independently authenticated -- that a human actually confirmed
+    it exists, is genuine, or says what is claimed. No code in this
+    story fetches, hashes, or cross-references a cited document; a
+    syntactically well-formed but entirely fabricated `document_
+    identifier` is, correctly, still `ELIGIBLE`. Authenticating a
+    source is a human, out-of-band responsibility exercised BEFORE a
+    candidate is ever constructed (e.g. by whoever curates a pilot
+    import); it is deliberately not, and does not become, this
+    enum's job."""

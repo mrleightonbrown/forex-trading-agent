@@ -27,7 +27,23 @@ class ForecastEvidenceReference:
     kind -- additional, never-required archival/integrity metadata.
     `publisher_declared_publication_at` is PURELY descriptive (Section
     6/7) -- never promoted to a vintage's own `availability`, mirroring
-    FX-55H's own "FTA knowledge, not source timestamp" invariant."""
+    FX-55H's own "FTA knowledge, not source timestamp" invariant.
+
+    **FX-64H (H2) boundary**: everything enforced here is STRUCTURAL
+    shape only -- which fields are present, and whether they are non-
+    empty strings/well-typed timestamps. Constructing an instance of
+    this class NEVER constitutes, implies, or substitutes for
+    independent authentication that the referenced document actually
+    exists, is genuine, or says what `description` claims. No field
+    here (including `content_fingerprint`) is verified against the
+    real document by this code; a caller must never populate
+    `content_fingerprint` with a value it has not itself computed
+    from the real content, and must never treat a well-formed
+    `document_identifier` as proof of authenticity. That authentication
+    is a human, out-of-band responsibility exercised BEFORE a candidate
+    is ever constructed (e.g. by whoever curates a pilot import) --
+    this story deliberately adds no automated verification service for
+    it."""
 
     evidence_kind: ForecastEvidenceKind
     description: str

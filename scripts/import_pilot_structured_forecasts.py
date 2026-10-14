@@ -1,9 +1,20 @@
 """FX-64 Section 16: records a small, EXPLICITLY CONTROLLED dataset of
 structured-forecast pilot examples against a live Postgres -- NOT a
-live acquisition adapter (none is authorized by this story); every
-value below was verified against each source's own public
-documentation, cited in each record's own `official_reference_url`/
-`document_identifier`, immediately before this script was written.
+live acquisition adapter (none is authorized by this story).
+
+**FX-64H (H2) provenance note, kept here rather than in any PERSISTED
+field**: the author of this script independently reviewed each real
+example below against the cited source's own public documentation
+(the exact `official_reference_url` on each candidate) via WebSearch/
+WebFetch on 2026-10-13, immediately before writing this code, and
+confirmed the figures/dates/respondent counts quoted below against
+that documentation. This is a HUMAN, out-of-band curation step,
+recorded here for traceability -- it is explicitly NOT something the
+system itself verifies, and no candidate's own persisted `evidence_
+description` field asserts "verified" as if it were a system-enforced
+fact (see `ValidateStructuredForecastCandidate`'s own H2 boundary
+note): a `description` field states only what the cited document
+says, never that its authenticity was confirmed.
 
 Real, independently-verified examples (all RETROSPECTIVE_RESEARCH --
 FTA is acquiring every one of these TODAY, long after its own real

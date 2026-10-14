@@ -30,7 +30,31 @@ correction) is a different historical basis and is never compared
 against this invariant -- it always mints a new, append-only revision
 instead, exactly matching Section 13's own worked examples (v1(A) ->
 v2(B) -> v1(A) succeeds; v1(A) -> v2(B) -> v1(C) is a determinism
-error when C genuinely differs from A under the IDENTICAL basis)."""
+error when C genuinely differs from A under the IDENTICAL basis).
+
+**FX-64H (H1) -- provenance consistency is a SEPARATE invariant from
+content determinism, checked over the SAME historical basis.** For the
+SAME `(claim_key, algorithm_version, evidence)` basis that ALSO
+produces an IDENTICAL content payload, `provenance_mode` and
+`original_publication_at` must ALSO be identical to every historical
+vintage sharing that basis -- otherwise `StructuredForecastProvenance
+ConsistencyError` is raised and nothing is written. This is a
+DELIBERATELY conservative, symmetric policy: neither a `RETROSPECTIVE_
+RESEARCH` -> `PRODUCTION_OBSERVED` "promotion" nor the reverse
+"demotion" is ever accepted under an unchanged evidentiary basis,
+because neither direction can be distinguished from FTA retroactively
+overstating (or understating) when it actually came to know the
+claim. A genuine provenance correction -- e.g. a forecast FTA first
+recorded as retrospective research, later reconfirmed by a real
+production acquisition -- is fully supported, but ONLY via genuinely
+NEW evidence (a different `evidence` object), which is an ordinary
+`REVISION_ADDED` append, exactly like any other source-issued content
+correction. This full-history check, together with the one above, is
+why the "latest vintage" UNCHANGED shortcut below also compares
+`_provenance_of(latest)`, not merely `_payload_of(latest)` -- an exact
+resubmission of the latest vintage, in EVERY field material to
+historical interpretation, is the ONLY case that returns `UNCHANGED`
+without writing anything."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -46,6 +70,7 @@ from forex_agent.domain.forecast_attribution import ForecastAttribution
 from forex_agent.domain.forecast_capture_eligibility import ForecastCaptureEligibility
 from forex_agent.domain.forecast_claim import ForecastClaim
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
+from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
 from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
 from forex_agent.domain.forecast_type import ForecastType
 from forex_agent.domain.structured_forecast_vintage import StructuredForecastVintage
@@ -61,8 +86,15 @@ _Payload = tuple[
     ForecastAttribution,
 ]
 
+_Provenance = tuple[ForecastProvenanceMode, UtcTimestamp | None]
+
 
 def _payload_of(vintage: StructuredForecastVintage) -> _Payload:
+    """The SUBSTANTIVE forecast-content payload (Section 13) -- what
+    was asserted, never when or under what provenance classification
+    it was captured. Compared ONLY within a historical basis of the
+    SAME `(algorithm_version, evidence)`; see `StructuredForecast
+    DeterminismError`."""
     return (
         vintage.forecast_type,
         vintage.target_key,
@@ -72,6 +104,19 @@ def _payload_of(vintage: StructuredForecastVintage) -> _Payload:
         vintage.categorical_outcome,
         vintage.attribution,
     )
+
+
+def _provenance_of(vintage: StructuredForecastVintage) -> _Provenance:
+    """FX-64H (H1): the fields describing HOW/WHEN this forecast was
+    classified as captured -- `provenance_mode` and `original_
+    publication_at` -- deliberately kept SEPARATE from `_payload_of`'s
+    own substantive content. These are checked for CONSISTENCY, never
+    folded into the content-determinism comparison, so a provenance-
+    classification mismatch is diagnosed as its own distinct failure
+    (`StructuredForecastProvenanceConsistencyError`) rather than an
+    opaque content-determinism error whose message would misleadingly
+    cite unrelated payload fields."""
+    return (vintage.provenance_mode, vintage.original_publication_at)
 
 
 class StructuredForecastOutcome(Enum):
@@ -139,6 +184,45 @@ class StructuredForecastDeterminismError(Exception):
         )
 
 
+class StructuredForecastProvenanceConsistencyError(Exception):
+    """FX-64H (H1): raised when the SAME `(claim_key, algorithm_
+    version, evidence)` historical basis, producing the IDENTICAL
+    forecast payload as some already-stored vintage, is resubmitted
+    with a DIFFERENT `provenance_mode` or `original_publication_at`.
+
+    This is a DELIBERATELY conservative, symmetric policy (see the
+    module docstring's own H1 section): neither a `RETROSPECTIVE_
+    RESEARCH` -> `PRODUCTION_OBSERVED` promotion nor the reverse
+    demotion is supported under an unchanged evidentiary basis --
+    both would let FTA retroactively restate when it actually came to
+    know the claim, which this story explicitly refuses to guess at.
+    A genuine provenance correction requires genuinely NEW evidence,
+    which never reaches this check (a different `evidence` object is
+    a different basis entirely, handled as an ordinary `REVISION_
+    ADDED` append)."""
+
+    def __init__(
+        self,
+        claim_key: str,
+        algorithm_version: str,
+        evidence: ForecastEvidenceReference,
+        existing_provenance: _Provenance,
+        incoming_provenance: _Provenance,
+    ) -> None:
+        self.claim_key = claim_key
+        self.algorithm_version = algorithm_version
+        self.evidence = evidence
+        self.existing_provenance = existing_provenance
+        self.incoming_provenance = incoming_provenance
+        super().__init__(
+            f"claim_key={claim_key!r}, algorithm_version={algorithm_version!r}, evidence="
+            f"{evidence!r} already recorded the IDENTICAL forecast payload under provenance_"
+            f"mode/original_publication_at={existing_provenance!r}, but the incoming submission "
+            f"claims {incoming_provenance!r} under the SAME evidentiary basis -- refusing to "
+            "reclassify provenance without new evidence"
+        )
+
+
 class RecordStructuredForecast:
     """See the module docstring."""
 
@@ -198,21 +282,34 @@ class RecordStructuredForecast:
             candidate.categorical_outcome,
             validation.attribution,
         )
+        incoming_provenance: _Provenance = (
+            candidate.provenance_mode,
+            candidate.original_publication_at,
+        )
 
         if existing_claim is not None:
             history = await self._repository.list_vintages_for_claim(candidate.claim_key)
             for historical in history:
-                if (
+                if not (
                     historical.algorithm_version == candidate.algorithm_version
                     and historical.evidence == validation.evidence
-                    and _payload_of(historical) != incoming_payload
                 ):
+                    continue
+                if _payload_of(historical) != incoming_payload:
                     raise StructuredForecastDeterminismError(
                         candidate.claim_key,
                         candidate.algorithm_version,
                         validation.evidence,
                         _payload_of(historical),
                         incoming_payload,
+                    )
+                if _provenance_of(historical) != incoming_provenance:
+                    raise StructuredForecastProvenanceConsistencyError(
+                        candidate.claim_key,
+                        candidate.algorithm_version,
+                        validation.evidence,
+                        _provenance_of(historical),
+                        incoming_provenance,
                     )
 
         if existing_claim is None:
@@ -262,7 +359,17 @@ class RecordStructuredForecast:
             latest.algorithm_version == candidate.algorithm_version
             and latest.evidence == validation.evidence
             and _payload_of(latest) == incoming_payload
+            and _provenance_of(latest) == incoming_provenance
         ):
+            # FX-64H (H1): an exact repeat of `latest` in EVERY field
+            # material to historical interpretation -- content AND
+            # provenance classification. Anything less exact (a
+            # provenance-only difference under this SAME basis) was
+            # already raised as `StructuredForecastProvenanceConsiste
+            # ncyError` by the full-history loop above, so reaching
+            # this point with a mismatch here is only possible when
+            # `latest` itself does not share `candidate`'s own basis --
+            # i.e. this IS a legitimate new revision below.
             return StructuredForecastRecordResult(
                 claim_key=candidate.claim_key,
                 outcome=StructuredForecastOutcome.UNCHANGED,

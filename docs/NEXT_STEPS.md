@@ -6895,3 +6895,53 @@ is the complete decision record.
 **Per this story's own explicit stop instruction**: do not begin
 FX-65, FX-66, or FX-67. Independent architectural review is mandatory
 before authorizing FX-65.
+
+## FX-64H -- forecast provenance integrity hardening (complete)
+
+Two findings from FX-64's own mandatory independent architectural
+review, closed as corrective implementation only -- no schema change,
+no migration, no change to forecast-content, attribution, or target-
+definition semantics.
+
+**H1**: `RecordStructuredForecast`'s own "exact repeat" shortcut
+compared only the substantive forecast payload, so a resubmission
+that changed ONLY `provenance_mode` or `original_publication_at`
+under an unchanged evidentiary basis was silently absorbed as
+`UNCHANGED`. Fixed with a new, full-history-checked `_provenance_of`
+invariant: under an unchanged `(algorithm_version, evidence)` basis
+producing an identical payload, provenance fields must ALSO match, or
+`StructuredForecastProvenanceConsistencyError` is raised and nothing
+is written. The policy is deliberately conservative and symmetric --
+neither a retrospective-to-production promotion nor the reverse
+demotion is accepted under an unchanged basis, since neither can be
+distinguished from FTA retroactively restating when it actually came
+to know the claim. A genuine provenance correction remains fully
+supported via genuinely NEW evidence, exactly like any other content
+correction.
+
+**H2**: the `UNVERIFIED_EVIDENCE` eligibility name, read alone,
+invited the impression that `ELIGIBLE` means a cited document was
+authenticated -- it never was, by design (no fetch, hash check, or
+cross-reference exists anywhere in FX-64). Resolved purely through
+docstring clarification across `ForecastCaptureEligibility`,
+`ForecastEvidenceReference`, and `ValidateStructuredForecastCandidate`
+(no new verification machinery, no new eligibility state), proven by
+a new test showing a syntactically well-formed but fabricated
+`document_identifier` is, correctly, still `ELIGIBLE`. The pilot
+script's own module docstring now documents its author's independent
+pre-writing review as code commentary, never a persisted field; each
+candidate's own `evidence_description` text was deliberately left
+unchanged to avoid minting spurious revisions against the real pilot
+data.
+
+8 new tests. Full suite: 2970 passed (up from 2962). `ruff`/`ruff
+format`/`mypy`/`pre-commit` all clean. No migration. Real pilot data
+(5 claims, 6 vintages) and FX-56-63H data (394/358/12/400/34)
+confirmed unchanged by direct query after a live script re-run.
+
+Full details in `docs/DECISIONS.md`'s FX-64H entry; `docs/adr/0012-
+structured-forecast-capture-and-provenance.md`'s own FX-64H addendum
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-65, FX-66, or FX-67.

@@ -4,7 +4,9 @@
 
 **Accepted -- code/schema/tests complete, and real-data pilot examples
 ACTIVATED against three real, independently-verified survey sources,
-2026-10-13.**
+2026-10-13. FX-64H (provenance-consistency and evidence-verification-
+boundary hardening) closed the same day -- see this ADR's own addendum
+below.**
 
 ## Context
 
@@ -203,3 +205,77 @@ reporting `UNCHANGED`/`already recorded, skipping`.
   new variable families or jurisdictions should verify each new
   definition against its own primary source documentation before
   admission, exactly as this story did.
+
+## FX-64H addendum (2026-10-13): provenance consistency and the evidence-verification boundary
+
+Independent architectural review of FX-64 (mandatory per this ADR's
+own closing instruction) surfaced two findings, both closed as FX-64H
+without any schema change, migration, or change to forecast-content,
+attribution, or target-definition semantics.
+
+**H1 -- provenance-only changes and idempotency.** `RecordStructured
+Forecast`'s own "exact repeat -> UNCHANGED" shortcut compared only the
+substantive forecast payload against the SAME `(algorithm_version,
+evidence)` basis, so a resubmission that changed ONLY `provenance_
+mode` or `original_publication_at` was silently absorbed as
+`UNCHANGED` -- discarding the change rather than rejecting or
+recording it. Fixed by introducing a SEPARATE, full-history-checked
+invariant (`_provenance_of`, enforced wherever `_payload_of` already
+is): under an unchanged `(algorithm_version, evidence)` basis that
+ALSO produces an identical content payload, `provenance_mode` and
+`original_publication_at` must ALSO be identical, or `Structured
+ForecastProvenanceConsistencyError` is raised and nothing is written.
+This is a deliberately conservative, SYMMETRIC policy -- neither a
+`RETROSPECTIVE_RESEARCH` -> `PRODUCTION_OBSERVED` promotion nor the
+reverse demotion is ever accepted under an unchanged evidentiary
+basis, because neither direction can be distinguished from FTA
+retroactively restating when it actually came to know the claim. A
+genuine provenance correction remains fully supported, exactly like
+any other content correction: it requires genuinely NEW evidence (a
+different `evidence` object), which is a different basis entirely and
+is recorded as an ordinary `REVISION_ADDED` append. 7 new tests cover
+the full mandatory list: exact-repeat idempotency, both promotion/
+demotion directions, an isolated `original_publication_at` change,
+a genuinely-new-evidence correction, PIT-ordering precedence over the
+new check, and a rejected transition writing nothing.
+
+**H2 -- the evidence-verification boundary.** Nothing in FX-64 ever
+performed real-world authentication of a cited document (no fetch,
+hash check, or cross-reference), which was already true by design --
+but the `UNVERIFIED_EVIDENCE` eligibility name, read in isolation,
+invites the opposite impression: that its absence (`ELIGIBLE`) means
+evidence WAS verified. Resolved WITHOUT adding any verification
+machinery (explicitly out of scope) and WITHOUT a new eligibility
+state (the existing structural check is already exactly right; only
+its meaning needed to be stated unambiguously): `ForecastCaptureEligi
+bility.UNVERIFIED_EVIDENCE`, `ForecastEvidenceReference`, and
+`ValidateStructuredForecastCandidate`'s own docstrings now each state
+explicitly that this is a STRUCTURAL check only, that `ELIGIBLE` never
+implies independent authentication, and that authenticating a source
+is a human, out-of-band responsibility exercised before a candidate
+is ever constructed. A new test (`test_structurally_valid_evidence_
+is_not_authenticated`) proves the boundary directly: a syntactically
+well-formed but entirely fabricated `document_identifier` is,
+correctly, still `ELIGIBLE`. `scripts/import_pilot_structured_
+forecasts.py`'s own module docstring now separately documents, as
+pure code commentary (never a persisted field), that its author
+independently reviewed each real example against its cited source
+before writing the script -- a human curation step, never conflated
+with anything the system itself checks. Each candidate's own
+persisted `evidence_description` text was deliberately left
+UNCHANGED: it already states only what the cited document says, and
+editing it would have minted spurious `REVISION_ADDED` revisions
+against the real pilot data on the next run for no substantive
+reason (full-history determinism treats the WHOLE evidence object,
+description included, as part of the historical basis) -- confirmed
+by a dry run before and after, and reverted once observed.
+
+**Verification**: 8 new tests; full suite 2970 passed (up from 2962).
+`ruff`/`ruff format`/`mypy`/`pre-commit` all clean. No migration. Real
+pilot data confirmed unchanged by direct query (5 claims, 6 vintages
+total, matching pre-FX-64H state exactly) after a live re-run of the
+pilot script; FX-56-63H real data (394/358/12/400/34) confirmed
+unchanged.
+
+Commits: starting `4d7870b` (FX-64) -> resulting FX-64H commit (see
+`docs/DECISIONS.md`'s own FX-64H entry for the exact hash).

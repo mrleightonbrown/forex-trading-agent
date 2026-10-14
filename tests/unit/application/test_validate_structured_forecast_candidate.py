@@ -141,6 +141,24 @@ def test_numeric_value_without_unit_is_insufficient_specification() -> None:
     assert result.eligibility is ForecastCaptureEligibility.INSUFFICIENT_SPECIFICATION
 
 
+def test_structurally_valid_evidence_is_not_authenticated() -> None:
+    """FX-64H (H2): a syntactically well-formed `document_identifier`
+    proves only that the candidate is STRUCTURALLY complete enough to
+    audit -- it is never independent confirmation that the cited
+    document genuinely exists, is authentic, or says what is claimed.
+    This validator performs NO such authentication (no fetch, no hash
+    check, no cross-reference against any external registry), so an
+    entirely fabricated-but-well-formed identifier is, correctly,
+    still ELIGIBLE -- authenticating a source is a human, out-of-band
+    responsibility exercised BEFORE a candidate is ever constructed
+    (see `ForecastEvidenceReference`'s own docstring), never a job
+    this code claims to do."""
+    result = ValidateStructuredForecastCandidate()(
+        _candidate(document_identifier="UNVERIFIED-PLACEHOLDER-NEVER-CHECKED")
+    )
+    assert result.eligibility is ForecastCaptureEligibility.ELIGIBLE
+
+
 def test_vague_directional_statement_has_no_eligible_path() -> None:
     """Section 4.1's own explicit example: "inflation will be lower
     next year" has no exact value -- without a numeric_value, the

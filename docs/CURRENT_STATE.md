@@ -3311,8 +3311,24 @@ _Last updated: 2026-09-27 (FX-54V)_
   **One architectural gap honestly flagged** (ADR 0012): no real
   `PRODUCTION_OBSERVED` pilot example exists, since this story
   authorizes no live acquisition adapter -- every real example is,
-  honestly, retrospective research. **Stop after FX-64 — independent
-  architectural review is mandatory before authorizing FX-65.**
+  honestly, retrospective research.
+- **FX-64H: forecast provenance integrity hardening (complete)**. Two
+  findings from FX-64's own mandatory independent review, closed
+  without any schema change: **H1** -- `RecordStructuredForecast` now
+  enforces a SEPARATE, full-history `provenance_mode`/`original_
+  publication_at` consistency invariant alongside its existing
+  content-determinism check, so a provenance-only resubmission under
+  an unchanged evidentiary basis is rejected (`StructuredForecast
+  ProvenanceConsistencyError`), never silently absorbed as
+  `UNCHANGED` -- a deliberately symmetric policy refusing BOTH
+  retrospective-to-production promotion and the reverse demotion
+  unless backed by genuinely new evidence; **H2** -- `Forecast
+  CaptureEligibility.UNVERIFIED_EVIDENCE`/`ForecastEvidenceReference`/
+  `ValidateStructuredForecastCandidate` now each state explicitly that
+  evidence-reference validation is STRUCTURAL only, never independent
+  authentication. 8 new tests; full suite 2970 passed. No migration;
+  real pilot data and FX-56-63H data both confirmed unchanged.
+  **Stop after FX-64H — do not begin FX-65, FX-66, or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

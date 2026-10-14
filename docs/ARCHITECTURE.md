@@ -3462,6 +3462,16 @@ correction under genuinely different evidence always mints a new
 append-only revision, proven with a real within-claim correction
 pilot example.
 
+**FX-64H added a SEPARATE, symmetric provenance-consistency
+invariant**, checked over the same full vintage history: under an
+unchanged `(algorithm_version, evidence)` basis that also produces an
+identical content payload, `provenance_mode` and `original_
+publication_at` must ALSO match, or the resubmission is rejected --
+neither a `RETROSPECTIVE_RESEARCH` -> `PRODUCTION_OBSERVED` promotion
+nor the reverse demotion is ever accepted without genuinely new
+evidence, since neither direction can be distinguished from FTA
+retroactively restating when it actually came to know a claim.
+
 Real pilot examples recorded against three independently-verified,
 publicly-documented surveys (ECB SPF, Bank of Canada MPS) demonstrate
 every required case: two genuinely distinct survey rounds for the

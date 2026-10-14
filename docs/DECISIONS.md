@@ -16229,3 +16229,79 @@ is the complete decision record.
 **Per this story's own explicit stop instruction**: do not begin
 FX-65, FX-66, or FX-67. Independent architectural review is mandatory
 before authorizing FX-65.
+
+## 2026-10-13 — FX-64H: forecast provenance integrity hardening
+
+**Scope.** Two findings from the mandatory independent architectural
+review of FX-64 (above), closed as corrective implementation only --
+no schema change, no migration, no change to forecast-content,
+attribution, or target-definition semantics. Starting commit:
+`4d7870b` (the FX-64 commit).
+
+**H1 (provenance-only changes and idempotency).** `RecordStructured
+Forecast`'s own "exact repeat" shortcut compared only the substantive
+forecast payload under the SAME `(algorithm_version, evidence)`
+basis, so resubmitting with an unchanged payload but a DIFFERENT
+`provenance_mode` or `original_publication_at` was silently absorbed
+as `UNCHANGED` -- discarding the change rather than rejecting or
+recording it. Fixed with a SEPARATE invariant, checked over the SAME
+full vintage history the existing content-determinism check already
+walks: under an unchanged basis producing an identical payload,
+`provenance_mode` and `original_publication_at` must ALSO be
+identical, or the new `StructuredForecastProvenanceConsistencyError`
+is raised and nothing is written. The policy is deliberately
+conservative and SYMMETRIC -- neither a `RETROSPECTIVE_RESEARCH` ->
+`PRODUCTION_OBSERVED` promotion nor the reverse demotion is accepted
+under an unchanged basis, since neither direction can be
+distinguished from FTA retroactively restating when it actually came
+to know the claim. A genuine provenance correction remains fully
+supported via genuinely NEW evidence, exactly like any other content
+correction (a different `evidence` object is a different basis
+entirely, recorded as an ordinary `REVISION_ADDED` append). 7 new
+tests cover the full mandatory list, including PIT-ordering
+precedence over the new check and confirmation that a rejected
+transition writes nothing.
+
+**H2 (evidence-verification boundary).** FX-64 never performed
+real-world authentication of a cited document by design, but the
+`UNVERIFIED_EVIDENCE` eligibility name, read alone, invited the
+opposite impression -- that `ELIGIBLE` means evidence WAS verified.
+Resolved WITHOUT any verification machinery (explicitly out of scope)
+and WITHOUT a new eligibility state (the existing structural check was
+already correct; only its meaning needed to be stated unambiguously):
+`ForecastCaptureEligibility.UNVERIFIED_EVIDENCE`, `ForecastEvidence
+Reference`, and `ValidateStructuredForecastCandidate` now each state
+explicitly that this is a STRUCTURAL check only, never independent
+authentication. A new test proves the boundary directly: a
+syntactically well-formed but entirely fabricated `document_
+identifier` is, correctly, still `ELIGIBLE`. The pilot import script's
+own module docstring now separately documents, as pure code
+commentary never a persisted field, that its author independently
+reviewed each real example against its cited source before writing
+the script. Each candidate's own persisted `evidence_description` text
+was deliberately left UNCHANGED -- editing it would have minted
+spurious `REVISION_ADDED` revisions against the real pilot data for no
+substantive reason (full-history determinism treats the WHOLE
+evidence object as part of the historical basis), confirmed by a
+live dry run and reverted once observed.
+
+**Regression.** 8 new tests. Full deterministic suite: 2970 passed (up
+from 2962). `ruff`/`ruff format`/`mypy`/`pre-commit` all clean. No
+migration. Real pilot data confirmed unchanged by direct query after
+a live re-run of the pilot script (5 claims, 6 vintages total,
+matching pre-FX-64H state exactly, all real examples reporting
+`UNCHANGED`); FX-56-63H real data (394 news items, 358 semantic
+annotations, 12 intelligence sources, 400 attribution vintages, 34
+operational observations) confirmed unchanged.
+
+**Explicitly confirmed NOT done**: no forecast-content/attribution/
+target-definition change; no new eligibility state; no automated
+document-authentication service; no schema change or migration; no
+FX-65/66/67 work.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-64H entry; `docs/adr/0012-
+structured-forecast-capture-and-provenance.md`'s own FX-64H addendum
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-65, FX-66, or FX-67.

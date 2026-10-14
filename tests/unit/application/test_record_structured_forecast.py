@@ -15,6 +15,7 @@ from forex_agent.application.use_cases.record_structured_forecast import (
     RecordStructuredForecast,
     StructuredForecastDeterminismError,
     StructuredForecastOutcome,
+    StructuredForecastProvenanceConsistencyError,
 )
 from forex_agent.application.use_cases.validate_structured_forecast_candidate import (
     StructuredForecastCandidate,
@@ -369,4 +370,164 @@ async def test_concurrent_duplicate_submission_at_the_use_case_level() -> None:
 
     assert first.outcome is StructuredForecastOutcome.CREATED
     assert second.outcome is StructuredForecastOutcome.UNCHANGED
+    assert len(await repo.list_vintages_for_claim(_candidate().claim_key)) == 1
+
+
+# --- FX-64H (H1): provenance consistency and idempotency --------------------
+#
+# Mandatory test list (FX-64H spec): identical-submission idempotency,
+# retrospective->production promotion, production->retrospective
+# reclassification, changed original_publication_at alone, genuinely
+# new evidence supporting a provenance correction, out-of-order
+# precedence, rejected-transition-writes-nothing. ("Earlier historical
+# read unchanged after a permitted correction" and "both read paths
+# retain their stated meaning" are covered in
+# tests/unit/application/test_forecast_pit_and_research_views.py.)
+
+
+def _retrospective_candidate(**overrides: object) -> StructuredForecastCandidate:
+    """A base candidate carrying BOTH provenance-relevant fields this
+    section exercises -- `provenance_mode` and `original_publication_
+    at` -- set to non-default values so a test that forgets to
+    override one of them fails loudly rather than passing by
+    accident."""
+    defaults: dict[str, object] = {
+        "provenance_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        "original_publication_at": UtcTimestamp(datetime(2020, 1, 1, tzinfo=UTC)),
+    }
+    defaults.update(overrides)
+    return _candidate(**defaults)
+
+
+async def test_identical_complete_submission_including_provenance_is_unchanged() -> None:
+    """An exact resubmission -- same evidence, same payload, same
+    `provenance_mode`, same `original_publication_at` -- is UNCHANGED,
+    never a provenance-consistency error against itself."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(), registered_at=_ts(9))
+
+    result = await record(_retrospective_candidate(availability=_ts(10)), registered_at=_ts(9))
+
+    assert result.outcome is StructuredForecastOutcome.UNCHANGED
+    assert len(await repo.list_vintages_for_claim(_candidate().claim_key)) == 1
+
+
+async def test_retrospective_to_production_promotion_is_rejected() -> None:
+    """Resubmitting the IDENTICAL evidence/content but reclassifying
+    `provenance_mode` from RETROSPECTIVE_RESEARCH to PRODUCTION_
+    OBSERVED must be refused -- promoting it would retroactively imply
+    FTA knew the claim contemporaneously, which it did not."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(), registered_at=_ts(9))
+
+    with pytest.raises(StructuredForecastProvenanceConsistencyError):
+        await record(
+            _retrospective_candidate(
+                availability=_ts(10), provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
+            ),
+            registered_at=_ts(9),
+        )
+
+
+async def test_production_to_retrospective_reclassification_is_rejected() -> None:
+    """The reverse direction is refused too -- this story's own
+    conservative policy is symmetric, never guessing which direction
+    (if any) is the "genuine" one under an unchanged evidentiary
+    basis."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(
+        _candidate(provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED),
+        registered_at=_ts(9),
+    )
+
+    with pytest.raises(StructuredForecastProvenanceConsistencyError):
+        await record(
+            _candidate(
+                availability=_ts(10),
+                provenance_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+            ),
+            registered_at=_ts(9),
+        )
+
+
+async def test_changed_original_publication_at_with_unchanged_content_is_rejected() -> None:
+    """Resubmitting the IDENTICAL evidence/content/provenance_mode but
+    a DIFFERENT `original_publication_at` is refused too -- Section
+    H1's own "do not silently discard" requirement covers this field
+    exactly as it covers `provenance_mode`."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(), registered_at=_ts(9))
+
+    with pytest.raises(StructuredForecastProvenanceConsistencyError):
+        await record(
+            _retrospective_candidate(
+                availability=_ts(10),
+                original_publication_at=UtcTimestamp(datetime(2020, 6, 1, tzinfo=UTC)),
+            ),
+            registered_at=_ts(9),
+        )
+
+
+async def test_new_evidence_supports_a_provenance_correction() -> None:
+    """A provenance-mode change backed by GENUINELY NEW evidence -- a
+    different `evidence` object entirely -- is a legitimate correction,
+    not a violation: it never reaches the provenance-consistency check
+    at all, because it does not share the earlier vintage's own
+    `(algorithm_version, evidence)` basis."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(), registered_at=_ts(9))
+
+    result = await record(
+        _candidate(
+            availability=_ts(10),
+            provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+            original_publication_at=None,
+            document_identifier="ECB-SPF-2025Q1-REOBSERVED",
+            evidence_description="Independently reconfirmed via a real production acquisition.",
+        ),
+        registered_at=_ts(9),
+        correction_reason="reconfirmed by genuine production acquisition",
+    )
+
+    assert result.outcome is StructuredForecastOutcome.REVISION_ADDED
+    assert result.vintage is not None
+    assert result.vintage.provenance_mode is ForecastProvenanceMode.PRODUCTION_OBSERVED
+
+
+async def test_out_of_order_precedence_holds_even_with_a_provenance_change() -> None:
+    """PIT ordering is still checked FIRST -- a backdated resubmission
+    raises `OutOfOrderStructuredForecastError`, never the provenance-
+    consistency error, even when it ALSO carries a different
+    `provenance_mode`."""
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(availability=_ts(10)), registered_at=_ts(9))
+
+    with pytest.raises(OutOfOrderStructuredForecastError):
+        await record(
+            _retrospective_candidate(
+                availability=_ts(9), provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
+            ),
+            registered_at=_ts(9),
+        )
+
+
+async def test_rejected_provenance_transition_writes_nothing() -> None:
+    repo = FakeStructuredForecastRepository()
+    record = RecordStructuredForecast(repo)
+    await record(_retrospective_candidate(), registered_at=_ts(9))
+
+    with pytest.raises(StructuredForecastProvenanceConsistencyError):
+        await record(
+            _retrospective_candidate(
+                availability=_ts(10), provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
+            ),
+            registered_at=_ts(9),
+        )
+
     assert len(await repo.list_vintages_for_claim(_candidate().claim_key)) == 1

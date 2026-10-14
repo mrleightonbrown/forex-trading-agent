@@ -11,7 +11,20 @@ never allowed to crash the caller with an uncaught exception.
 
 This is the ONLY place in FX-64 that performs this classification; both
 `RecordStructuredForecast` and any future caller reuse this exact
-function rather than re-implementing the same checks."""
+function rather than re-implementing the same checks.
+
+**FX-64H (H2) boundary, stated explicitly**: every check here,
+including the `UNVERIFIED_EVIDENCE` branch, validates STRUCTURE --
+whether the candidate's own raw fields can assemble into a well-formed
+value object -- never whether a cited document is AUTHENTIC. `ELIGIBLE`
+never implies, and must never be read by any caller as implying, that
+the evidence was independently confirmed to exist or say what is
+claimed. This function performs no fetch, hash check, or external
+cross-reference, and this story deliberately adds none -- authenticating
+a source is a human, out-of-band responsibility exercised BEFORE a
+candidate is ever constructed (e.g. by whoever curates a pilot import's
+own `evidence_description`/`document_identifier`, as documented in
+that import script's own module docstring)."""
 
 from dataclasses import dataclass
 from decimal import Decimal
