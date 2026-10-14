@@ -3547,6 +3547,21 @@ actually running the pilot script against real Postgres.
 scores, or any trading integration. FX-66 and FX-67 remain
 unauthorized.
 
+**FX-65H hardened the outcome-selection trust boundary**: `Evaluate
+StructuredForecast` no longer accepts a caller-supplied outcome
+resolution at all -- it resolves the outcome ITSELF, via the same
+authoritative `ResolveForecastOutcomeAsOf`, from a caller-supplied
+`outcome_key` alone, using the protocol's own pinned policy and the
+evaluation's own `availability` as the PIT bound. This makes
+cherry-picking an outcome vintage structurally impossible rather than
+merely detectable. `AssessForecastEvaluationAdmissibility` also now
+enforces that every evaluation input (forecast, protocol, outcome,
+outcome definition, both authentication reviews) was itself available
+by the evaluation's own recorded instant, and that a production
+evaluation requires BOTH the forecast and the outcome to themselves
+be `PRODUCTION_OBSERVED` (the original check covered only the
+forecast side). See ADR 0013's own FX-65H addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

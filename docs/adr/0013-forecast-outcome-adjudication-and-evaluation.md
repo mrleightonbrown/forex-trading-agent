@@ -4,7 +4,9 @@
 
 **Accepted -- code/schema/tests complete, and a real-data pilot
 evaluation ACTIVATED against one independently-verified Bank of
-Canada example, 2026-10-13/14.**
+Canada example, 2026-10-13/14. FX-65H (evaluation basis and PIT
+integrity hardening) closed the same cycle -- see this ADR's own
+addendum below.**
 
 ## Context
 
@@ -191,3 +193,89 @@ across four repeated real runs.
 - No forecast-outcome adapter, EconomicEvent linkage, aggregate source
   performance, reputation score, or trading integration of any kind
   was added.
+
+## FX-65H addendum (2026-10-14): evaluation basis and PIT integrity hardening
+
+Independent architectural review of FX-65 (mandatory per Section 20's
+own closing instruction) surfaced three findings, all closed as
+corrective implementation only -- no schema/migration change, no
+change to numeric/categorical computation, no change to append-only
+history or FX-64's own approved semantics.
+
+**H1 -- the outcome is now OBTAINED, never merely TRUSTED.** FX-65's
+own original design let a caller supply a pre-computed `ForecastOutcome
+ResolutionResult` directly to `EvaluateStructuredForecast`, which
+trusted it whenever its status was `OUTCOME_AVAILABLE` -- nothing
+verified that the supplied vintage was actually what the protocol's
+own `outcome_vintage_selection_policy` would have selected, nor that
+it was captured under the protocol's own pinned outcome definition.
+Fixed by making `EvaluateStructuredForecast` resolve the outcome
+INTERNALLY: the caller now supplies only `outcome_key`, and this use
+case calls the SAME authoritative `ResolveForecastOutcomeAsOf` itself
+(reusing the existing resolver, never a second independent selection
+algorithm), using the protocol's own policy/pinned-revision fields and
+the evaluation's own `availability` as the PIT bound. This makes
+cherry-picking an outcome vintage structurally impossible rather than
+merely detectable after the fact -- there is no longer a parameter
+through which a caller COULD supply a mismatched resolution. The
+resolver itself does not filter by definition, so `AssessForecastEval
+uationAdmissibility` additionally cross-checks the resolved outcome's
+own `definition_key`/`definition_version_sequence` against the
+protocol's own pinned definition, folded into the existing `PROTOCOL_
+MISMATCH` verdict (the same "this does not match what the protocol
+requires" family, never a new category). This IS an incompatible
+change to `EvaluateStructuredForecast`'s own public signature
+(`outcome_resolution` removed, `outcome_repository` and `outcome_key`
+added) -- explicitly justified: the removed parameter's entire
+purpose was the exact trust boundary this finding identified as
+broken, so closing it structurally is more defensible than adding
+verification logic around a parameter designed to be bypassed.
+`algorithm_version` stays `fx65_v1` -- this is a safety/orchestration
+fix, not a change to how a given (forecast, outcome) pair is
+interpreted into a result.
+
+**H2 -- every evaluation input's own FTA-knowledge timestamp is now
+enforced.** Nothing previously checked that the evaluation's own
+recorded `availability` was no earlier than the forecast vintage, the
+protocol version, the outcome vintage, the outcome definition version,
+or either authentication review's own `reviewed_at`. Fixed by adding
+this check to `AssessForecastEvaluationAdmissibility` (new verdict:
+`INPUT_NOT_YET_AVAILABLE`), comparing exclusively against each input's
+own `availability`/`reviewed_at` field -- never a publisher-declared
+release timestamp (Section 10's own three-timelines discipline,
+extended to a fourth and fifth: the outcome definition's own
+availability and both authentication reviews' own `reviewed_at`).
+`EvaluateStructuredForecast` fetches the specific pinned outcome-
+definition version via the ALREADY-APPROVED `list_outcome_definition_
+versions` method (no new repository interface) to make this check
+possible.
+
+**H3 -- production evaluation now requires BOTH sides to be
+production-observed.** The original check only verified the
+FORECAST's own `provenance_mode` against `PRODUCTION_OBSERVED`
+evaluations; the OUTCOME side was unchecked, permitting an implicit
+promotion of retrospective outcome evidence into a production
+evaluation. Fixed with a symmetric check on the outcome vintage,
+reusing the existing `RESEARCH_ONLY` verdict (no new category).
+Retrospective-research evaluations continue to accept either
+provenance mode for both inputs, unchanged.
+
+**Verification**: 15 new/updated test files' worth of coverage across
+all 15 of the story's own mandatory regression scenarios (correct-
+case acceptance; wrong definition key/version; FIRST_RELEASE/FIXED_
+RELEASE_VINTAGE cherry-pick attempts, now structurally impossible;
+future outcome/protocol/forecast/review inputs; retrospective-outcome-
+in-production; correctly-authenticated retrospective evaluation;
+historical-evaluation-unchanged-after-later-outcome-revision; rejected-
+evaluation-writes-nothing; concurrent/idempotent behavior), plus real-
+PostgreSQL integration coverage for the incorrect-outcome and FK cases.
+Full suite: 3107 passed (up from 3092). `ruff`/`ruff format`/`mypy`/
+`pre-commit` all clean. No migration. The real Bank of Canada pilot
+evaluation was re-run against real Postgres and continues to report
+`UNCHANGED` with `signed_error=-0.50`/`absolute_error=0.50` -- the
+exact result from before this hardening, now additionally proven to
+have survived structural re-verification of its own outcome
+selection, definition pinning, and input-availability ordering.
+
+Commits: starting `f8c7ac5` (FX-65) -> resulting FX-65H commit (see
+`docs/DECISIONS.md`'s own FX-65H entry for the exact hash).

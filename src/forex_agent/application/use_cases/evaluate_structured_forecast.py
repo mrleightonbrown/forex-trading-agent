@@ -1,11 +1,29 @@
 """FX-65 Section 11/12: `EvaluateStructuredForecast` -- evaluates ONE
-admissible forecast vintage under ONE protocol against ONE resolved
-outcome, and persists the result append-only. Mirrors `RecordStructured
-Forecast`'s own overall shape exactly: admissibility is assessed FIRST,
+admissible forecast vintage under ONE protocol against ONE outcome,
+and persists the result append-only. Mirrors `RecordStructuredForecast`'s
+own overall shape exactly: admissibility is assessed FIRST,
 unconditionally (never a general statistical framework -- the
 architect's own explicit preference for "a small, rigorously auditable
 evaluator"); a non-`ADMISSIBLE` verdict returns a `REJECTED` result
 immediately, never reaching the repository.
+
+**FX-65H (H1) correction -- the outcome is OBTAINED, never merely
+TRUSTED.** The caller supplies only `outcome_key`; this use case is
+the ONLY place that resolves which outcome vintage applies, by
+calling `ResolveForecastOutcomeAsOf` itself -- the SAME authoritative
+resolver Section 13 names, never a second, independent selection
+algorithm -- using the protocol's OWN pinned `outcome_vintage_
+selection_policy`/`fixed_outcome_revision_sequence` and the
+evaluation's own `availability` as the PIT bound. This makes it
+structurally impossible for a caller to inject an outcome vintage the
+protocol's own policy would not itself have selected (Section 6/7's
+own "never selected merely to make a forecast look accurate" rule,
+now enforced by construction rather than by trusting a caller-
+supplied result). The resolved outcome's own `definition_key`/
+`definition_version_sequence` is additionally cross-checked against
+the protocol's own pinned definition in `AssessForecastEvaluation
+Admissibility` -- the resolver itself does not filter by definition,
+so this check closes that remaining gap.
 
 **Historical determinism (Section 12)**: the determinism basis is the
 COMPLETE evaluation basis -- `(forecast_claim_key, forecast_revision_
@@ -21,9 +39,12 @@ distinct basis, handled as an ordinary `REVISION_ADDED` append,
 exactly mirroring FX-64's own "genuinely new evidence is a different
 basis, never compared" pattern).
 
-**Precedence**: PIT ordering (the evaluation's own `availability`,
+**Precedence**: admissibility (now including FX-65H's own H2 input-
+availability check) is assessed FIRST; PIT ordering against this
+evaluation's OWN history (the evaluation's own `availability`,
 Section 10's third timeline) is checked BEFORE determinism, mirroring
-every other append-only use case in this codebase."""
+every other append-only use case in this codebase -- UNCHANGED by
+FX-65H."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -32,12 +53,14 @@ from enum import Enum
 from forex_agent.application.ports.forecast_evaluation_repository import (
     ForecastEvaluationRepository,
 )
+from forex_agent.application.ports.forecast_outcome_repository import ForecastOutcomeRepository
 from forex_agent.application.use_cases.assess_forecast_evaluation_admissibility import (
     AssessForecastEvaluationAdmissibility,
     ForecastEvaluationAdmissibilityAssessment,
 )
 from forex_agent.application.use_cases.resolve_forecast_outcome_as_of import (
     ForecastOutcomeResolutionResult,
+    ResolveForecastOutcomeAsOf,
 )
 from forex_agent.domain.categorical_evaluation_result import CategoricalEvaluationResult
 from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
@@ -129,6 +152,22 @@ class StructuredForecastEvaluationDeterminismError(Exception):
         )
 
 
+class MissingOutcomeDefinitionVersionError(Exception):
+    """FX-65H (H1): raised when a protocol pins an outcome-definition
+    version that does not actually exist -- a configuration/integrity
+    defect, never a normal "try again later" business state (unlike
+    `NOT_YET_MATURED`/`OUTCOME_UNAVAILABLE`, which this is NOT)."""
+
+    def __init__(self, protocol_key: str, definition_key: str, version_sequence: int) -> None:
+        self.protocol_key = protocol_key
+        self.definition_key = definition_key
+        self.version_sequence = version_sequence
+        super().__init__(
+            f"protocol_key={protocol_key!r} pins outcome definition "
+            f"({definition_key!r}, version_sequence={version_sequence}), which does not exist"
+        )
+
+
 def _compute_result(
     protocol: ForecastEvaluationProtocol,
     forecast_vintage: StructuredForecastVintage,
@@ -160,18 +199,22 @@ def _compute_result(
 
 class EvaluateStructuredForecast:
     """See the module docstring. Takes every cross-repository input
-    ALREADY RESOLVED by the caller (the forecast vintage via FX-64's
-    own `GetForecastClaimAsOf`/`GetRetrospectiveForecastResearchView`,
-    the outcome resolution via `ResolveForecastOutcomeAsOf`, the
-    protocol/outcome-definition via their own repositories) -- this
-    use case itself only assesses, computes, and persists."""
+    ALREADY RESOLVED by the caller EXCEPT the outcome (the forecast
+    vintage via FX-64's own `GetForecastClaimAsOf`/`GetRetrospective
+    ForecastResearchView`, the protocol via its own repository) --
+    the outcome itself is resolved INTERNALLY (FX-65H's own H1
+    correction), from a caller-supplied `outcome_key` alone."""
 
     def __init__(
         self,
         repository: ForecastEvaluationRepository,
+        outcome_repository: ForecastOutcomeRepository,
+        resolve_outcome: ResolveForecastOutcomeAsOf | None = None,
         assess: AssessForecastEvaluationAdmissibility | None = None,
     ) -> None:
         self._repository = repository
+        self._outcome_repository = outcome_repository
+        self._resolve_outcome = resolve_outcome or ResolveForecastOutcomeAsOf(outcome_repository)
         self._assess = assess or AssessForecastEvaluationAdmissibility()
 
     async def __call__(
@@ -182,18 +225,45 @@ class EvaluateStructuredForecast:
         forecast_authentication_review: EvidenceAuthenticationReview | None,
         evaluation_mode: ForecastProvenanceMode,
         protocol: ForecastEvaluationProtocol,
-        outcome_resolution: ForecastOutcomeResolutionResult,
+        outcome_key: str,
         algorithm_version: str,
         availability: UtcTimestamp,
         correction_reason: str | None = None,
         dry_run: bool = False,
     ) -> StructuredForecastEvaluationRecordResult:
+        outcome_resolution = await self._resolve_outcome(
+            outcome_key,
+            protocol.outcome_vintage_selection_policy,
+            availability,
+            fixed_revision_sequence=protocol.fixed_outcome_revision_sequence,
+        )
+
+        definition_versions = await self._outcome_repository.list_outcome_definition_versions(
+            protocol.outcome_definition_key
+        )
+        outcome_definition = next(
+            (
+                d
+                for d in definition_versions
+                if d.version_sequence == protocol.outcome_definition_version_sequence
+            ),
+            None,
+        )
+        if outcome_definition is None:
+            raise MissingOutcomeDefinitionVersionError(
+                protocol.protocol_key,
+                protocol.outcome_definition_key,
+                protocol.outcome_definition_version_sequence,
+            )
+
         assessment: ForecastEvaluationAdmissibilityAssessment = self._assess(
             forecast_vintage=forecast_vintage,
             forecast_authentication_review=forecast_authentication_review,
             evaluation_mode=evaluation_mode,
             protocol=protocol,
+            outcome_definition=outcome_definition,
             outcome_resolution=outcome_resolution,
+            evaluation_availability=availability,
         )
         if assessment.admissibility is not ForecastEvaluationAdmissibility.ADMISSIBLE:
             return StructuredForecastEvaluationRecordResult(

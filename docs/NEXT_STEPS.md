@@ -7017,3 +7017,49 @@ is the complete decision record.
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67. Passing automated tests does not constitute
 architectural approval.
+
+## FX-65H -- evaluation basis and PIT integrity hardening (complete)
+
+Three findings from FX-65's own mandatory independent architectural
+review, closed as corrective implementation only -- no schema change,
+no change to numeric/categorical computation, append-only history, or
+FX-64's own approved semantics.
+
+**H1**: `EvaluateStructuredForecast` no longer accepts a caller-
+supplied outcome resolution -- it resolves the outcome ITSELF, via
+the same authoritative `ResolveForecastOutcomeAsOf`, from a caller-
+supplied `outcome_key` alone, using the protocol's own pinned policy
+and the evaluation's own `availability` as the PIT bound. This makes
+outcome cherry-picking structurally impossible rather than merely
+detectable; the resolved outcome's own definition is also cross-
+checked against the protocol's own pinned definition. This is a
+deliberate, justified incompatible change to the use case's own
+public signature (the removed parameter's entire purpose was the
+trust boundary this finding broke).
+
+**H2**: `AssessForecastEvaluationAdmissibility` now enforces that
+every evaluation input (forecast, protocol, outcome, outcome
+definition, both authentication reviews) was itself available by the
+evaluation's own recorded instant -- comparing exclusively FTA-
+knowledge timestamps, never publisher-declared release timestamps
+(new verdict: `INPUT_NOT_YET_AVAILABLE`).
+
+**H3**: a production evaluation now requires BOTH the forecast AND
+the outcome to themselves be `PRODUCTION_OBSERVED` -- the original
+check covered only the forecast side, permitting an implicit
+promotion of retrospective outcome evidence into production.
+
+All 15 of the story's own mandatory regression scenarios covered,
+including real-PostgreSQL integration coverage. Full suite: 3107
+passed (up from 3092). `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. No migration. The real Bank of Canada pilot evaluation was
+re-run against real Postgres and continues to report the exact same
+result (signed error -0.50pp, absolute error 0.50pp) as before this
+hardening.
+
+Full details in `docs/DECISIONS.md`'s FX-65H entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

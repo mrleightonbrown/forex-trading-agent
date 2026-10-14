@@ -284,7 +284,7 @@ async def main(dry_run: bool) -> None:
         assert forecast_vintage is not None
 
         evaluate = EvaluateStructuredForecast(
-            evaluation_repo, AssessForecastEvaluationAdmissibility()
+            evaluation_repo, outcome_repo, assess=AssessForecastEvaluationAdmissibility()
         )
         eval_result = await evaluate(
             evaluation_key=_EVALUATION_KEY,
@@ -292,7 +292,7 @@ async def main(dry_run: bool) -> None:
             forecast_authentication_review=_forecast_authentication_review(),
             evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
             protocol=_protocol(now),
-            outcome_resolution=outcome_resolution,
+            outcome_key=_OUTCOME_KEY,
             algorithm_version="fx65_v1",
             availability=now,
         )

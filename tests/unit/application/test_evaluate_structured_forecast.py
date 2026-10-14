@@ -1,6 +1,12 @@
 """FX-65 Section 11/12/16.D/16.E: tests for `EvaluateStructuredForecast`
 -- admissibility-first rejection, PIT ordering/availability, and the
-full-history determinism invariant over the COMPLETE evaluation basis."""
+full-history determinism invariant over the COMPLETE evaluation basis.
+
+FX-65H (H1) addition: the outcome is now resolved INTERNALLY (via the
+SAME authoritative `ResolveForecastOutcomeAsOf`), from a caller-
+supplied `outcome_key` alone -- these tests prove a caller can no
+longer inject an outcome vintage the protocol's own policy would not
+itself have selected."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -9,6 +15,7 @@ import pytest
 
 from forex_agent.application.use_cases.evaluate_structured_forecast import (
     EvaluateStructuredForecast,
+    MissingOutcomeDefinitionVersionError,
     OutOfOrderStructuredForecastEvaluationError,
     StructuredForecastEvaluationDeterminismError,
     StructuredForecastEvaluationOutcome,
@@ -20,18 +27,14 @@ from forex_agent.application.use_cases.get_forecast_evaluation_as_of import (
 from forex_agent.application.use_cases.get_retrospective_forecast_evaluation import (
     GetRetrospectiveForecastEvaluation,
 )
-from forex_agent.application.use_cases.resolve_forecast_outcome_as_of import (
-    ForecastOutcomeResolutionResult,
-)
 from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
 from forex_agent.domain.forecast_attribution import ForecastAttribution
 from forex_agent.domain.forecast_attribution_kind import ForecastAttributionKind
-from forex_agent.domain.forecast_evaluation_admissibility import ForecastEvaluationAdmissibility
 from forex_agent.domain.forecast_evaluation_metric import ForecastEvaluationMetric
 from forex_agent.domain.forecast_evaluation_protocol import ForecastEvaluationProtocol
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
-from forex_agent.domain.forecast_outcome_resolution_status import ForecastOutcomeResolutionStatus
+from forex_agent.domain.forecast_outcome_definition import ForecastOutcomeDefinition
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
 from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
@@ -41,8 +44,11 @@ from forex_agent.domain.outcome_vintage_selection_policy import OutcomeVintageSe
 from forex_agent.domain.structured_forecast_vintage import StructuredForecastVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 from tests.fakes.forecast_evaluation_repository import FakeForecastEvaluationRepository
+from tests.fakes.forecast_outcome_repository import FakeForecastOutcomeRepository
 
 _EVALUATION_KEY = "EVAL:BOC-MPS-2024Q4:boc-rate-protocol"
+_OUTCOME_KEY = "BOC-RATE-DECISION-2024-12-11"
+_DEFINITION_KEY = "BOC-RATE-OUTCOME"
 
 
 def _ts(day: int = 1, hour: int = 0) -> UtcTimestamp:
@@ -88,7 +94,7 @@ def _protocol(**overrides: object) -> ForecastEvaluationProtocol:
         "version_sequence": 0,
         "supported_forecast_type": ForecastType.NUMERIC_POINT,
         "target_key": "CA_POLICY_RATE_LEVEL_AFTER_MEETING",
-        "outcome_definition_key": "BOC-RATE-OUTCOME",
+        "outcome_definition_key": _DEFINITION_KEY,
         "outcome_definition_version_sequence": 0,
         "outcome_vintage_selection_policy": OutcomeVintageSelectionPolicy.FIRST_RELEASE,
         "metric": ForecastEvaluationMetric.NUMERIC_ERROR,
@@ -99,11 +105,27 @@ def _protocol(**overrides: object) -> ForecastEvaluationProtocol:
     return ForecastEvaluationProtocol(**defaults)  # type: ignore[arg-type]
 
 
+def _outcome_definition(**overrides: object) -> ForecastOutcomeDefinition:
+    defaults: dict[str, object] = {
+        "definition_key": _DEFINITION_KEY,
+        "version_sequence": 0,
+        "target_key": "CA_POLICY_RATE_LEVEL_AFTER_MEETING",
+        "outcome_type": ForecastType.NUMERIC_POINT,
+        "provider_source_key": "BANK_OF_CANADA",
+        "required_source_series_identifier": "BOC-RATE-ANNOUNCEMENT",
+        "outcome_vintage_selection_policy": OutcomeVintageSelectionPolicy.FIRST_RELEASE,
+        "availability": _ts(1),
+        "supporting_definition_reference": "Bank of Canada FAD methodology",
+    }
+    defaults.update(overrides)
+    return ForecastOutcomeDefinition(**defaults)  # type: ignore[arg-type]
+
+
 def _outcome_vintage(**overrides: object) -> ForecastOutcomeVintage:
     defaults: dict[str, object] = {
-        "outcome_key": "BOC-RATE-DECISION-2024-12-11",
+        "outcome_key": _OUTCOME_KEY,
         "revision_sequence": 0,
-        "definition_key": "BOC-RATE-OUTCOME",
+        "definition_key": _DEFINITION_KEY,
         "definition_version_sequence": 0,
         "availability": _ts(1),
         "target_period": _period(),
@@ -124,12 +146,6 @@ def _outcome_vintage(**overrides: object) -> ForecastOutcomeVintage:
     return ForecastOutcomeVintage(**defaults)  # type: ignore[arg-type]
 
 
-def _available(vintage: ForecastOutcomeVintage) -> ForecastOutcomeResolutionResult:
-    return ForecastOutcomeResolutionResult(
-        ForecastOutcomeResolutionStatus.OUTCOME_AVAILABLE, vintage
-    )
-
-
 def _review() -> EvidenceAuthenticationReview:
     return EvidenceAuthenticationReview(
         reviewed_by="FTA research operator",
@@ -139,17 +155,32 @@ def _review() -> EvidenceAuthenticationReview:
     )
 
 
+def _seeded_outcome_repo(
+    *,
+    definitions: tuple[ForecastOutcomeDefinition, ...] = (),
+    vintages: tuple[ForecastOutcomeVintage, ...] = (),
+) -> FakeForecastOutcomeRepository:
+    repo = FakeForecastOutcomeRepository()
+    for definition in definitions or (_outcome_definition(),):
+        repo.definitions.setdefault(definition.definition_key, []).append(definition)
+    for vintage in vintages or (_outcome_vintage(),):
+        repo.vintages.setdefault(vintage.outcome_key, []).append(vintage)
+    return repo
+
+
 async def _evaluate(
-    repo: FakeForecastEvaluationRepository, **overrides: object
+    evaluation_repo: FakeForecastEvaluationRepository,
+    outcome_repo: FakeForecastOutcomeRepository,
+    **overrides: object,
 ) -> StructuredForecastEvaluationOutcome:
-    evaluate = EvaluateStructuredForecast(repo)
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
     defaults: dict[str, object] = {
         "evaluation_key": _EVALUATION_KEY,
         "forecast_vintage": _forecast_vintage(),
         "forecast_authentication_review": _review(),
         "evaluation_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
         "protocol": _protocol(),
-        "outcome_resolution": _available(_outcome_vintage()),
+        "outcome_key": _OUTCOME_KEY,
         "algorithm_version": "fx65_v1",
         "availability": _ts(2),
     }
@@ -158,30 +189,10 @@ async def _evaluate(
     return result.outcome
 
 
-async def test_inadmissible_forecast_is_rejected_and_writes_nothing() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-
-    result = await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=None,
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
-    )
-
-    assert result.outcome is StructuredForecastEvaluationOutcome.REJECTED
-    assert result.admissibility is ForecastEvaluationAdmissibility.UNVERIFIED_SOURCE
-    assert result.vintage is None
-    assert len(repo.vintages) == 0
-
-
 async def test_first_evaluation_is_created() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
 
     result = await evaluate(
         evaluation_key=_EVALUATION_KEY,
@@ -189,7 +200,7 @@ async def test_first_evaluation_is_created() -> None:
         forecast_authentication_review=_review(),
         evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
         protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
+        outcome_key=_OUTCOME_KEY,
         algorithm_version="fx65_v1",
         availability=_ts(2),
     )
@@ -200,70 +211,62 @@ async def test_first_evaluation_is_created() -> None:
     assert result.vintage.result.absolute_error == Decimal("0.50")
 
 
-async def test_exact_repeat_is_unchanged() -> None:
-    repo = FakeForecastEvaluationRepository()
-    assert await _evaluate(repo) is StructuredForecastEvaluationOutcome.CREATED
+async def test_inadmissible_forecast_is_rejected_and_writes_nothing() -> None:
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
 
-    outcome = await _evaluate(repo, availability=_ts(3))
+    outcome = await _evaluate(evaluation_repo, outcome_repo, forecast_authentication_review=None)
+
+    assert outcome is StructuredForecastEvaluationOutcome.REJECTED
+    assert len(evaluation_repo.vintages) == 0
+
+
+async def test_exact_repeat_is_unchanged() -> None:
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    assert (
+        await _evaluate(evaluation_repo, outcome_repo)
+        is StructuredForecastEvaluationOutcome.CREATED
+    )
+
+    outcome = await _evaluate(evaluation_repo, outcome_repo, availability=_ts(3))
 
     assert outcome is StructuredForecastEvaluationOutcome.UNCHANGED
-    assert len(repo.vintages[_EVALUATION_KEY]) == 1
+    assert len(evaluation_repo.vintages[_EVALUATION_KEY]) == 1
 
 
 async def test_out_of_order_availability_is_rejected() -> None:
-    repo = FakeForecastEvaluationRepository()
-    assert await _evaluate(repo, availability=_ts(3)) is StructuredForecastEvaluationOutcome.CREATED
-
-    with pytest.raises(OutOfOrderStructuredForecastEvaluationError):
-        await _evaluate(repo, availability=_ts(2))
-
-
-async def test_same_basis_different_result_is_determinism_error() -> None:
-    """A different outcome VALUE under the IDENTICAL complete basis
-    (same forecast/protocol/outcome vintage/mode/algorithm_version)
-    would only arise from a non-deterministic bug -- refused."""
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    assert (
+        await _evaluate(evaluation_repo, outcome_repo, availability=_ts(3))
+        is StructuredForecastEvaluationOutcome.CREATED
     )
 
+    with pytest.raises(OutOfOrderStructuredForecastEvaluationError):
+        await _evaluate(evaluation_repo, outcome_repo, availability=_ts(2))
+
+
+async def test_same_basis_different_forecast_value_is_determinism_error() -> None:
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    await _evaluate(evaluation_repo, outcome_repo, availability=_ts(2))
+
     with pytest.raises(StructuredForecastEvaluationDeterminismError):
-        await evaluate(
-            evaluation_key=_EVALUATION_KEY,
+        await _evaluate(
+            evaluation_repo,
+            outcome_repo,
             forecast_vintage=_forecast_vintage(numeric_value=Decimal("4.00")),
-            forecast_authentication_review=_review(),
-            evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-            protocol=_protocol(),
-            outcome_resolution=_available(_outcome_vintage()),
-            algorithm_version="fx65_v1",
             availability=_ts(3),
         )
 
 
 async def test_same_basis_different_authentication_review_is_determinism_error() -> None:
     """The forecast's own authentication review is part of the
-    compared payload -- mirrors FX-64H's own "metadata material to
-    historical interpretation must not silently change" lesson."""
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
-    )
+    compared payload -- mirrors FX-64H's own lesson."""
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    await _evaluate(evaluation_repo, outcome_repo, availability=_ts(2))
     different_review = EvidenceAuthenticationReview(
         reviewed_by="A different reviewer",
         review_method="Direct review",
@@ -272,162 +275,83 @@ async def test_same_basis_different_authentication_review_is_determinism_error()
     )
 
     with pytest.raises(StructuredForecastEvaluationDeterminismError):
-        await evaluate(
-            evaluation_key=_EVALUATION_KEY,
-            forecast_vintage=_forecast_vintage(),
+        await _evaluate(
+            evaluation_repo,
+            outcome_repo,
             forecast_authentication_review=different_review,
-            evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-            protocol=_protocol(),
-            outcome_resolution=_available(_outcome_vintage()),
-            algorithm_version="fx65_v1",
             availability=_ts(3),
         )
 
 
 async def test_changed_outcome_vintage_is_a_permitted_reevaluation() -> None:
     """A later outcome revision changes the basis entirely -- a
-    legitimate, append-only re-evaluation, never compared against the
-    earlier basis."""
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
+    legitimate, append-only re-evaluation."""
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(
+            _outcome_vintage(revision_sequence=0, numeric_value=Decimal("3.25")),
+            _outcome_vintage(
+                revision_sequence=1, numeric_value=Decimal("3.00"), availability=_ts(1, 12)
+            ),
+        )
+    )
+    await _evaluate(
+        evaluation_repo,
+        outcome_repo,
+        protocol=_protocol(
+            outcome_vintage_selection_policy=OutcomeVintageSelectionPolicy.FIRST_RELEASE
+        ),
         availability=_ts(2),
     )
 
-    revised_outcome = _outcome_vintage(revision_sequence=1, numeric_value=Decimal("3.00"))
-    result = await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(revised_outcome),
-        algorithm_version="fx65_v1",
+    fixed_protocol = _protocol(
+        version_sequence=1,
+        outcome_vintage_selection_policy=OutcomeVintageSelectionPolicy.FIXED_RELEASE_VINTAGE,
+        fixed_outcome_revision_sequence=1,
+        correction_reason="switch to the corrected release",
+    )
+    outcome_repo.definitions[_DEFINITION_KEY].append(
+        _outcome_definition()
+    )  # no-op, already present
+    result_outcome = await _evaluate(
+        evaluation_repo,
+        outcome_repo,
+        protocol=fixed_protocol,
         availability=_ts(3),
         correction_reason="outcome source issued a correction",
     )
 
-    assert result.outcome is StructuredForecastEvaluationOutcome.REVISION_ADDED
-    assert result.vintage is not None
-    assert result.vintage.result.signed_error == Decimal("-0.75")
-
-
-async def test_changed_protocol_version_is_an_independent_basis() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
-    )
-
-    new_protocol_version = _protocol(version_sequence=1, correction_reason="refined rationale text")
-    result = await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=new_protocol_version,
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(3),
-    )
-
-    assert result.outcome is StructuredForecastEvaluationOutcome.REVISION_ADDED
-
-
-async def test_full_history_v1_a_v2_b_v1_a_succeeds() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    outcome_v1 = _outcome_vintage(revision_sequence=0, numeric_value=Decimal("3.25"))
-    outcome_v2 = _outcome_vintage(revision_sequence=1, numeric_value=Decimal("3.00"))
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(outcome_v1),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
-    )
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(outcome_v2),
-        algorithm_version="fx65_v1",
-        availability=_ts(3),
-    )
-
-    result = await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(outcome_v1),
-        algorithm_version="fx65_v1",
-        availability=_ts(4),
-    )
-
-    assert result.outcome is StructuredForecastEvaluationOutcome.REVISION_ADDED
-    assert result.vintage is not None
-    assert result.vintage.result.signed_error == Decimal("-0.50")
+    assert result_outcome is StructuredForecastEvaluationOutcome.REVISION_ADDED
 
 
 async def test_concurrent_duplicate_submission() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    kwargs: dict[str, object] = {
-        "evaluation_key": _EVALUATION_KEY,
-        "forecast_vintage": _forecast_vintage(),
-        "forecast_authentication_review": _review(),
-        "evaluation_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        "protocol": _protocol(),
-        "outcome_resolution": _available(_outcome_vintage()),
-        "algorithm_version": "fx65_v1",
-        "availability": _ts(2),
-    }
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
 
-    first = await evaluate(**kwargs)  # type: ignore[arg-type]
-    second = await evaluate(**kwargs)  # type: ignore[arg-type]
+    first = await _evaluate(evaluation_repo, outcome_repo)
+    second = await _evaluate(evaluation_repo, outcome_repo)
 
-    assert first.outcome is StructuredForecastEvaluationOutcome.CREATED
-    assert second.outcome is StructuredForecastEvaluationOutcome.UNCHANGED
-    assert len(repo.vintages[_EVALUATION_KEY]) == 1
+    assert first is StructuredForecastEvaluationOutcome.CREATED
+    assert second is StructuredForecastEvaluationOutcome.UNCHANGED
+    assert len(evaluation_repo.vintages[_EVALUATION_KEY]) == 1
 
 
 async def test_evaluation_invisible_before_its_actual_recording_time() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(
-            provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
-        ),
-        forecast_authentication_review=_review(),
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(_outcome_vintage(provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED),)
+    )
+    production_forecast = _forecast_vintage(
+        provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
+    )
+    await _evaluate(
+        evaluation_repo,
+        outcome_repo,
+        forecast_vintage=production_forecast,
         evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
         availability=_ts(5),
     )
-    get_evaluation = GetForecastEvaluationAsOf(repo)
+    get_evaluation = GetForecastEvaluationAsOf(evaluation_repo)
 
     before = await get_evaluation(_EVALUATION_KEY, _ts(3))
     after = await get_evaluation(_EVALUATION_KEY, _ts(6))
@@ -437,33 +361,39 @@ async def test_evaluation_invisible_before_its_actual_recording_time() -> None:
 
 
 async def test_later_outcome_correction_leaves_earlier_evaluation_unchanged() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(_outcome_vintage(provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED),)
+    )
     production_forecast = _forecast_vintage(
         provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED
     )
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
+    await _evaluate(
+        evaluation_repo,
+        outcome_repo,
         forecast_vintage=production_forecast,
-        forecast_authentication_review=_review(),
         evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
         availability=_ts(2),
     )
-    get_evaluation = GetForecastEvaluationAsOf(repo)
+    get_evaluation = GetForecastEvaluationAsOf(evaluation_repo)
     before_correction = await get_evaluation(_EVALUATION_KEY, _ts(3))
 
-    revised_outcome = _outcome_vintage(revision_sequence=1, numeric_value=Decimal("3.00"))
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
+    outcome_repo.vintages[_OUTCOME_KEY].append(
+        _outcome_vintage(
+            revision_sequence=1,
+            numeric_value=Decimal("3.00"),
+            availability=_ts(1, 12),
+            provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        )
+    )
+    await _evaluate(
+        evaluation_repo,
+        outcome_repo,
         forecast_vintage=production_forecast,
-        forecast_authentication_review=_review(),
         evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
-        protocol=_protocol(),
-        outcome_resolution=_available(revised_outcome),
-        algorithm_version="fx65_v1",
+        protocol=_protocol(
+            outcome_vintage_selection_policy=OutcomeVintageSelectionPolicy.LATEST_AVAILABLE_AS_OF
+        ),
         availability=_ts(10),
         correction_reason="outcome correction",
     )
@@ -475,20 +405,11 @@ async def test_later_outcome_correction_leaves_earlier_evaluation_unchanged() ->
 
 
 async def test_retrospective_evaluation_excluded_from_production_pit() -> None:
-    repo = FakeForecastEvaluationRepository()
-    evaluate = EvaluateStructuredForecast(repo)
-    await evaluate(
-        evaluation_key=_EVALUATION_KEY,
-        forecast_vintage=_forecast_vintage(),
-        forecast_authentication_review=_review(),
-        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
-        protocol=_protocol(),
-        outcome_resolution=_available(_outcome_vintage()),
-        algorithm_version="fx65_v1",
-        availability=_ts(2),
-    )
-    get_evaluation = GetForecastEvaluationAsOf(repo)
-    research_view = GetRetrospectiveForecastEvaluation(repo)
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    await _evaluate(evaluation_repo, outcome_repo, availability=_ts(2))
+    get_evaluation = GetForecastEvaluationAsOf(evaluation_repo)
+    research_view = GetRetrospectiveForecastEvaluation(evaluation_repo)
 
     production_result = await get_evaluation(_EVALUATION_KEY, _ts(10))
     research_result = await research_view(_EVALUATION_KEY, _ts(10))
@@ -496,3 +417,116 @@ async def test_retrospective_evaluation_excluded_from_production_pit() -> None:
     assert production_result.resolution is ForecastEvaluationResolution.NOT_KNOWN
     assert research_result.vintage is not None
     assert research_result.is_retrospective is True
+
+
+# --- FX-65H H1: the outcome resolver is the ONLY selection mechanism --------
+
+
+async def test_first_release_policy_ignores_a_later_revision_even_though_one_exists() -> None:
+    """Proves the H1 fix structurally: even though a later, "nicer-
+    looking" revision exists, a FIRST_RELEASE protocol can NEVER be
+    evaluated against anything but revision 0 -- there is no
+    parameter through which a caller could inject the later one."""
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(
+            _outcome_vintage(revision_sequence=0, numeric_value=Decimal("3.25")),
+            _outcome_vintage(
+                revision_sequence=1, numeric_value=Decimal("3.75"), availability=_ts(1, 12)
+            ),
+        )
+    )
+
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
+    result = await evaluate(
+        evaluation_key=_EVALUATION_KEY,
+        forecast_vintage=_forecast_vintage(),
+        forecast_authentication_review=_review(),
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        protocol=_protocol(
+            outcome_vintage_selection_policy=OutcomeVintageSelectionPolicy.FIRST_RELEASE
+        ),
+        outcome_key=_OUTCOME_KEY,
+        algorithm_version="fx65_v1",
+        availability=_ts(2),
+    )
+
+    assert result.vintage is not None
+    assert result.vintage.outcome_revision_sequence == 0
+    assert result.vintage.result.signed_error == Decimal("-0.50")  # 3.25 - 3.75, NOT 3.75 - 3.75
+
+
+async def test_fixed_release_vintage_policy_ignores_latest_even_though_one_exists() -> None:
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(
+            _outcome_vintage(revision_sequence=0, numeric_value=Decimal("3.25")),
+            _outcome_vintage(
+                revision_sequence=1, numeric_value=Decimal("3.75"), availability=_ts(1, 12)
+            ),
+        )
+    )
+
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
+    result = await evaluate(
+        evaluation_key=_EVALUATION_KEY,
+        forecast_vintage=_forecast_vintage(),
+        forecast_authentication_review=_review(),
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        protocol=_protocol(
+            outcome_vintage_selection_policy=OutcomeVintageSelectionPolicy.FIXED_RELEASE_VINTAGE,
+            fixed_outcome_revision_sequence=0,
+        ),
+        outcome_key=_OUTCOME_KEY,
+        algorithm_version="fx65_v1",
+        availability=_ts(2),
+    )
+
+    assert result.vintage is not None
+    assert result.vintage.outcome_revision_sequence == 0
+    assert result.vintage.result.signed_error == Decimal("-0.50")
+
+
+async def test_wrong_outcome_definition_on_resolved_vintage_is_rejected() -> None:
+    """The resolved outcome vintage was captured under a DIFFERENT
+    definition than the protocol pins -- rejected (H1)."""
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(
+        vintages=(_outcome_vintage(definition_key="SOME-OTHER-DEFINITION"),)
+    )
+
+    outcome = await _evaluate(evaluation_repo, outcome_repo)
+
+    assert outcome is StructuredForecastEvaluationOutcome.REJECTED
+    assert len(evaluation_repo.vintages) == 0
+
+
+async def test_missing_outcome_definition_version_raises() -> None:
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo()
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
+
+    with pytest.raises(MissingOutcomeDefinitionVersionError):
+        await evaluate(
+            evaluation_key=_EVALUATION_KEY,
+            forecast_vintage=_forecast_vintage(),
+            forecast_authentication_review=_review(),
+            evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+            protocol=_protocol(outcome_definition_version_sequence=99),
+            outcome_key=_OUTCOME_KEY,
+            algorithm_version="fx65_v1",
+            availability=_ts(2),
+        )
+    assert len(evaluation_repo.vintages) == 0
+
+
+async def test_future_outcome_definition_rejects_evaluation_without_touching_db() -> None:
+    """End-to-end H2 check: a protocol pinning a future-availability
+    outcome definition is rejected, and nothing is persisted."""
+    evaluation_repo = FakeForecastEvaluationRepository()
+    outcome_repo = _seeded_outcome_repo(definitions=(_outcome_definition(availability=_ts(9)),))
+
+    outcome = await _evaluate(evaluation_repo, outcome_repo, availability=_ts(2))
+
+    assert outcome is StructuredForecastEvaluationOutcome.REJECTED
+    assert len(evaluation_repo.vintages) == 0

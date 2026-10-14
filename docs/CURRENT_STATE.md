@@ -3352,7 +3352,27 @@ _Last updated: 2026-09-27 (FX-54V)_
   WebFetch, idempotent across four real runs. 122 new tests; full
   suite 3092 passed. Two real bugs caught live by actually running
   the pilot script against real Postgres, both fixed (see ADR 0013).
-  **Stop after FX-65 — do not begin FX-66 or FX-67.**
+- **FX-65H: evaluation basis and PIT integrity hardening (complete)**.
+  Three findings from FX-65's own mandatory independent review,
+  closed without any schema change: **H1** -- `EvaluateStructured
+  Forecast` no longer accepts a caller-supplied outcome resolution at
+  all; it resolves the outcome ITSELF via the same authoritative
+  `ResolveForecastOutcomeAsOf`, from a caller-supplied `outcome_key`
+  alone, using the protocol's own pinned policy and the evaluation's
+  own `availability` as the PIT bound -- making outcome cherry-picking
+  structurally impossible rather than merely detectable; the resolved
+  outcome's own definition is also cross-checked against the
+  protocol's own pinned definition; **H2** -- `AssessForecastEvaluation
+  Admissibility` now enforces that every evaluation input (forecast,
+  protocol, outcome, outcome definition, both authentication reviews)
+  was itself available by the evaluation's own recorded instant (new
+  verdict: `INPUT_NOT_YET_AVAILABLE`); **H3** -- a production
+  evaluation now requires BOTH the forecast AND the outcome to
+  themselves be `PRODUCTION_OBSERVED` (the original check covered
+  only the forecast side). Full suite 3107 passed. No migration; the
+  real Bank of Canada pilot result (signed error -0.50pp) re-verified
+  unchanged after a live script re-run.
+  **Stop after FX-65H — do not begin FX-66 or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

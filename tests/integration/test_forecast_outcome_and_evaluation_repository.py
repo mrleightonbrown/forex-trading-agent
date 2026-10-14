@@ -454,7 +454,7 @@ async def test_full_pipeline_evaluation_and_pit_reads(
     )
     assert outcome_resolution.status is ForecastOutcomeResolutionStatus.OUTCOME_AVAILABLE
 
-    evaluate = EvaluateStructuredForecast(evaluation_repo)
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
     evaluation_key = f"{TEST_EVALUATION_PREFIX}1"
     eval_result = await evaluate(
         evaluation_key=evaluation_key,
@@ -462,7 +462,7 @@ async def test_full_pipeline_evaluation_and_pit_reads(
         forecast_authentication_review=_review(),
         evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
         protocol=_protocol(),
-        outcome_resolution=outcome_resolution,
+        outcome_key=f"{TEST_OUTCOME_PREFIX}1",
         algorithm_version="fx65_v1",
         availability=_ts(13),
     )
@@ -508,12 +508,9 @@ async def test_inadmissible_evaluation_writes_nothing(
     )
     assert forecast_result.vintage is not None
 
-    resolve = ResolveForecastOutcomeAsOf(outcome_repo)
-    outcome_resolution = await resolve(
-        f"{TEST_OUTCOME_PREFIX}2", OutcomeVintageSelectionPolicy.FIRST_RELEASE, _ts(12)
+    evaluate = EvaluateStructuredForecast(
+        evaluation_repo, outcome_repo, assess=AssessForecastEvaluationAdmissibility()
     )
-
-    evaluate = EvaluateStructuredForecast(evaluation_repo, AssessForecastEvaluationAdmissibility())
     evaluation_key = f"{TEST_EVALUATION_PREFIX}2"
     result = await evaluate(
         evaluation_key=evaluation_key,
@@ -524,7 +521,7 @@ async def test_inadmissible_evaluation_writes_nothing(
             protocol_key=f"{TEST_PROTOCOL_PREFIX}2",
             outcome_definition_key=f"{TEST_DEFINITION_PREFIX}2",
         ),
-        outcome_resolution=outcome_resolution,
+        outcome_key=f"{TEST_OUTCOME_PREFIX}2",
         algorithm_version="fx65_v1",
         availability=_ts(13),
     )
