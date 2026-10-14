@@ -3488,6 +3488,65 @@ calculations, outcome adjudication, source reputation weighting,
 forecast-series linking entity (deferred, not required by any real
 pilot example). FX-65 through FX-67 remain unauthorized.
 
+## Forecast outcome adjudication & evaluation protocols (FX-65, ADR 0013, FX-EPIC-09 Phase B's second story)
+
+**FX-65 evaluates ONE individual forecast against an independently
+observed outcome under a protocol decided BEFORE the outcome was
+known** -- explicitly not source-level skill, reputation, or weighting
+(FX-66's own future job, unauthorized here). Four new tables, each a
+single-table-per-concept design (`(key, version/revision_sequence)`
+as the natural unique key, mirroring `macro_observation_vintages`'s
+own simpler precedent rather than FX-62/64's claim+vintage split --
+none of these four concepts needs a `registered_at` distinct from
+version/revision 0's own `availability`).
+
+**Evaluation admissibility is a DISTINCT, stricter gate than FX-64's
+own capture eligibility -- this story's own core principle.** A
+structurally valid, capture-eligible forecast is NOT automatically
+admissible for evaluation. `AssessForecastEvaluationAdmissibility`
+requires an explicit, human, out-of-band `EvidenceAuthenticationReview`
+for the forecast being evaluated -- never manufactured from FX-64's
+own structural validity (FX-64H's own boundary applied one level up)
+-- alongside protocol/target-period/unit matching and production-
+versus-research mode compatibility.
+
+**Outcome definitions reach target semantics ONLY via `target_key`**,
+cross-validated against FX-64's own `forecast_target_registry` at
+construction -- never a duplicated `unit`/`measurement_convention`,
+and never a foreign key onto `macro_observation_vintages` or
+`EconomicEventActualValueVintage` (both inspected and found to carry
+either zero real rows or an admittedly unverified timestamp -- Section
+2's own warning against attaching outcomes to data this story cannot
+vouch for).
+
+**Three distinct timelines, never conflated**: forecast availability
+(FX-64's own), outcome availability, and evaluation availability are
+three separate fields, always caller-supplied. `GetForecastEvaluation
+AsOf`/`GetRetrospectiveForecastEvaluation` mirror FX-64's own
+production/research read-path separation exactly.
+
+**Historical determinism applies FX-64H's own corrected lesson from
+day one** for both new append-only concepts (`RecordForecastOutcome`
+and `EvaluateStructuredForecast`), rather than rediscovering it the
+hard way a second time -- the evaluation's own determinism basis is
+the COMPLETE basis (forecast vintage, protocol version, outcome
+definition version, outcome vintage, evaluation mode, algorithm
+version), so any genuine data change is automatically a different
+basis, never compared against an earlier one.
+
+A real pilot evaluation (Bank of Canada Market Participants Survey Q3
+2024's own December 2024 rate forecast of 3.75%, evaluated against
+the real 2024-12-11 decision outcome of 3.25%: signed error -0.50pp)
+is recorded via `scripts/import_pilot_forecast_evaluation.py`,
+confirmed idempotent across four real runs. See ADR 0013 for the
+complete decision record, including two real bugs caught live by
+actually running the pilot script against real Postgres.
+
+**Explicitly NOT built in FX-65**: forecast-outcome adapters,
+`EconomicEvent` linkage, aggregate source performance, reputation
+scores, or any trading integration. FX-66 and FX-67 remain
+unauthorized.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

@@ -3328,7 +3328,31 @@ _Last updated: 2026-09-27 (FX-54V)_
   evidence-reference validation is STRUCTURAL only, never independent
   authentication. 8 new tests; full suite 2970 passed. No migration;
   real pilot data and FX-56-63H data both confirmed unchanged.
-  **Stop after FX-64H — do not begin FX-65, FX-66, or FX-67.**
+- **FX-65: forecast outcome adjudication & evaluation protocols
+  (complete)**. Evaluates ONE individual forecast against an
+  independently observed outcome under a protocol decided BEFORE the
+  outcome was known -- explicitly not source-level skill, reputation,
+  or weighting (FX-66, unauthorized). Four new single-table-per-
+  concept tables (`forecast_outcome_definitions`, `forecast_outcome_
+  vintages`, `forecast_evaluation_protocols`, `structured_forecast_
+  evaluation_vintages`). **Evaluation admissibility is a distinct,
+  stricter gate than FX-64's own capture eligibility** (this story's
+  own core principle) -- `AssessForecastEvaluationAdmissibility`
+  requires an explicit, human `EvidenceAuthenticationReview`, never
+  manufactured from FX-64's own structural validity. Outcome
+  definitions reach target semantics ONLY via FX-64's own `target_
+  key` (cross-validated, never duplicated); no FK onto `macro_
+  observation_vintages`/`EconomicEventActualValueVintage` (both
+  inspected -- found to carry zero real rows or an admittedly
+  unverified timestamp). Historical determinism applies FX-64H's own
+  corrected lesson from day one for both new append-only concepts.
+  Real pilot: Bank of Canada MPS Q3 2024's own December 2024 rate
+  forecast (3.75%) evaluated against the real 2024-12-11 decision
+  outcome (3.25%) -- signed error -0.50pp, independently verified via
+  WebFetch, idempotent across four real runs. 122 new tests; full
+  suite 3092 passed. Two real bugs caught live by actually running
+  the pilot script against real Postgres, both fixed (see ADR 0013).
+  **Stop after FX-65 — do not begin FX-66 or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

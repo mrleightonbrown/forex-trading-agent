@@ -6945,3 +6945,75 @@ is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-65, FX-66, or FX-67.
+
+## FX-65 -- forecast outcome adjudication & evaluation protocols (complete)
+
+Evaluates ONE individual forecast against an independently observed
+outcome under an evaluation protocol decided BEFORE the outcome was
+known -- explicitly not source-level forecasting skill, reputation,
+or weighting (FX-66, not authorized).
+
+**Discovery**: FX-51's own economic-calendar actual-value/consensus
+infrastructure holds zero real rows in production (confirmed by
+direct query, and independently by its own registry docstring);
+`macro_observation_vintages` holds real policy-rate data but every
+row admits `released_at_is_verified=False`. FX-65 built NO outcome
+adapter on top of either -- outcomes are their own fully self-
+contained, independently-verified, human-curated records.
+
+**Design**: four new single-table-per-concept tables (`forecast_
+outcome_definitions`, `forecast_outcome_vintages`, `forecast_
+evaluation_protocols`, `structured_forecast_evaluation_vintages`),
+simpler than FX-62/64's claim+vintage split since none of these
+concepts needs a `registered_at` distinct from version/revision 0's
+own `availability`. `ForecastOutcomeDefinition` reaches target
+semantics only via FX-64's own `target_key`, cross-validated, never
+duplicated.
+
+**Core principle enforced structurally**: evaluation admissibility is
+a distinct, stricter gate than FX-64's own capture eligibility. A
+structurally valid, capture-eligible forecast is NOT automatically
+admissible -- `AssessForecastEvaluationAdmissibility` requires an
+explicit, human `EvidenceAuthenticationReview`, never manufactured
+from structural validity alone, yielding 8 distinct admissibility
+verdicts (`ADMISSIBLE`/`UNVERIFIED_SOURCE`/`INSUFFICIENT_EVIDENCE`/
+`AMBIGUOUS_TARGET`/`PROTOCOL_MISMATCH`/`NOT_YET_MATURED`/`OUTCOME_
+UNAVAILABLE`/`RESEARCH_ONLY`).
+
+**Three distinct timelines** (forecast/outcome/evaluation
+availability) stay separate fields throughout; production and
+retrospective-research evaluation read paths mirror FX-64's own
+separation exactly. Historical determinism applies FX-64H's own
+corrected lesson from day one for both new append-only concepts.
+
+**Real pilot**: Bank of Canada Market Participants Survey Q3 2024's
+own December-2024 rate forecast (3.75%, published 2024-11-04)
+evaluated against the real 2024-12-11 Fixed Announcement Date
+decision outcome (3.25%) -- signed error -0.50pp, both figures
+independently verified via WebFetch against the Bank's own official
+pages. Recorded via `scripts/import_pilot_forecast_evaluation.py`,
+confirmed idempotent across four real runs.
+
+**Two real bugs caught live by actually running the pilot script
+against real Postgres** (not merely by unit tests against fakes), both
+fixed with regression tests added: (1) the admin-registration use
+cases compared full dataclass equality including `availability`,
+raising a spurious conflict on a legitimate re-run; (2) the pilot
+script itself set a human review's own `reviewed_at` to `now()`
+instead of the fixed date the review actually happened on, correctly
+triggering a determinism error that exposed the script's own bug, not
+the check's.
+
+122 new tests. Full suite: 3092 passed (up from 2970). `ruff`/`ruff
+format`/`mypy`/`pre-commit` all clean. Real pilot data and FX-56-64H
+data both confirmed unchanged except this story's own authorized
+additions.
+
+Full details in `docs/DECISIONS.md`'s FX-65 entry; `docs/CURRENT_
+STATE.md` carries its own FX-65 entry immediately after the FX-64H
+entry; `docs/adr/0013-forecast-outcome-adjudication-and-evaluation.md`
+is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67. Passing automated tests does not constitute
+architectural approval.
