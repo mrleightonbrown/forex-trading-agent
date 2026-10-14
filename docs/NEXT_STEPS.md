@@ -7063,3 +7063,35 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## FX-65H.1 -- authoritative outcome identity binding (complete)
+
+Closes the remaining outcome-selection ambiguity FX-65H's own H1 fix
+left open: nothing prevented two DIFFERENT `outcome_key`s from
+sharing the identical `(definition_key, target_period, outcome_type,
+unit)` identity, which would have let a caller obtain different
+evaluation results merely by choosing a different, equally
+"compatible" `outcome_key`.
+
+`RecordForecastOutcome` now enforces, at write time, that the FIRST
+`outcome_key` ever registered for a given identity is its sole
+legitimate holder -- a later attempt to register a different key for
+the same identity is refused (new `ForecastOutcomeIdentityConflict
+Error`) via a new repository method, `list_outcome_vintages_for_
+definition`. Chosen over deriving `outcome_key` automatically
+specifically to avoid renaming the real pilot's own existing identity
+(which would have cascaded into the dependent evaluation table's own
+FK too) -- the smaller, equally rigorous fix.
+
+No schema change. 5 new tests (4 unit, 1 real-PostgreSQL integration).
+Full suite: 3112 passed (up from 3107). `ruff`/`ruff format`/`mypy`/
+`pre-commit` all clean. The real Bank of Canada pilot evaluation was
+re-run against real Postgres four times and continues to report the
+exact same result (signed error -0.50pp, absolute error 0.50pp).
+
+Full details in `docs/DECISIONS.md`'s FX-65H.1 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.1
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

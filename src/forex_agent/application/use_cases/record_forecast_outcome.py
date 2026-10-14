@@ -8,9 +8,24 @@ material to historical interpretation -- both the substantive payload
 AND `provenance_mode`/`provider_published_at` -- or it is rejected,
 never silently absorbed or silently promoted/demoted.
 
-**Precedence**: PIT ordering is checked BEFORE historical determinism,
-mirroring FX-56H.1/FX-59H/FX-62H/FX-64's own corrected lesson exactly.
-"""
+**Precedence**: FX-65H.1's own outcome-identity-binding check (Section
+2) is checked FIRST, even before PIT ordering -- a candidate whose own
+`outcome_key` is not the sole legitimate identity for its own
+`(definition_key, target_period, unit)` is a data-integrity defect,
+more fundamental than any question of ordering or determinism against
+that (illegitimate) identity's own history. PIT ordering is then
+checked BEFORE historical determinism, mirroring FX-56H.1/FX-59H/
+FX-62H/FX-64's own corrected lesson exactly.
+
+**FX-65H.1's own outcome-identity-binding invariant**: no two
+DIFFERENT `outcome_key`s may ever share the same `(definition_key,
+target_period, unit)` identity. Without this, a caller evaluating a
+forecast could obtain different results merely by choosing a
+different, "compatible" `outcome_key` for what is really the SAME
+real-world outcome -- exactly the substitution risk FX-65H.1 exists to
+close. The FIRST `outcome_key` ever registered for a given identity
+becomes its sole legitimate one; every later attempt to register a
+DIFFERENT `outcome_key` for that same identity is refused."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -29,6 +44,13 @@ from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
 from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
 from forex_agent.domain.forecast_type import ForecastType
 from forex_agent.domain.timestamps import UtcTimestamp
+
+_Identity = tuple[str, ForecastTargetPeriod, ForecastType, str | None]
+
+
+def _identity_of(vintage: ForecastOutcomeVintage) -> _Identity:
+    return (vintage.definition_key, vintage.target_period, vintage.outcome_type, vintage.unit)
+
 
 _Payload = tuple[ForecastType, ForecastTargetPeriod, object, object, object]
 _Provenance = tuple[ForecastProvenanceMode, UtcTimestamp | None]
@@ -79,6 +101,33 @@ class OutOfOrderForecastOutcomeError(Exception):
             f"{incoming_availability.value.isoformat()}, earlier than the latest recorded "
             f"vintage's own availability={latest_availability.value.isoformat()} -- refusing "
             "to append a backdated assertion"
+        )
+
+
+class ForecastOutcomeIdentityConflictError(Exception):
+    """FX-65H.1 (Section 2): raised when a candidate's own `outcome_
+    key` is NOT the sole legitimate identity for its own `(definition_
+    key, target_period, unit)` -- some OTHER `outcome_key` already
+    holds that exact identity. Prevents two different outcome
+    identities from ever representing the SAME real-world outcome,
+    which would otherwise let an evaluation caller obtain different
+    results merely by choosing which one to evaluate against."""
+
+    def __init__(
+        self,
+        outcome_key: str,
+        identity: _Identity,
+        conflicting_outcome_key: str,
+    ) -> None:
+        self.outcome_key = outcome_key
+        self.identity = identity
+        self.conflicting_outcome_key = conflicting_outcome_key
+        super().__init__(
+            f"outcome_key={outcome_key!r} claims identity "
+            f"(definition_key, target_period, outcome_type, unit)={identity!r}, but "
+            f"outcome_key={conflicting_outcome_key!r} already holds that EXACT identity -- "
+            "refusing to let two different outcome identities represent the same real-world "
+            "outcome"
         )
 
 
@@ -152,6 +201,23 @@ class RecordForecastOutcome:
         assert validation.target_period is not None
         assert validation.evidence is not None
         assert validation.authentication_review is not None
+
+        incoming_identity: _Identity = (
+            candidate.definition_key,
+            validation.target_period,
+            candidate.outcome_type,
+            candidate.unit,
+        )
+        definition_vintages = await self._repository.list_outcome_vintages_for_definition(
+            candidate.definition_key
+        )
+        for other in definition_vintages:
+            if other.outcome_key == candidate.outcome_key:
+                continue
+            if _identity_of(other) == incoming_identity:
+                raise ForecastOutcomeIdentityConflictError(
+                    candidate.outcome_key, incoming_identity, other.outcome_key
+                )
 
         latest = await self._repository.latest_outcome_vintage(candidate.outcome_key)
         if latest is not None and candidate.availability.value < latest.availability.value:

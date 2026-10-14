@@ -59,6 +59,17 @@ class ForecastOutcomeRepository(Protocol):
         check and by `ResolveForecastOutcomeAsOf`."""
         ...
 
+    async def list_outcome_vintages_for_definition(
+        self, definition_key: str
+    ) -> tuple[ForecastOutcomeVintage, ...]:
+        """FX-65H.1: every stored vintage captured under `definition_
+        key`, across EVERY `outcome_key` -- used ONLY by `RecordForecast
+        Outcome`'s own outcome-identity-binding check (Section 2): no
+        two DIFFERENT `outcome_key`s may share the same `(definition_
+        key, target_period, unit)` identity, since that would let an
+        evaluation caller silently substitute one for the other."""
+        ...
+
     async def add_outcome_vintage(
         self, vintage: ForecastOutcomeVintage
     ) -> ForecastOutcomeVintageWriteResult:

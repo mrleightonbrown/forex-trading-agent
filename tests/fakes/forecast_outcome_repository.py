@@ -53,6 +53,16 @@ class FakeForecastOutcomeRepository:
     ) -> tuple[ForecastOutcomeVintage, ...]:
         return tuple(self.vintages.get(outcome_key, ()))
 
+    async def list_outcome_vintages_for_definition(
+        self, definition_key: str
+    ) -> tuple[ForecastOutcomeVintage, ...]:
+        return tuple(
+            v
+            for vintages in self.vintages.values()
+            for v in vintages
+            if v.definition_key == definition_key
+        )
+
     async def add_outcome_vintage(
         self, vintage: ForecastOutcomeVintage
     ) -> ForecastOutcomeVintageWriteResult:

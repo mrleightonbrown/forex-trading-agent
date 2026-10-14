@@ -35,7 +35,10 @@ from forex_agent.application.use_cases.get_retrospective_forecast_evaluation imp
 from forex_agent.application.use_cases.record_forecast_evaluation_protocol import (
     RecordForecastEvaluationProtocol,
 )
-from forex_agent.application.use_cases.record_forecast_outcome import RecordForecastOutcome
+from forex_agent.application.use_cases.record_forecast_outcome import (
+    ForecastOutcomeIdentityConflictError,
+    RecordForecastOutcome,
+)
 from forex_agent.application.use_cases.record_forecast_outcome_definition import (
     RecordForecastOutcomeDefinition,
 )
@@ -392,6 +395,38 @@ async def test_outcome_append_only_revisions(
     history = await outcome_repo.list_vintages_for_outcome(f"{TEST_OUTCOME_PREFIX}1")
     assert len(history) == 2
     assert {v.revision_sequence for v in history} == {0, 1}
+
+
+async def test_second_outcome_key_for_the_same_identity_is_rejected(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+) -> None:
+    """FX-65H.1 Section 4 test 1/2/3/9: real-Postgres demonstration of
+    the outcome-identity-binding invariant -- two outcome_keys sharing
+    the identical (definition_key, target_period, unit) cannot both be
+    registered, and the rejected attempt writes nothing."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(_definition())
+    record = RecordForecastOutcome(outcome_repo)
+    await record(_outcome_candidate(outcome_key=f"{TEST_OUTCOME_PREFIX}identity-a"))
+
+    with pytest.raises(ForecastOutcomeIdentityConflictError):
+        await record(
+            _outcome_candidate(
+                outcome_key=f"{TEST_OUTCOME_PREFIX}identity-b",
+                numeric_value=Decimal("3.10"),
+                document_identifier="DOC-OTHER-IDENTITY",
+            )
+        )
+
+    first_identity_history = await outcome_repo.list_vintages_for_outcome(
+        f"{TEST_OUTCOME_PREFIX}identity-a"
+    )
+    second_identity_history = await outcome_repo.list_vintages_for_outcome(
+        f"{TEST_OUTCOME_PREFIX}identity-b"
+    )
+    assert len(first_identity_history) == 1
+    assert second_identity_history == ()
 
 
 async def test_concurrent_duplicate_outcome_registration(

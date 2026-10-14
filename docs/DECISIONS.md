@@ -16495,3 +16495,68 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## 2026-10-14 — FX-65H.1: authoritative outcome identity binding
+
+**Scope.** Closes the remaining outcome-selection ambiguity FX-65H's
+own H1 fix left open: the caller still chose `outcome_key` freely, and
+nothing prevented two DIFFERENT `outcome_key`s from sharing the
+identical `(definition_key, target_period, outcome_type, unit)`
+identity. Starting commit: `6108ce2` (the FX-65H commit).
+
+**Discovery.** Direct inspection of `forecast_outcome_vintages`'s own
+schema confirmed the ONLY uniqueness constraint is `(outcome_key,
+revision_sequence)` -- nothing ties `outcome_key` to what it actually
+measures. Had this gone unaddressed, a caller could obtain different
+evaluation results merely by choosing a different, equally
+"compatible" `outcome_key` for what is really the same real-world
+outcome -- the exact architect's own review priority #2 concern,
+materializing a second time at one layer deeper than FX-65H's own H1
+fix reached.
+
+**Decision: enforce uniqueness at WRITE time (Section 2's own option
+A), not by deriving `outcome_key` automatically.** A new repository
+method, `list_outcome_vintages_for_definition(definition_key)`, lets
+`RecordForecastOutcome` check, on every registration, whether any
+OTHER `outcome_key` already holds the identical identity; if so, the
+new `ForecastOutcomeIdentityConflictError` is raised and nothing is
+written. The FIRST `outcome_key` ever registered for a given identity
+becomes its sole legitimate one, permanently.
+
+**Why not a deterministically-derived key.** A derived key (e.g. from
+`definition_key` + a canonical period string) would have required
+RENAMING the existing real pilot row's own `outcome_key` (`BOC-RATE-
+DECISION-2024-12-11`) to a new canonical format, cascading into the
+dependent `structured_forecast_evaluation_vintages.outcome_key` FK
+column too -- a migration carrying real rename risk for no additional
+safety over the simpler write-time uniqueness guard, which achieves
+the IDENTICAL invariant without touching a single existing row. Once
+write-time uniqueness holds, there is structurally nothing left to
+substitute at evaluation time, so no redundant check was added there
+either.
+
+**No schema change.** The new repository method is a plain `SELECT...
+WHERE definition_key = ...` against the already-existing column -- no
+new index, no new constraint, no migration.
+
+**Regression.** 5 new tests (4 unit against the fake repository, 1
+real-PostgreSQL integration test). Full deterministic suite: 3112
+passed (up from 3107). `ruff`/`ruff format`/`mypy`/`pre-commit` all
+clean. The real Bank of Canada pilot evaluation was re-run against
+real Postgres four times (including `--dry-run`) and continues to
+report `UNCHANGED` with `signed_error=-0.50`/`absolute_error=0.50`.
+
+**Explicitly confirmed NOT done**: no schema/migration change; no
+derived/renamed outcome identity; no change to FIRST_RELEASE/LATEST_
+AVAILABLE_AS_OF/FIXED_RELEASE_VINTAGE semantics, input-availability
+validation, production/research mode compatibility, or historical
+determinism; no concurrent-race closure for genuinely new, distinct
+`outcome_key`s (documented as a deliberate, low-risk residual, matching
+this story's own "smallest solution" instruction).
+
+Full details in `docs/NEXT_STEPS.md`'s FX-65H.1 entry; `docs/adr/0013-
+forecast-outcome-adjudication-and-evaluation.md`'s own FX-65H.1
+addendum is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-66 or FX-67.

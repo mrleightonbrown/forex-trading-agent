@@ -108,6 +108,16 @@ class SqlAlchemyForecastOutcomeRepository:
         await self._session.commit()
         return tuple(_vintage_row_to_domain(row) for row in rows)
 
+    async def list_outcome_vintages_for_definition(
+        self, definition_key: str
+    ) -> tuple[ForecastOutcomeVintage, ...]:
+        stmt = select(ForecastOutcomeVintageRow).where(
+            ForecastOutcomeVintageRow.definition_key == definition_key
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+        return tuple(_vintage_row_to_domain(row) for row in rows)
+
     async def add_outcome_vintage(
         self, vintage: ForecastOutcomeVintage
     ) -> ForecastOutcomeVintageWriteResult:

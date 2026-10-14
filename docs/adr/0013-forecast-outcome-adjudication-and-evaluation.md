@@ -5,8 +5,8 @@
 **Accepted -- code/schema/tests complete, and a real-data pilot
 evaluation ACTIVATED against one independently-verified Bank of
 Canada example, 2026-10-13/14. FX-65H (evaluation basis and PIT
-integrity hardening) closed the same cycle -- see this ADR's own
-addendum below.**
+integrity hardening) and FX-65H.1 (authoritative outcome identity
+binding) closed the same cycle -- see this ADR's own addenda below.**
 
 ## Context
 
@@ -279,3 +279,78 @@ selection, definition pinning, and input-availability ordering.
 
 Commits: starting `f8c7ac5` (FX-65) -> resulting FX-65H commit (see
 `docs/DECISIONS.md`'s own FX-65H entry for the exact hash).
+
+## FX-65H.1 addendum (2026-10-14): authoritative outcome identity binding
+
+FX-65H's own H1 fix closed the "caller supplies a mismatched outcome
+resolution" hole by making `EvaluateStructuredForecast` resolve the
+outcome itself via the protocol's own pinned policy. One ambiguity
+remained: the caller still chose `outcome_key` freely, and NOTHING in
+the data model prevented two genuinely DIFFERENT `outcome_key`s from
+sharing the identical `(definition_key, target_period, unit)` identity
+-- confirmed by direct inspection of `forecast_outcome_vintages`'s own
+schema (the ONLY uniqueness constraint is `(outcome_key, revision_
+sequence)`; nothing ties `outcome_key` to what it actually measures).
+Had this gone unaddressed, a caller could obtain different evaluation
+results merely by choosing a different, equally "compatible"
+`outcome_key` for what is really the same real-world outcome.
+
+**Chosen approach (Section 2's own option A, applied at the
+narrowest effective point): enforce uniqueness at WRITE time, in
+`RecordForecastOutcome`, rather than deriving `outcome_key`
+automatically.** A new repository method, `list_outcome_vintages_for_
+definition(definition_key)`, lets `RecordForecastOutcome` check, on
+every registration, whether any OTHER `outcome_key` already holds the
+identical `(definition_key, target_period, outcome_type, unit)`
+identity; if so, the new `ForecastOutcomeIdentityConflictError` is
+raised and nothing is written. The FIRST `outcome_key` ever registered
+for a given identity becomes its sole legitimate one, permanently --
+every later attempt to introduce a DIFFERENT key for that same
+identity is refused at the source, before an evaluation could ever
+reach it.
+
+**Why this approach over deriving `outcome_key` from `(definition_
+key, target_period)` automatically**: a deterministically-derived key
+would have required renaming the EXISTING real pilot row's own
+`outcome_key` (`BOC-RATE-DECISION-2024-12-11`) to match a new
+canonical string format, cascading into the dependent `structured_
+forecast_evaluation_vintages.outcome_key` FK column too -- a
+migration carrying real rename risk for no additional safety over the
+simpler write-time uniqueness guard, which achieves the IDENTICAL
+invariant (at most one legitimate `outcome_key` per identity) without
+touching a single existing row. This is "the smallest solution
+consistent with the existing data model" the story's own Section 2
+asked for.
+
+**Why enforcement at WRITE time, not evaluation time**: once
+write-time uniqueness holds, there is structurally nothing left TO
+substitute at evaluation time -- a caller supplying ANY `outcome_key`
+either reaches the one-and-only legitimate identity for that
+definition+period, or reaches nothing at all (a different definition/
+period entirely, already rejected by FX-65H's own H1 cross-check).
+Adding a second, redundant check at evaluation time would duplicate
+logic without adding protection, given all production writes go
+through this one use case.
+
+**No schema change.** The new repository method is a plain `SELECT
+... WHERE definition_key = ...` against the already-existing column
+-- no new index, no new constraint, no migration. A concurrent race
+between two DIFFERENT, genuinely NEW `outcome_key`s for the same
+identity remains theoretically possible (the same class of TOCTOU
+window already accepted elsewhere in this codebase, e.g. `Forecast
+OutcomeDefinition`'s own sequential-version check) -- not closed here,
+consistent with this story's own "smallest solution" instruction and
+the low-volume, curated nature of outcome registration.
+
+**Verification**: 5 new tests (4 unit against the fake repository, 1
+real-PostgreSQL integration test proving the conflict is rejected and
+writes nothing). Full suite: 3112 passed (up from 3107). `ruff`/`ruff
+format`/`mypy`/`pre-commit` all clean. No migration. The real Bank of
+Canada pilot evaluation was re-run against real Postgres four times
+(including `--dry-run`) and continues to report `UNCHANGED` with
+`signed_error=-0.50`/`absolute_error=0.50`, confirming the single
+existing real `outcome_key` remains its own identity's sole
+legitimate holder, untouched by this change.
+
+Commits: starting `6108ce2` (FX-65H) -> resulting FX-65H.1 commit
+(see `docs/DECISIONS.md`'s own FX-65H.1 entry for the exact hash).

@@ -3372,7 +3372,22 @@ _Last updated: 2026-09-27 (FX-54V)_
   only the forecast side). Full suite 3107 passed. No migration; the
   real Bank of Canada pilot result (signed error -0.50pp) re-verified
   unchanged after a live script re-run.
-  **Stop after FX-65H — do not begin FX-66 or FX-67.**
+- **FX-65H.1: authoritative outcome identity binding (complete)**.
+  Nothing previously prevented two DIFFERENT `outcome_key`s from
+  sharing the identical `(definition_key, target_period, outcome_
+  type, unit)` identity, which would have let a caller obtain
+  different evaluation results merely by choosing a different,
+  equally "compatible" `outcome_key` for what is really the same
+  real-world outcome. `RecordForecastOutcome` now enforces, at write
+  time, that the FIRST `outcome_key` ever registered for a given
+  identity is its sole legitimate holder (new `ForecastOutcomeIdentity
+  ConflictError`) -- chosen over deriving `outcome_key` automatically
+  specifically to avoid renaming the real pilot's own existing
+  identity. New repository method `list_outcome_vintages_for_
+  definition`; no schema change. 5 new tests; full suite 3112 passed.
+  Real Bank of Canada pilot result (signed error -0.50pp) re-verified
+  unchanged across four real re-runs.
+  **Stop after FX-65H.1 — do not begin FX-66 or FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

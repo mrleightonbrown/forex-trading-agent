@@ -3562,6 +3562,20 @@ evaluation requires BOTH the forecast and the outcome to themselves
 be `PRODUCTION_OBSERVED` (the original check covered only the
 forecast side). See ADR 0013's own FX-65H addendum.
 
+**FX-65H.1 closed the remaining outcome-identity ambiguity**: nothing
+previously prevented two DIFFERENT `outcome_key`s from sharing the
+identical `(definition_key, target_period, outcome_type, unit)`
+identity, which would have let a caller obtain different evaluation
+results merely by choosing a different, equally "compatible"
+`outcome_key`. `RecordForecastOutcome` now enforces, at write time,
+that the FIRST `outcome_key` ever registered for a given identity is
+its sole legitimate holder -- a later attempt to register a different
+key for the same identity is refused (`ForecastOutcomeIdentity
+ConflictError`), before an evaluation could ever reach it. No schema
+change; chosen over deriving `outcome_key` automatically specifically
+to avoid renaming the real pilot's own existing identity. See ADR
+0013's own FX-65H.1 addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

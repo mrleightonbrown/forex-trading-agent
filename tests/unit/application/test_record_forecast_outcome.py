@@ -10,6 +10,7 @@ import pytest
 
 from forex_agent.application.use_cases.record_forecast_outcome import (
     ForecastOutcomeDeterminismError,
+    ForecastOutcomeIdentityConflictError,
     ForecastOutcomeOutcome,
     ForecastOutcomeProvenanceConsistencyError,
     OutOfOrderForecastOutcomeError,
@@ -146,3 +147,81 @@ async def test_provenance_change_under_same_basis_is_rejected() -> None:
         )
 
     assert len(await repo.list_vintages_for_outcome(_candidate().outcome_key)) == 1
+
+
+# --- FX-65H.1: outcome-identity binding -------------------------------------
+
+
+async def test_second_outcome_key_for_the_same_identity_is_rejected() -> None:
+    """Two outcomes with identical definition, target period, and unit
+    -- differing only in `outcome_key` and value -- cannot both be
+    registered: the SECOND one is refused, closing the substitution
+    risk at its source."""
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate(outcome_key="BOC-RATE-DECISION-2024-12-11-A"))
+
+    with pytest.raises(ForecastOutcomeIdentityConflictError):
+        await record(
+            _candidate(
+                outcome_key="BOC-RATE-DECISION-2024-12-11-B",
+                numeric_value=Decimal("3.10"),
+                document_identifier="DOC-OTHER",
+            )
+        )
+
+
+async def test_rejected_identity_conflict_writes_nothing() -> None:
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate(outcome_key="BOC-RATE-DECISION-2024-12-11-A"))
+
+    with pytest.raises(ForecastOutcomeIdentityConflictError):
+        await record(
+            _candidate(
+                outcome_key="BOC-RATE-DECISION-2024-12-11-B",
+                numeric_value=Decimal("3.10"),
+                document_identifier="DOC-OTHER",
+            )
+        )
+
+    assert await repo.list_vintages_for_outcome("BOC-RATE-DECISION-2024-12-11-B") == ()
+
+
+async def test_correctly_bound_outcome_identity_is_accepted() -> None:
+    """The SAME outcome_key registering further revisions of its own
+    established identity is never flagged as a conflict against
+    itself."""
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate())
+
+    result = await record(
+        _candidate(
+            availability=_ts(10),
+            numeric_value=Decimal("3.00"),
+            document_identifier="BOC-PR-2024-12-11-CORRECTED",
+        ),
+        correction_reason="source-issued correction",
+    )
+
+    assert result.outcome is ForecastOutcomeOutcome.REVISION_ADDED
+
+
+async def test_different_target_period_is_not_a_conflict() -> None:
+    """A different real-world outcome (a different meeting) under the
+    SAME definition is a legitimately separate identity, never
+    flagged."""
+    repo = FakeForecastOutcomeRepository()
+    record = RecordForecastOutcome(repo)
+    await record(_candidate(outcome_key="BOC-RATE-DECISION-2024-12-11"))
+
+    result = await record(
+        _candidate(
+            outcome_key="BOC-RATE-DECISION-2025-01-29",
+            policy_meeting_identifier="BOC-2025-01-29",
+            document_identifier="DOC-OTHER-MEETING",
+        )
+    )
+
+    assert result.outcome is ForecastOutcomeOutcome.CREATED
