@@ -4,7 +4,25 @@ ForecastEvaluationRepository`'s own flattening and idempotent-insert
 conventions exactly. The snapshot write is the one genuinely multi-
 statement operation here (main row + member rows + exclusion rows,
 all in the SAME uncommitted transaction, committed together) -- never
-partially visible."""
+partially visible.
+
+**FX-66H.1 (H3/F66-06) correction.** Every PURE-READ method here
+(`latest_*_version`, `list_*_versions`, `latest_snapshot_vintage` and
+its siblings, `list_vintages_for_snapshot`) used to call `session.
+commit()` after its own `SELECT`, copying this repository's OWN "every
+method commits, even reads" convention from its WRITE methods -- safe
+only for a method that is each a complete, independent unit of work
+(FX-65H.3's own H2 lesson). `RecordForecastPerformanceSnapshot` now
+reads several of these methods MID-call, sharing one session with its
+own eventual write, specifically to reconstruct the authoritative
+population/metrics it validates a candidate against (FX-66H.1's own
+H2 fix) -- a premature commit from one of THESE reads would flush
+whatever the caller's shared session was still holding uncommitted,
+exactly the bug this correction removes. Every method that performs
+an actual `INSERT` (`add_cohort_version`, `add_benchmark_version`,
+`add_methodology_version`, `add_snapshot_vintage`) still commits --
+each of those genuinely IS its own complete unit of work, mirroring
+FX-62/64/65's own atomic-claim convention."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -113,7 +131,6 @@ class SqlAlchemyForecastPerformanceRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _cohort_row_to_domain(row)
 
     async def list_cohort_versions(
@@ -123,7 +140,6 @@ class SqlAlchemyForecastPerformanceRepository:
             ForecastPerformanceCohortRow.cohort_key == cohort_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_cohort_row_to_domain(row) for row in rows)
 
     async def add_cohort_version(
@@ -151,7 +167,6 @@ class SqlAlchemyForecastPerformanceRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _benchmark_row_to_domain(row)
 
     async def list_benchmark_versions(
@@ -161,7 +176,6 @@ class SqlAlchemyForecastPerformanceRepository:
             ForecastPerformanceBenchmarkRow.benchmark_key == benchmark_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_benchmark_row_to_domain(row) for row in rows)
 
     async def add_benchmark_version(
@@ -189,7 +203,6 @@ class SqlAlchemyForecastPerformanceRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _methodology_row_to_domain(row)
 
     async def list_methodology_versions(
@@ -199,7 +212,6 @@ class SqlAlchemyForecastPerformanceRepository:
             ForecastPerformanceMethodologyRow.methodology_key == methodology_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_methodology_row_to_domain(row) for row in rows)
 
     async def add_methodology_version(
@@ -231,7 +243,6 @@ class SqlAlchemyForecastPerformanceRepository:
             ForecastPerformanceSnapshotRow.snapshot_key == snapshot_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple([await self._hydrate_snapshot(row) for row in rows])
 
     async def add_snapshot_vintage(
@@ -306,7 +317,6 @@ class SqlAlchemyForecastPerformanceRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else await self._hydrate_snapshot(row)
 
     async def _hydrate_snapshot(
@@ -338,7 +348,6 @@ class SqlAlchemyForecastPerformanceRepository:
             .scalars()
             .all()
         )
-        await self._session.commit()
         return _snapshot_row_to_domain(row, list(member_rows), list(exclusion_rows))
 
 

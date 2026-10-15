@@ -19,6 +19,9 @@ from forex_agent.application.use_cases.build_forecast_performance_population_as_
 from forex_agent.application.use_cases.calculate_forecast_performance import (
     CalculateForecastPerformance,
 )
+from forex_agent.application.use_cases.inspect_forecast_performance_pending_revisions import (
+    InspectForecastPerformancePendingRevisions,
+)
 from forex_agent.domain.categorical_evaluation_result import CategoricalEvaluationResult
 from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
 from forex_agent.domain.forecast_attribution import ForecastAttribution
@@ -458,7 +461,11 @@ async def test_named_institution_requires_matching_forecaster() -> None:
     assert {m.evaluation.evaluation_key for m in population.accepted} == {"eval-a"}
 
 
-async def test_pit_excludes_not_yet_available_evaluation() -> None:
+async def test_pit_silently_omits_not_yet_available_evaluation() -> None:
+    """FX-66H.1 (F66-04): an evaluation FTA did not know about at the
+    cutoff must not appear ANYWHERE in the population, not even as a
+    named exclusion -- `NOT_YET_AVAILABLE` is unreachable (see its own
+    docstring)."""
     repos = _Repos()
     repos.seed(
         "claim-a",
@@ -473,10 +480,8 @@ async def test_pit_excludes_not_yet_available_evaluation() -> None:
     population = await repos.builder()(_cohort(), _ts(13))
 
     assert population.accepted == ()
-    assert (
-        "eval-a",
-        ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE,
-    ) in population.exclusions
+    assert population.exclusions == ()
+    assert population.raw_candidate_count == 0
 
 
 async def test_known_duplicate_evaluation_key_excluded() -> None:
@@ -1070,8 +1075,10 @@ async def test_h1_both_vintages_before_cutoff_selects_latest_eligible() -> None:
 
 
 async def test_h1_both_vintages_after_cutoff_excludes_from_population() -> None:
-    """Mandatory test 4: both vintages after cutoff -- exclude from
-    the historical population entirely."""
+    """Mandatory test 4: both vintages after cutoff -- absent from
+    the historical population entirely (FX-66H.1/F66-04: not even as
+    a named exclusion, since FTA knew nothing about this key at the
+    cutoff -- see `test_pit_silently_omits_not_yet_available_evaluation`)."""
     repos = _Repos()
     repos.seed(
         "claim-a",
@@ -1087,7 +1094,8 @@ async def test_h1_both_vintages_after_cutoff_excludes_from_population() -> None:
     population = await repos.builder()(_cohort(), _ts(13))
 
     assert population.accepted == ()
-    assert ("eval-a", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE) in population.exclusions
+    assert population.exclusions == ()
+    assert population.raw_candidate_count == 0
 
 
 async def test_h1_revision_availability_exactly_equals_cutoff_is_included() -> None:
@@ -1251,3 +1259,148 @@ async def test_h1_production_and_retrospective_selection_remain_separate() -> No
     assert research_population.accepted == ()
     assert research_population.raw_candidate_count == 0
     assert {m.evaluation.evaluation_key for m in production_population.accepted} == {"eval-a"}
+
+
+# --- FX-66H.1 (H1/F66-04): fully PIT-reproducible historical diagnostics --
+
+
+async def test_f66_04_future_revision_leaves_complete_diagnostics_unchanged() -> None:
+    """Required test: historical population built before and after a
+    future REVISION of an already-accepted key -- complete diagnostics
+    (not just the numeric summary) must be byte-for-byte identical."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+
+    population_before = await repos.builder()(_cohort(), cutoff)
+    diagnostics_before = AssessForecastPerformanceEvidence()(population_before)
+
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    population_after = await repos.builder()(_cohort(), cutoff)
+    diagnostics_after = AssessForecastPerformanceEvidence()(population_after)
+
+    assert population_before.raw_candidate_count == population_after.raw_candidate_count
+    assert population_before.exclusions == population_after.exclusions
+    assert diagnostics_before == diagnostics_after
+
+
+async def test_f66_04_future_new_evaluation_key_leaves_raw_count_and_exclusions_unchanged() -> None:
+    """Required test: historical population built before and after a
+    future NEW evaluation_key (not a revision of an existing one) is
+    appended -- `raw_candidate_count` and `exclusions` at the SAME
+    historical cutoff must be unaffected, since FTA knew nothing about
+    the new key at that cutoff."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+
+    population_before = await repos.builder()(_cohort(), cutoff)
+
+    repos.seed(
+        "claim-b", "M2", "outcome-b", "eval-b", Decimal("1.0"), Decimal("1.5"), availability=_ts(20)
+    )
+
+    population_after = await repos.builder()(_cohort(), cutoff)
+
+    assert population_before.raw_candidate_count == population_after.raw_candidate_count == 1
+    assert population_before.exclusions == population_after.exclusions == ()
+    assert {m.evaluation.evaluation_key for m in population_after.accepted} == {"eval-a"}
+
+
+async def test_f66_04_previously_unavailable_key_becomes_eligible_only_after_its_availability() -> (
+    None
+):
+    """Required test: a key absent from the population entirely before
+    its own `availability` becomes present (accepted, raw_candidate_
+    count incremented) once the cutoff reaches that availability --
+    never a moment earlier."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(15),
+    )
+
+    too_early = await repos.builder()(_cohort(), _ts(14))
+    assert too_early.accepted == ()
+    assert too_early.exclusions == ()
+    assert too_early.raw_candidate_count == 0
+
+    exactly_available = await repos.builder()(_cohort(), _ts(15))
+    assert {m.evaluation.evaluation_key for m in exactly_available.accepted} == {"eval-a"}
+    assert exactly_available.raw_candidate_count == 1
+
+
+async def test_f66_04_historical_numeric_metrics_remain_unchanged_after_future_revision() -> None:
+    """Required test: historical numeric metrics (not just membership)
+    must reproduce identically before/after a future correction, at
+    the same historical cutoff."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+
+    population_before = await repos.builder()(_cohort(), cutoff)
+    numeric_before, _, _ = CalculateForecastPerformance()(population_before)
+
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    population_after = await repos.builder()(_cohort(), cutoff)
+    numeric_after, _, _ = CalculateForecastPerformance()(population_after)
+
+    assert numeric_before == numeric_after
+
+
+async def test_f66_04_administrative_inspection_does_not_affect_historical_population() -> None:
+    """Required test: `InspectForecastPerformancePendingRevisions`
+    correctly reports a pending revision administratively, while the
+    SEPARATE historical population built at the original cutoff stays
+    completely unaffected -- proving the two paths never mix."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    inspect = InspectForecastPerformancePendingRevisions(repos.builder())
+    report = await inspect(_cohort(), historical_cutoff=cutoff, administrative_as_of=_ts(21))
+    assert report.pending_evaluation_keys == ("eval-a",)
+
+    historical_population = await repos.builder()(_cohort(), cutoff)
+    assert {m.evaluation.evaluation_key for m in historical_population.accepted} == {"eval-a"}
+    assert historical_population.accepted[0].evaluation.revision_sequence == 0

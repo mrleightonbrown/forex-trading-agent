@@ -409,3 +409,161 @@ Commits: starting `5affdd1` (FX-66) -> resulting FX-66H commit (see
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## Addendum: FX-66H.1 (Historical Snapshot Determinism & Evidence Binding)
+
+Corrective-only hardening on top of the FX-66H commit above (starting
+commit `9405837`), fixing three further findings. `fx66_v1` is
+preserved; no schema migration was needed.
+
+**F66-04 (H1) -- fully PIT-reproducible historical diagnostics.**
+FX-66H's own H1 fix still leaked future knowledge into an otherwise
+historical result: `BuildForecastPerformancePopulationAsOf` computed
+`raw_candidate_count` and the `NOT_YET_AVAILABLE` exclusion from a
+SECOND, genuinely unbounded repository read (`list_latest_evaluations_
+for_protocol`) that discovers every evaluation key that has EVER
+existed -- including ones FTA did not know about at `as_of` at all.
+Appending a brand-new evaluation key, or a new revision of an
+existing one, therefore silently changed `raw_candidate_count`,
+`exclusions`, and the then-existing `pending_revision_evaluation_keys`
+diagnostic for a population rebuilt at the SAME, already-fixed
+historical cutoff -- a real regression of the story's own PIT-
+reproducibility invariant.
+
+Fixed by removing the unbounded read from `BuildForecastPerformance
+PopulationAsOf` entirely: every field is now computed from the single
+AS-OF-BOUNDED read (`list_latest_evaluations_for_protocol_as_of`)
+alone, whose every returned row already satisfies `availability <=
+as_of` by construction -- a fact nothing appended later can ever
+change. `raw_candidate_count` now means exactly "the number of
+distinct evaluation keys FTA knew about, under this protocol and
+mode, as of this cutoff." A key with zero eligible revisions is
+simply never fetched and never appears anywhere in the population,
+exclusions included -- `NOT_YET_AVAILABLE` is therefore UNREACHABLE
+by this use case (kept, like `INCOMPATIBLE_HORIZON`, for forward
+compatibility and because old persisted snapshots may still name it).
+
+The retired `pending_revision_evaluation_keys`/`pending_revision_
+count` diagnostic (which required the unbounded read) is replaced by
+a brand-new, separate, explicitly-administrative use case, `Inspect
+ForecastPerformancePendingRevisions` -- it takes its OWN explicit
+`historical_cutoff`/`administrative_as_of` pair, reuses `Build
+ForecastPerformancePopulationAsOf` TWICE (once per cutoff, no new
+repository method, no duplicated structural-eligibility logic) to
+diff accepted revisions between the two cutoffs, and its result is
+NEVER read by `RecordForecastPerformanceSnapshot` or persisted as
+part of any snapshot. `AssessForecastPerformanceEvidence` now always
+produces `pending_revision_count=0` (a historically reproducible
+constant); the field and its persisted column (`diag_pending_revision_
+count`, added by FX-66H's own migration `0072c7c74f86`) are kept only
+for schema compatibility, never removed.
+
+10 unit tests (5 new `test_f66_04_*`, plus 2 pre-existing FX-66H tests
+corrected to expect NO exclusion for a key FTA never knew about) and 1
+new real-Postgres integration test (`test_build_population_as_of_is_
+reproducible_after_future_revision_real_postgres`) cover: identical
+diagnostics/raw-count/exclusions before and after a future revision OR
+a future new key, a previously-unavailable key becoming eligible only
+at its own availability, unchanged numeric metrics, and the
+administrative inspection correctly reporting a pending revision while
+the historical population itself stays completely unaffected.
+
+**F66-05 (H2) -- bind the snapshot payload to the authoritative
+population.** `RecordForecastPerformanceSnapshot` validated `candidate.
+availability` against authoritative evidence (FX-66H's own H3), but
+still trusted `candidate.members`/`exclusions`/`diagnostics`/`numeric_
+summary`/`categorical_summary`/`benchmark_comparison`/`evaluation_
+mode`/`knowledge_cutoff` merely because they referenced the right
+cohort/methodology/benchmark IDENTITY -- nothing confirmed the
+candidate's own CONTENT actually matched what the authoritative
+`population` produces. A caller could persist an arbitrary, self-
+assembled result (or one with a stale/inconsistent `diagnostics.
+benchmark_paired_count` -- a real latent risk found during this fix)
+as long as it pointed at valid identifiers.
+
+Fixed by RECONSTRUCTING every one of those fields from `population`
+(and, when pinned, `benchmark`/a new optional `benchmark_population`
+parameter mirroring `CalculateForecastPerformance`'s own) via the SAME
+existing `AssessForecastPerformanceEvidence`/`CalculateForecastPerformance`
+services every legitimate caller already uses -- never a second,
+duplicate metric-calculation path -- and rejecting the candidate
+(`ForecastPerformanceSnapshotConsistencyError`, naming every
+mismatched field) if ANY field differs from what was independently
+derived. Two further structural checks were added to the existing
+identity-mismatch family: `candidate.evaluation_mode` must match
+`population.cohort.evaluation_mode`, and `candidate.knowledge_cutoff`
+must match `population.knowledge_cutoff` -- neither was previously
+checked at all. Checked BEFORE the temporal-integrity check and
+BEFORE any repository access, so a rejected attempt still makes no
+database changes.
+
+11 unit tests and 2 real-Postgres integration tests (membership
+mismatch and a critical temporal case, both asserting zero rows
+written) cover: a valid complete snapshot with a real benchmark
+accepted; a member swapped for one not in the population; a padded
+member set borrowed from a larger population; a tampered MAE/mean-
+signed-error; a tampered diagnostic count; a mismatched knowledge
+cutoff; a mismatched evaluation mode; a tampered benchmark comparison;
+a valid identical rerun remaining `UNCHANGED`; and a rejected
+recording leaving no partial write.
+
+**F66-06 (H3) -- read-only repository methods no longer commit shared
+transactions.** `list_latest_evaluations_for_protocol`/`list_latest_
+evaluations_for_protocol_as_of` (and, on inspection, every other PURE-
+READ method FX-66 added to `SqlAlchemyForecastPerformanceRepository`:
+`latest_cohort_version`/`list_cohort_versions`/`latest_benchmark_
+version`/`list_benchmark_versions`/`latest_methodology_version`/`list_
+methodology_versions`/`latest_snapshot_vintage` and its siblings/`list_
+vintages_for_snapshot`) called `session.commit()` after their own
+`SELECT`, copying this repository's own "every method commits" WRITE-
+method convention onto READ methods -- unsafe once a caller (such as
+`RecordForecastPerformanceSnapshot`'s own new H2 reconstruction step)
+invokes one of these mid-call, sharing a session with its own eventual
+write (the exact FX-65H.3 H2 lesson). Fixed by removing the commit
+from every pure-read method in both files; every method that performs
+an actual `INSERT` (`add_cohort_version`/`add_benchmark_version`/`add_
+methodology_version`/`add_snapshot_vintage`, and the two evaluation-
+repository FX-66H additions remain pure reads) still commits, since
+each genuinely is its own complete unit of work.
+
+2 new real-Postgres tests (one per repository file) mirror FX-65H.3's
+own exact pattern: insert an uncommitted row directly on the shared
+session, invoke every read method against it, then open an
+INDEPENDENT session and confirm the pending row remains invisible,
+then roll back.
+
+**No migration.** Every fix above is pure application/domain logic or
+a repository transaction-boundary correction -- no schema change was
+needed or made, honoring this story's own default.
+
+**Regression.** 22 new/changed tests (5 F66-04 unit + 1 F66-04
+integration + 11 F66-05 unit + 2 F66-05 integration + 2 F66-06
+integration, plus pre-existing tests corrected in place). Full suite:
+3294 passed (up from the FX-66H baseline of 3272), 10 deselected
+(pre-existing, unrelated). `ruff`/`ruff format`/`mypy` (705 source
+files)/`pre-commit` all clean. The real BoC pilot re-verified dry-run,
+real-run, and rerun after all three fixes -- fully idempotent,
+`sample_adequacy` still `INSUFFICIENT_DATA`, MAE/RMSE unchanged at
+0.50 percentage points. Real-data table counts unchanged against the
+FX-66H baseline: FX-62-65 tables unchanged (12/34/7/1/1); FX-66 tables
+unchanged (1 cohort, 1 methodology, 0 benchmarks, 1 snapshot, 1
+member, 0 exclusions).
+
+**Explicitly confirmed NOT done.** No redesign of performance cohorts,
+statistical metrics, or evaluation protocols; no change to FX-64
+forecast capture, FX-65 outcome adjudication, FX-65H.2/H.3 durable
+outcome identity, or FX-62/63 historical source evidence; no change to
+existing performance metric formulas; the `INFERENCE_SUPPORTED`
+restriction from FX-66H is untouched; research/production segregation
+is untouched; no new forecast/outcome providers; no source reputation
+scores; no statistical-significance machinery; no trading weights or
+source-driven signals; no FX-67 dashboard; no Decision/Risk Engine
+changes. The known source-backed horizon-validation limitation
+(documented in FX-66H's own addendum above) remains documented and is
+not claimed resolved by this story.
+
+Commits: starting `9405837` (FX-66H) -> resulting FX-66H.1 commit (see
+`docs/DECISIONS.md`'s own FX-66H.1 entry for the exact hash).
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

@@ -17,18 +17,41 @@ belonged to. This is fixed by fetching the correct PIT-bounded
 selection directly, via `ForecastEvaluationRepository.list_latest_
 evaluations_for_protocol_as_of` -- for each `evaluation_key`, the
 latest vintage that was ACTUALLY available by `as_of`, never a later
-one. A key with no vintage available by `as_of` at all is excluded as
-`NOT_YET_AVAILABLE`; a key with an earlier eligible revision is
-ALWAYS included via that revision, regardless of what has since been
-appended. The UNBOUNDED read (`list_latest_evaluations_for_protocol`)
-is still used, but ONLY to discover `raw_candidate_count` (every key
-that has ever existed under this protocol+mode) and to flag, purely
-informationally, that a newer revision exists beyond the cutoff
-(`pending_revision_evaluation_keys` on the returned population) --
-this NEVER changes which revision is selected or whether a key is
-included, satisfying Section 6's own "preserve that information in a
-separate administrative diagnostic... do not allow a future revision
-to influence historical population membership" requirement exactly.
+one.
+
+**FX-66H.1 (F66-04) correction -- fully PIT-reproducible historical
+diagnostics.** FX-66H's own fix above STILL leaked future knowledge
+into the historical result: `raw_candidate_count` and the `NOT_YET_
+AVAILABLE` exclusion were derived from a SECOND, genuinely UNBOUNDED
+read (`list_latest_evaluations_for_protocol`) that discovers every key
+that has EVER existed, including ones FTA did not know about at
+`as_of` at all -- so appending a brand-new evaluation key (or a new
+revision of an existing one) AFTER the fact silently changed
+`raw_candidate_count`, `exclusions`, and the since-removed `pending_
+revision_evaluation_keys` diagnostic for a population rebuilt at the
+SAME, already-fixed historical cutoff. This is fixed by removing the
+unbounded read from this use case ENTIRELY: every field below is now
+computed from the single AS-OF-BOUNDED read alone, which by
+construction can only ever return rows whose own `availability` is
+`<= as_of` -- a fact that cannot change no matter what is appended
+later, because nothing appended after `as_of` can ever retroactively
+satisfy `availability <= as_of`. `raw_candidate_count` therefore now
+means exactly "the number of distinct evaluation keys FTA knew about,
+under this protocol and mode, as of this cutoff" -- never "every key
+that has ever existed." A key with NO vintage available by `as_of` at
+all is simply never fetched and never appears anywhere in the
+returned population (not even as an exclusion) -- FTA did not know it
+existed, so there is nothing to audit. `NOT_YET_AVAILABLE` is
+therefore now UNREACHABLE by this use case (see its own docstring).
+
+The now-retired `pending_revision_evaluation_keys` diagnostic (which
+required the unbounded read to compute) is REPLACED by `Inspect
+ForecastPerformancePendingRevisions` -- a separate, read-only,
+explicitly-administrative use case with its OWN `administrative_as_of`
+parameter, never folded into this use case's own PIT-reproducible
+result, and never consulted by `RecordForecastPerformanceSnapshot`
+(Section F66-04's own "do not mix administrative future-knowledge
+diagnostics into a persisted historical performance result" rule).
 
 **Structural compatibility checks, in order**: protocol version,
 known-duplicate list, target, forecast type, originator, issue
@@ -117,12 +140,6 @@ class ForecastPerformancePopulation:
     accepted: tuple[ForecastPerformancePopulationMember, ...]
     exclusions: tuple[tuple[str, ForecastPerformanceExclusionReason], ...]
     """`(evaluation_key, reason)` pairs, in no particular order."""
-    pending_revision_evaluation_keys: tuple[str, ...] = ()
-    """FX-66H (H1): purely informational -- `evaluation_key`s that
-    WERE included via an earlier eligible revision, for which a
-    STRICTLY NEWER revision also exists beyond `knowledge_cutoff`.
-    Never affects which revision was selected or whether a key is
-    included; a separate administrative diagnostic only."""
 
 
 def _issue_instant(forecast_vintage: StructuredForecastVintage) -> UtcTimestamp:
@@ -160,44 +177,21 @@ class BuildForecastPerformancePopulationAsOf:
     async def __call__(
         self, cohort: ForecastPerformanceCohortDefinition, as_of: UtcTimestamp
     ) -> ForecastPerformancePopulation:
-        # FX-66H (H1): the UNBOUNDED read exists ONLY to discover every
-        # evaluation_key that has ever existed under this protocol+mode
-        # (for raw_candidate_count) and to flag a pending later revision
-        # informationally -- it NEVER decides which revision is used or
-        # whether a key is included. The AS-OF-bounded read below is the
-        # one and only source of truth for population membership.
-        unbounded = await self._evaluation_repository.list_latest_evaluations_for_protocol(
-            cohort.protocol_key, cohort.evaluation_mode
-        )
+        # FX-66H.1 (F66-04): the ONLY read this use case performs. Every
+        # row returned already satisfies `availability <= as_of` by
+        # construction, so this result is fully PIT-reproducible for a
+        # fixed `as_of` -- nothing appended later can ever change it.
         as_of_bounded = (
             await self._evaluation_repository.list_latest_evaluations_for_protocol_as_of(
                 cohort.protocol_key, cohort.evaluation_mode, as_of
             )
         )
-        as_of_bounded_by_key = {e.evaluation_key: e for e in as_of_bounded}
-        raw_candidate_count = len(unbounded)
+        raw_candidate_count = len(as_of_bounded)
 
         exclusions: list[tuple[str, ForecastPerformanceExclusionReason]] = []
         structurally_eligible: list[ForecastPerformancePopulationMember] = []
-        pending_revision_keys: list[str] = []
 
-        for overall_latest in unbounded:
-            evaluation = as_of_bounded_by_key.get(overall_latest.evaluation_key)
-            if evaluation is None:
-                # No revision of this key existed by `as_of` at all.
-                exclusions.append(
-                    (
-                        overall_latest.evaluation_key,
-                        ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE,
-                    )
-                )
-                continue
-            if evaluation.revision_sequence < overall_latest.revision_sequence:
-                # A STRICTLY NEWER revision exists beyond the cutoff --
-                # purely informational; the eligible, earlier revision
-                # is still the one selected below.
-                pending_revision_keys.append(evaluation.evaluation_key)
-
+        for evaluation in as_of_bounded:
             reason, forecast_vintage = await self._classify(evaluation, cohort)
             if reason is not None:
                 exclusions.append((evaluation.evaluation_key, reason))
@@ -223,7 +217,6 @@ class BuildForecastPerformancePopulationAsOf:
             raw_candidate_count=raw_candidate_count,
             accepted=tuple(accepted),
             exclusions=tuple(exclusions),
-            pending_revision_evaluation_keys=tuple(pending_revision_keys),
         )
 
     async def _classify(

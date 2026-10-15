@@ -32,11 +32,20 @@ class ForecastPerformanceSampleDiagnostics:
     latest_availability: UtcTimestamp | None
     sample_adequacy: ForecastPerformanceSampleAdequacy
     pending_revision_count: int = 0
-    """FX-66H (H1): how many ACCEPTED members have a strictly newer
-    evaluation revision beyond `knowledge_cutoff` -- a purely
-    informational audit count (Section 6's own "preserve that
-    information in a separate administrative diagnostic" rule). Never
-    influences `sample_adequacy` or any accepted/excluded decision."""
+    """RETIRED as of FX-66H.1 (F66-04): FX-66H's own H1 originally
+    computed this from an UNBOUNDED repository read, which let future
+    knowledge leak into an otherwise PIT-reproducible historical
+    result -- rebuilding the SAME historical population after a later
+    revision was appended could change this count, even though nothing
+    else about the population had changed. `AssessForecastPerformance
+    Evidence` now always produces `0` here -- a constant, therefore
+    historically reproducible by construction. The real diagnostic
+    this used to carry now lives entirely in the separate,
+    administrative-only `InspectForecastPerformancePendingRevisions`
+    use case, which is never consulted when building or persisting a
+    snapshot. The field (and its persisted column) are kept only for
+    schema compatibility with already-persisted snapshots -- never
+    removed, never repurposed."""
 
     def __post_init__(self) -> None:
         for name, value in (

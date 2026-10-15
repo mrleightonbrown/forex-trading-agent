@@ -3659,6 +3659,26 @@ asserted `horizon_category` with no independent per-forecast
 validation) and proposes, without implementing, the narrowest safe
 restriction.
 
+**FX-66H.1 fixed three further findings, corrective-only.** F66-04:
+`BuildForecastPerformancePopulationAsOf` dropped its own remaining
+unbounded read entirely -- the population is now computed purely from
+the as-of-bounded read, making it fully PIT-reproducible for a fixed
+cutoff no matter what is appended later; the retired pending-revision
+diagnostic moved to a brand-new, separate, explicitly-administrative
+`InspectForecastPerformancePendingRevisions` use case, never consulted
+when building or persisting a snapshot. F66-05: `RecordForecastPerformance
+Snapshot` now reconstructs a candidate's own membership/exclusions/
+diagnostics/summaries/benchmark comparison from the authoritative
+population via the SAME existing calculation/evidence-assessment
+services, rejecting the candidate if any field differs from what was
+independently derived -- closing the gap where a structurally valid
+candidate could still carry self-assembled, unverified content. F66-06:
+every pure-read method FX-66 added to `SqlAlchemyForecastPerformance
+Repository` no longer commits (only its write methods still do), so a
+mid-call read can no longer prematurely flush a caller's own pending
+transaction. No schema migration was needed. See ADR 0014's own
+FX-66H.1 addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

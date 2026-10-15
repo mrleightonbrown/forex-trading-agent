@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from forex_agent.application.use_cases.assess_forecast_evaluation_admissibility import (
     AssessForecastEvaluationAdmissibility,
 )
+from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
+    BuildForecastPerformancePopulationAsOf,
+)
 from forex_agent.application.use_cases.evaluate_structured_forecast import (
     EvaluateStructuredForecast,
     StructuredForecastEvaluationOutcome,
@@ -62,6 +65,7 @@ from forex_agent.domain.forecast_attribution_kind import ForecastAttributionKind
 from forex_agent.domain.forecast_evaluation_admissibility import ForecastEvaluationAdmissibility
 from forex_agent.domain.forecast_evaluation_metric import ForecastEvaluationMetric
 from forex_agent.domain.forecast_evaluation_protocol import ForecastEvaluationProtocol
+from forex_agent.domain.forecast_evaluation_result import ForecastEvaluationResult
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
 from forex_agent.domain.forecast_outcome_definition import ForecastOutcomeDefinition
@@ -71,6 +75,12 @@ from forex_agent.domain.forecast_outcome_identity import (
 )
 from forex_agent.domain.forecast_outcome_resolution_status import ForecastOutcomeResolutionStatus
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
+from forex_agent.domain.forecast_performance_cohort_definition import (
+    ForecastPerformanceCohortDefinition,
+)
+from forex_agent.domain.forecast_performance_duplicate_selection_policy import (
+    ForecastPerformanceDuplicateSelectionPolicy,
+)
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
 from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
 from forex_agent.domain.forecast_target_period_kind import ForecastTargetPeriodKind
@@ -79,9 +89,13 @@ from forex_agent.domain.intelligence_source_kind import IntelligenceSourceKind
 from forex_agent.domain.outcome_vintage_selection_policy import OutcomeVintageSelectionPolicy
 from forex_agent.domain.source_evidence_kind import SourceEvidenceKind
 from forex_agent.domain.source_provenance_evidence import SourceProvenanceEvidence
+from forex_agent.domain.structured_forecast_evaluation_vintage import (
+    StructuredForecastEvaluationVintage,
+)
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.forecast_evaluation_repository import (
     SqlAlchemyForecastEvaluationRepository,
+    _evaluation_row_values,
 )
 from forex_agent.infrastructure.db.forecast_outcome_repository import (
     SqlAlchemyForecastOutcomeRepository,
@@ -299,6 +313,28 @@ def _forecast_candidate(**overrides: object) -> StructuredForecastCandidate:
     }
     defaults.update(overrides)
     return StructuredForecastCandidate(**defaults)  # type: ignore[arg-type]
+
+
+def _performance_cohort(**overrides: object) -> ForecastPerformanceCohortDefinition:
+    defaults: dict[str, object] = {
+        "cohort_key": "__fx66h1_repo_test_cohort__",
+        "version_sequence": 0,
+        "attribution_kind": ForecastAttributionKind.AGGREGATE_SURVEY_CONSENSUS,
+        "originator_publisher_source_key": TEST_PUBLISHER_KEY,
+        "target_key": "CA_POLICY_RATE_LEVEL_AFTER_MEETING",
+        "forecast_type": ForecastType.NUMERIC_POINT,
+        "horizon_category": "FAD-SAME-MEETING",
+        "protocol_key": f"{TEST_PROTOCOL_PREFIX}3",
+        "protocol_version_sequence": 0,
+        "evaluation_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        "duplicate_selection_policy": (
+            ForecastPerformanceDuplicateSelectionPolicy.EARLIEST_QUALIFYING_ISSUE
+        ),
+        "availability": _ts(1),
+        "rationale": "FX-66H.1 real-Postgres reproducibility test cohort",
+    }
+    defaults.update(overrides)
+    return ForecastPerformanceCohortDefinition(**defaults)  # type: ignore[arg-type]
 
 
 def _review() -> EvidenceAuthenticationReview:
@@ -1001,3 +1037,151 @@ async def test_list_latest_evaluations_for_protocol_as_of_selects_pit_correct_re
     assert len(unbounded) == 1
     assert unbounded[0].evaluation_key == evaluation_key
     assert unbounded[0].revision_sequence == 1
+
+
+async def test_list_latest_evaluations_read_only_lookups_do_not_commit_unrelated_pending_writes(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+    evaluation_repo: SqlAlchemyForecastEvaluationRepository,
+    forecast_repo: SqlAlchemyStructuredForecastRepository,
+    session: AsyncSession,
+) -> None:
+    """FX-66H.1 (H3/F66-06): `list_latest_evaluations_for_protocol`/
+    `list_latest_evaluations_for_protocol_as_of` must be genuinely
+    read-only -- an uncommitted INSERT pending on the SAME session
+    must remain uncommitted (invisible to an independent session)
+    after both methods execute against it."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}5")
+    )
+    await RecordForecastOutcome(outcome_repo)(
+        _outcome_candidate(
+            outcome_key=f"{TEST_OUTCOME_PREFIX}5", definition_key=f"{TEST_DEFINITION_PREFIX}5"
+        )
+    )
+    protocol_key = f"{TEST_PROTOCOL_PREFIX}5"
+    await RecordForecastEvaluationProtocol(evaluation_repo)(
+        _protocol(protocol_key=protocol_key, outcome_definition_key=f"{TEST_DEFINITION_PREFIX}5")
+    )
+    forecast_result = await RecordStructuredForecast(forecast_repo)(
+        _forecast_candidate(claim_key=f"{TEST_CLAIM_PREFIX}5"), registered_at=_ts(1)
+    )
+    assert forecast_result.vintage is not None
+
+    pending_vintage = StructuredForecastEvaluationVintage(
+        evaluation_key=f"{TEST_EVALUATION_PREFIX}5-pending",
+        revision_sequence=0,
+        forecast_claim_key=forecast_result.vintage.claim_key,
+        forecast_revision_sequence=forecast_result.vintage.revision_sequence,
+        protocol_key=protocol_key,
+        protocol_version_sequence=0,
+        outcome_definition_key=f"{TEST_DEFINITION_PREFIX}5",
+        outcome_definition_version_sequence=0,
+        outcome_key=f"{TEST_OUTCOME_PREFIX}5",
+        outcome_revision_sequence=0,
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        algorithm_version="fx65_v1",
+        availability=_ts(10),
+        result=ForecastEvaluationResult(
+            metric=ForecastEvaluationMetric.NUMERIC_ERROR,
+            signed_error=Decimal("-0.50"),
+            absolute_error=Decimal("0.50"),
+            unit="PERCENT",
+        ),
+        forecast_authentication_review=_review(),
+    )
+    await session.execute(
+        insert(StructuredForecastEvaluationVintageRow).values(
+            _evaluation_row_values(pending_vintage)
+        )
+    )
+
+    await evaluation_repo.list_latest_evaluations_for_protocol(
+        protocol_key, ForecastProvenanceMode.RETROSPECTIVE_RESEARCH
+    )
+    await evaluation_repo.list_latest_evaluations_for_protocol_as_of(
+        protocol_key, ForecastProvenanceMode.RETROSPECTIVE_RESEARCH, _ts(20)
+    )
+
+    other_session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+    async with other_session_factory() as other_session:
+        other_repo = SqlAlchemyForecastEvaluationRepository(other_session)
+        visible = await other_repo.list_vintages_for_evaluation(
+            f"{TEST_EVALUATION_PREFIX}5-pending"
+        )
+        assert visible == ()
+
+    await session.rollback()
+
+
+async def test_build_population_as_of_is_reproducible_after_future_revision_real_postgres(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+    evaluation_repo: SqlAlchemyForecastEvaluationRepository,
+    forecast_repo: SqlAlchemyStructuredForecastRepository,
+) -> None:
+    """FX-66H.1 (H1/F66-04), real-Postgres: rebuilding `BuildForecast
+    PerformancePopulationAsOf`'s own result at the SAME historical
+    cutoff, before and after a future evaluation revision is appended
+    against real Postgres, must be byte-for-byte identical -- the
+    unbounded read this use case used to perform (and which this fix
+    removed) is exactly what could have changed `raw_candidate_count`
+    and `exclusions` here."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}4")
+    )
+    await RecordForecastOutcome(outcome_repo)(
+        _outcome_candidate(
+            outcome_key=f"{TEST_OUTCOME_PREFIX}4", definition_key=f"{TEST_DEFINITION_PREFIX}4"
+        )
+    )
+    protocol_key = f"{TEST_PROTOCOL_PREFIX}4"
+    await RecordForecastEvaluationProtocol(evaluation_repo)(
+        _protocol(protocol_key=protocol_key, outcome_definition_key=f"{TEST_DEFINITION_PREFIX}4")
+    )
+    forecast_result = await RecordStructuredForecast(forecast_repo)(
+        _forecast_candidate(claim_key=f"{TEST_CLAIM_PREFIX}4"), registered_at=_ts(1)
+    )
+    assert forecast_result.vintage is not None
+
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
+    evaluation_key = f"{TEST_EVALUATION_PREFIX}4"
+    first = await evaluate(
+        evaluation_key=evaluation_key,
+        forecast_vintage=forecast_result.vintage,
+        forecast_authentication_review=_review(),
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        protocol=_protocol(
+            protocol_key=protocol_key, outcome_definition_key=f"{TEST_DEFINITION_PREFIX}4"
+        ),
+        outcome_key=f"{TEST_OUTCOME_PREFIX}4",
+        algorithm_version="fx65_v1",
+        availability=_ts(10),
+    )
+    assert first.vintage is not None
+
+    cohort = _performance_cohort(protocol_key=protocol_key)
+    build_population = BuildForecastPerformancePopulationAsOf(
+        evaluation_repo, forecast_repo, outcome_repo
+    )
+    cutoff = _ts(13)
+    population_before = await build_population(cohort, cutoff)
+    assert {m.evaluation.evaluation_key for m in population_before.accepted} == {evaluation_key}
+
+    revision_1 = replace(
+        first.vintage,
+        revision_sequence=1,
+        availability=_ts(20),
+        correction_reason="later correction, available only after the cutoff under test",
+    )
+    write_result = await evaluation_repo.add_evaluation_vintage(revision_1)
+    assert write_result.inserted is True
+
+    population_after = await build_population(cohort, cutoff)
+
+    assert population_before.raw_candidate_count == population_after.raw_candidate_count
+    assert population_before.exclusions == population_after.exclusions
+    assert {m.evaluation.evaluation_key for m in population_after.accepted} == {evaluation_key}
+    assert population_after.accepted[0].evaluation.revision_sequence == 0

@@ -12,13 +12,25 @@ class ForecastPerformanceExclusionReason(Enum):
     NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
     """The evaluation's own `availability` is later than the
     population's requested knowledge cutoff -- this is a PIT boundary,
-    never a content defect. Reachable: `BuildForecastPerformance
-    PopulationAsOf` fetches every candidate UNBOUNDED by `as_of`
-    (mirroring `latest_outcome_vintage`'s own "administrative,
-    unbounded read, caller applies its own PIT check" convention)
-    specifically so a too-new evaluation is classified here, visible
-    in the audit trail, rather than silently vanishing from the
-    candidate population by never being fetched at all."""
+    never a content defect.
+
+    Currently UNREACHABLE by construction as of FX-66H.1 (F66-04):
+    `BuildForecastPerformancePopulationAsOf` fetches ONLY the AS-OF-
+    BOUNDED read (`list_latest_evaluations_for_protocol_as_of`), whose
+    every returned row already satisfies `availability <= as_of` --
+    there is no longer any unbounded read to discover a too-new key's
+    existence in the first place. The earlier FX-66 design deliberately
+    used a second, unbounded read specifically to surface this reason
+    in the audit trail, but that is exactly what let future knowledge
+    leak into a historical result: a key FTA did not know about at
+    `as_of` would still show up here, as an EXCLUSION, merely because
+    it was later discovered to exist -- violating "historical
+    exclusions must not include evaluation keys that FTA did not know
+    existed at the cutoff." A key with zero eligible revisions is now
+    simply never fetched and never appears anywhere in the population
+    at all, exclusions included. Kept here, like `INCOMPATIBLE_HORIZON`,
+    for forward compatibility and because old persisted snapshots may
+    still name it."""
 
     MISSING_OR_UNRESOLVED_OUTCOME = "MISSING_OR_UNRESOLVED_OUTCOME"
     """Currently UNREACHABLE by construction, documented here only

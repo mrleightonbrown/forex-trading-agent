@@ -44,7 +44,29 @@ rejected attempt makes no database changes). This mirrors FX-65H's
 own "remove the trust boundary, don't verify around it" lesson:
 rather than trusting a caller-supplied `availability` and hoping it
 is late enough, the use case recomputes the REQUIRED bound itself
-from the authoritative evidence the caller must already hold."""
+from the authoritative evidence the caller must already hold.
+
+**FX-66H.1 (H2/F66-05) addition -- bind the candidate's own payload
+to the authoritative population.** FX-66H's own H3 fix validated
+candidate.availability against authoritative evidence, but still
+trusted `candidate.members`/`exclusions`/`diagnostics`/`numeric_
+summary`/`categorical_summary`/`benchmark_comparison`/`evaluation_
+mode`/`knowledge_cutoff` merely because they were structurally valid
+and referenced the right cohort/methodology/benchmark IDENTITY --
+nothing confirmed the candidate's own CONTENT actually matches what
+the authoritative `population` produces. This is fixed by
+RECONSTRUCTING every one of those fields from `population` (and, when
+pinned, `benchmark`/`benchmark_population`) via the SAME existing
+`AssessForecastPerformanceEvidence`/`CalculateForecastPerformance`
+services every legitimate caller already uses -- never a second,
+duplicate metric-calculation path -- and rejecting the candidate if
+ANY field differs from what was independently derived. This also
+transitively fixes a latent inconsistency risk: `diagnostics.
+benchmark_paired_count` is now always derived from the SAME `benchmark_
+comparison.paired_count` this reconstruction computes, so the two can
+never silently diverge. Checked BEFORE the temporal-integrity check
+and BEFORE any repository access, so a rejected attempt still makes
+no database changes."""
 
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -52,8 +74,14 @@ from enum import Enum
 from forex_agent.application.ports.forecast_performance_repository import (
     ForecastPerformanceRepository,
 )
+from forex_agent.application.use_cases.assess_forecast_performance_evidence import (
+    AssessForecastPerformanceEvidence,
+)
 from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
     ForecastPerformancePopulation,
+)
+from forex_agent.application.use_cases.calculate_forecast_performance import (
+    CalculateForecastPerformance,
 )
 from forex_agent.domain.forecast_performance_benchmark_comparison import (
     ForecastPerformanceBenchmarkComparison,
@@ -209,6 +237,40 @@ class ForecastPerformanceSnapshotIdentityMismatchError(Exception):
         )
 
 
+class ForecastPerformanceSnapshotConsistencyError(Exception):
+    """FX-66H.1 (H2/F66-05): `candidate`'s own claimed membership,
+    exclusions, diagnostics, numeric/categorical summary, or benchmark
+    comparison does not match what `AssessForecastPerformanceEvidence`/
+    `CalculateForecastPerformance` independently derive from the SAME
+    authoritative `population` -- a caller can no longer persist an
+    arbitrary, self-assembled result merely because it references
+    valid cohort/methodology/benchmark identifiers."""
+
+    def __init__(self, snapshot_key: str, mismatched_fields: tuple[str, ...]) -> None:
+        self.snapshot_key = snapshot_key
+        self.mismatched_fields = mismatched_fields
+        super().__init__(
+            f"snapshot_key={snapshot_key!r}: candidate's own {', '.join(mismatched_fields)} "
+            "do not match what is independently derived from the authoritative population"
+        )
+
+
+def _expected_members(
+    population: ForecastPerformancePopulation,
+) -> tuple[ForecastPerformanceSnapshotMember, ...]:
+    return tuple(
+        ForecastPerformanceSnapshotMember(
+            evaluation_key=m.evaluation.evaluation_key,
+            evaluation_revision_sequence=m.evaluation.revision_sequence,
+            forecast_claim_key=m.evaluation.forecast_claim_key,
+            forecast_revision_sequence=m.evaluation.forecast_revision_sequence,
+            outcome_key=m.evaluation.outcome_key,
+            outcome_revision_sequence=m.evaluation.outcome_revision_sequence,
+        )
+        for m in population.accepted
+    )
+
+
 def _required_minimum_availability(
     population: ForecastPerformancePopulation,
     methodology: ForecastPerformanceMethodology,
@@ -254,6 +316,7 @@ class RecordForecastPerformanceSnapshot:
         population: ForecastPerformancePopulation,
         methodology: ForecastPerformanceMethodology,
         benchmark: ForecastPerformanceBenchmarkDefinition | None = None,
+        benchmark_population: ForecastPerformancePopulation | None = None,
         dry_run: bool = False,
     ) -> ForecastPerformanceSnapshotRecordResult:
         if (
@@ -280,6 +343,39 @@ class RecordForecastPerformanceSnapshot:
         ):
             raise ForecastPerformanceSnapshotIdentityMismatchError(
                 candidate.snapshot_key, "benchmark"
+            )
+        if candidate.evaluation_mode is not population.cohort.evaluation_mode:
+            raise ForecastPerformanceSnapshotIdentityMismatchError(
+                candidate.snapshot_key, "evaluation_mode"
+            )
+        if candidate.knowledge_cutoff.value != population.knowledge_cutoff.value:
+            raise ForecastPerformanceSnapshotIdentityMismatchError(
+                candidate.snapshot_key, "knowledge_cutoff"
+            )
+
+        expected_numeric, expected_categorical, expected_comparison = (
+            CalculateForecastPerformance()(
+                population, benchmark=benchmark, benchmark_population=benchmark_population
+            )
+        )
+        expected_diagnostics = AssessForecastPerformanceEvidence()(
+            population, benchmark_paired_count=expected_comparison.paired_count
+        )
+        mismatched_fields = tuple(
+            name
+            for name, matches in (
+                ("members", set(candidate.members) == set(_expected_members(population))),
+                ("exclusions", set(candidate.exclusions) == set(population.exclusions)),
+                ("diagnostics", candidate.diagnostics == expected_diagnostics),
+                ("numeric_summary", candidate.numeric_summary == expected_numeric),
+                ("categorical_summary", candidate.categorical_summary == expected_categorical),
+                ("benchmark_comparison", candidate.benchmark_comparison == expected_comparison),
+            )
+            if not matches
+        )
+        if mismatched_fields:
+            raise ForecastPerformanceSnapshotConsistencyError(
+                candidate.snapshot_key, mismatched_fields
             )
 
         required_minimum, what = _required_minimum_availability(population, methodology, benchmark)

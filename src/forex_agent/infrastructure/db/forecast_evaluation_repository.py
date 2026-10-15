@@ -164,24 +164,30 @@ class SqlAlchemyForecastEvaluationRepository:
     async def list_latest_evaluations_for_protocol(
         self, protocol_key: str, evaluation_mode: ForecastProvenanceMode
     ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        # FX-66H.1 (H3/F66-06): genuinely READ-ONLY -- no commit. A
+        # commit here would prematurely flush any UNRELATED pending
+        # write the caller's own shared session is still holding
+        # (e.g. mid-`BuildForecastPerformancePopulationAsOf`/`Record
+        # ForecastPerformanceSnapshot`), exactly the FX-65H.3 (H2)
+        # lesson: "a read-only repository lookup must not commit
+        # unrelated pending writes in the caller's session."
         stmt = select(StructuredForecastEvaluationVintageRow).where(
             StructuredForecastEvaluationVintageRow.protocol_key == protocol_key,
             StructuredForecastEvaluationVintageRow.evaluation_mode == evaluation_mode.value,
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_evaluation_row_to_domain(row) for row in _latest_per_key(rows))
 
     async def list_latest_evaluations_for_protocol_as_of(
         self, protocol_key: str, evaluation_mode: ForecastProvenanceMode, as_of: UtcTimestamp
     ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        # FX-66H.1 (H3/F66-06): read-only -- see sibling method above.
         stmt = select(StructuredForecastEvaluationVintageRow).where(
             StructuredForecastEvaluationVintageRow.protocol_key == protocol_key,
             StructuredForecastEvaluationVintageRow.evaluation_mode == evaluation_mode.value,
             StructuredForecastEvaluationVintageRow.availability <= as_of.value,
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_evaluation_row_to_domain(row) for row in _latest_per_key(rows))
 
     async def _select_latest(

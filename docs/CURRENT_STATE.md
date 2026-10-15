@@ -3484,6 +3484,33 @@ _Last updated: 2026-09-27 (FX-54V)_
   independent per-forecast validation) and proposes, without
   implementing, the narrowest safe restriction.
   **Stop after FX-66H — do not begin FX-67.**
+- **FX-66H.1: historical snapshot determinism & evidence binding
+  (complete)**. Corrective-only, `fx66_v1` preserved, starting commit
+  `9405837`, no schema migration. F66-04: `BuildForecastPerformance
+  PopulationAsOf` dropped the unbounded repository read it was still
+  using for `raw_candidate_count`/exclusions -- the population is now
+  computed purely from the as-of-bounded read, making it fully PIT-
+  reproducible for a fixed cutoff regardless of what is appended
+  later; the retired pending-revision diagnostic moved to a new,
+  separate, explicitly-administrative `InspectForecastPerformance
+  PendingRevisions` use case, never consulted when building or
+  persisting a snapshot. F66-05: `RecordForecastPerformanceSnapshot`
+  now reconstructs a candidate's own membership/exclusions/
+  diagnostics/summaries/benchmark comparison from the authoritative
+  population via the same existing calculation/evidence-assessment
+  services, rejecting the candidate (`ForecastPerformanceSnapshot
+  ConsistencyError`) if any field differs from what is independently
+  derived -- a structurally valid candidate can no longer carry self-
+  assembled, unverified content. F66-06: every pure-read method FX-66
+  added to `SqlAlchemyForecastPerformanceRepository` no longer commits
+  (only its write methods still do), fixing a transaction-isolation
+  bug a mid-call read (such as F66-05's own reconstruction step) could
+  otherwise trigger. 22 new/changed tests; full suite 3294 passed (up
+  from 3272). `ruff`/`mypy` (705 files)/`pre-commit` all clean. Real
+  pilot re-verified post-fix: fully idempotent, still
+  `INSUFFICIENT_DATA`, MAE unchanged at 0.50pp. Real-data table counts
+  unchanged, no leaked test data.
+  **Stop after FX-66H.1 — do not begin FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

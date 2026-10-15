@@ -7267,3 +7267,36 @@ complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## FX-66H.1: historical snapshot determinism & evidence binding (complete)
+
+Corrective-only, `fx66_v1` preserved, starting commit `9405837`, no
+schema migration. F66-04 dropped `BuildForecastPerformancePopulationAsOf`'s
+remaining unbounded read -- the population is now computed purely
+from the as-of-bounded read, fully PIT-reproducible for a fixed
+cutoff regardless of what is appended later; the retired pending-
+revision diagnostic moved to a new, separate, explicitly-
+administrative `InspectForecastPerformancePendingRevisions` use case,
+never consulted when building or persisting a snapshot. F66-05 made
+`RecordForecastPerformanceSnapshot` reconstruct a candidate's own
+membership/exclusions/diagnostics/summaries/benchmark comparison from
+the authoritative population via the same existing calculation/
+evidence-assessment services, rejecting the candidate if any field
+differs from what is independently derived -- plus two new structural
+checks (`evaluation_mode`, `knowledge_cutoff` must match the
+population). F66-06 removed `session.commit()` from every pure-read
+method FX-66 added to the performance repository, fixing a
+transaction-isolation bug a mid-call read could otherwise trigger.
+
+22 new/changed tests; full suite 3294 passed (up from 3272).
+`ruff`/`ruff format`/`mypy` (705 files)/`pre-commit` all clean. The
+real pilot re-verified post-fix: fully idempotent, still
+`INSUFFICIENT_DATA`, MAE/RMSE unchanged at 0.50 percentage points.
+Real-data table counts unchanged against the FX-66H baseline.
+
+Full details in `docs/DECISIONS.md`'s FX-66H.1 entry; `docs/adr/0014-
+historical-forecast-performance.md`'s own FX-66H.1 addendum is the
+complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

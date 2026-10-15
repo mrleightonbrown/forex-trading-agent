@@ -1,20 +1,30 @@
-"""FX-66 Section 16/20.G + FX-66H Section H3: tests for `RecordForecast
-PerformanceSnapshot` -- full-history determinism, idempotent exact-
-repeat, PIT ordering, "the same complete basis never produces two
-different results," and (FX-66H) temporal integrity: a snapshot can
-never claim to have been recorded before the authoritative evidence
-it is built from was actually known."""
+"""FX-66 Section 16/20.G + FX-66H Section H3 + FX-66H.1 Section H2:
+tests for `RecordForecastPerformanceSnapshot` -- full-history
+determinism, idempotent exact-repeat, PIT ordering, "the same
+complete basis never produces two different results," FX-66H's own
+temporal integrity (a snapshot can never claim to have been recorded
+before the authoritative evidence it is built from was actually
+known), and FX-66H.1's own binding of the candidate's claimed payload
+to what is independently derived from the authoritative population."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
+from forex_agent.application.use_cases.assess_forecast_performance_evidence import (
+    AssessForecastPerformanceEvidence,
+)
 from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
     ForecastPerformancePopulation,
     ForecastPerformancePopulationMember,
 )
+from forex_agent.application.use_cases.calculate_forecast_performance import (
+    CalculateForecastPerformance,
+)
 from forex_agent.application.use_cases.record_forecast_performance_snapshot import (
+    ForecastPerformanceSnapshotConsistencyError,
     ForecastPerformanceSnapshotDeterminismError,
     ForecastPerformanceSnapshotIdentityMismatchError,
     ForecastPerformanceSnapshotOutcome,
@@ -31,9 +41,6 @@ from forex_agent.domain.forecast_evaluation_result import ForecastEvaluationResu
 from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
 from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
 from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
-from forex_agent.domain.forecast_performance_benchmark_comparison import (
-    ForecastPerformanceBenchmarkComparison,
-)
 from forex_agent.domain.forecast_performance_benchmark_comparison_status import (
     ForecastPerformanceBenchmarkComparisonStatus,
 )
@@ -55,15 +62,6 @@ from forex_agent.domain.forecast_performance_exclusion_reason import (
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_missing_data_policy import (
     ForecastPerformanceMissingDataPolicy,
-)
-from forex_agent.domain.forecast_performance_numeric_summary import (
-    ForecastPerformanceNumericSummary,
-)
-from forex_agent.domain.forecast_performance_sample_adequacy import (
-    ForecastPerformanceSampleAdequacy,
-)
-from forex_agent.domain.forecast_performance_sample_diagnostics import (
-    ForecastPerformanceSampleDiagnostics,
 )
 from forex_agent.domain.forecast_performance_snapshot import (
     ForecastPerformanceSnapshot,
@@ -259,65 +257,62 @@ def _member(evaluation_key: str, outcome_key: str) -> ForecastPerformanceSnapsho
     )
 
 
-def _diagnostics(
-    accepted_count: int,
-    excluded_by_reason: tuple[tuple[ForecastPerformanceExclusionReason, int], ...],
-) -> ForecastPerformanceSampleDiagnostics:
-    raw_candidate_count = accepted_count + sum(count for _, count in excluded_by_reason)
-    return ForecastPerformanceSampleDiagnostics(
-        raw_candidate_count=raw_candidate_count,
-        accepted_count=accepted_count,
-        excluded_by_reason=excluded_by_reason,
-        unique_forecast_issue_count=accepted_count,
-        unique_target_event_count=accepted_count,
-        distinct_target_period_count=accepted_count,
-        benchmark_paired_count=0,
-        production_count=0,
-        research_count=accepted_count,
-        missing_outcome_rate=Decimal("0"),
-        earliest_availability=_ts(10) if accepted_count else None,
-        latest_availability=_ts(10) if accepted_count else None,
-        sample_adequacy=ForecastPerformanceSampleAdequacy.INSUFFICIENT_DATA,
+def _consistent_snapshot(
+    population: ForecastPerformancePopulation,
+    *,
+    snapshot_key: str = "test-snapshot",
+    methodology_key: str = "test-methodology",
+    methodology_version_sequence: int = 0,
+    algorithm_version: str = "fx66_v1",
+    availability: UtcTimestamp | None = None,
+    benchmark: ForecastPerformanceBenchmarkDefinition | None = None,
+    benchmark_population: ForecastPerformancePopulation | None = None,
+    **overrides: object,
+) -> ForecastPerformanceSnapshot:
+    """Builds a snapshot whose EVERY derived field (members,
+    exclusions, diagnostics, numeric/categorical summary, benchmark
+    comparison) is computed from `population` via the SAME real
+    `AssessForecastPerformanceEvidence`/`CalculateForecastPerformance`
+    services `RecordForecastPerformanceSnapshot` itself now uses to
+    validate a candidate (FX-66H.1/H2) -- so a snapshot built this way
+    is, by construction, always consistent with its own population.
+    Tests that need an INCONSISTENT candidate start from this and
+    `dataclasses.replace` exactly the one field under test."""
+    availability = availability or _ts(14)
+    numeric_summary, categorical_summary, comparison = CalculateForecastPerformance()(
+        population, benchmark=benchmark, benchmark_population=benchmark_population
     )
-
-
-def _snapshot(**overrides: object) -> ForecastPerformanceSnapshot:
-    members: tuple[ForecastPerformanceSnapshotMember, ...] = overrides.pop(  # type: ignore[assignment]
-        "members", (_member("eval-a", "outcome-a"),)
+    diagnostics = AssessForecastPerformanceEvidence()(
+        population, benchmark_paired_count=comparison.paired_count
     )
-    exclusions: tuple[tuple[str, ForecastPerformanceExclusionReason], ...] = overrides.pop(  # type: ignore[assignment]
-        "exclusions", ()
+    members = tuple(
+        ForecastPerformanceSnapshotMember(
+            evaluation_key=m.evaluation.evaluation_key,
+            evaluation_revision_sequence=m.evaluation.revision_sequence,
+            forecast_claim_key=m.evaluation.forecast_claim_key,
+            forecast_revision_sequence=m.evaluation.forecast_revision_sequence,
+            outcome_key=m.evaluation.outcome_key,
+            outcome_revision_sequence=m.evaluation.outcome_revision_sequence,
+        )
+        for m in population.accepted
     )
-    accepted_count = len(members)
-    excluded_by_reason = tuple((reason, 1) for _, reason in exclusions)
     defaults: dict[str, object] = {
-        "snapshot_key": "test-snapshot",
+        "snapshot_key": snapshot_key,
         "revision_sequence": 0,
-        "methodology_key": "test-methodology",
-        "methodology_version_sequence": 0,
-        "cohort_key": "test-cohort",
-        "cohort_version_sequence": 0,
-        "evaluation_mode": ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        "methodology_key": methodology_key,
+        "methodology_version_sequence": methodology_version_sequence,
+        "cohort_key": population.cohort.cohort_key,
+        "cohort_version_sequence": population.cohort.version_sequence,
+        "evaluation_mode": population.cohort.evaluation_mode,
         "members": members,
-        "exclusions": exclusions,
-        "benchmark_comparison": ForecastPerformanceBenchmarkComparison(
-            status=ForecastPerformanceBenchmarkComparisonStatus.BENCHMARK_UNAVAILABLE
-        ),
-        "diagnostics": _diagnostics(accepted_count, excluded_by_reason),
-        "knowledge_cutoff": _ts(13),
-        "availability": _ts(14),
-        "algorithm_version": "fx66_v1",
-        "numeric_summary": (
-            ForecastPerformanceNumericSummary(
-                n=accepted_count,
-                unit="PERCENT",
-                mean_absolute_error=Decimal("0.50"),
-                mean_signed_error=Decimal("-0.50"),
-                root_mean_squared_error=Decimal("0.50"),
-            )
-            if accepted_count
-            else None
-        ),
+        "exclusions": population.exclusions,
+        "benchmark_comparison": comparison,
+        "diagnostics": diagnostics,
+        "knowledge_cutoff": population.knowledge_cutoff,
+        "availability": availability,
+        "algorithm_version": algorithm_version,
+        "numeric_summary": numeric_summary,
+        "categorical_summary": categorical_summary,
     }
     defaults.update(overrides)
     return ForecastPerformanceSnapshot(**defaults)  # type: ignore[arg-type]
@@ -330,6 +325,7 @@ async def _record(
     population: ForecastPerformancePopulation | None = None,
     methodology: ForecastPerformanceMethodology | None = None,
     benchmark: ForecastPerformanceBenchmarkDefinition | None = None,
+    benchmark_population: ForecastPerformancePopulation | None = None,
     dry_run: bool = False,
 ) -> ForecastPerformanceSnapshotRecordResult:
     return await RecordForecastPerformanceSnapshot(repo)(
@@ -337,6 +333,7 @@ async def _record(
         population=population or _population(),
         methodology=methodology or _methodology(),
         benchmark=benchmark,
+        benchmark_population=benchmark_population,
         dry_run=dry_run,
     )
 
@@ -346,30 +343,41 @@ async def _record(
 
 async def test_first_recording_is_created() -> None:
     repo = FakeForecastPerformanceRepository()
-    result = await _record(repo, _snapshot())
+    population = _population()
+    result = await _record(repo, _consistent_snapshot(population), population=population)
     assert result.outcome is ForecastPerformanceSnapshotOutcome.CREATED
     assert result.snapshot.revision_sequence == 0
 
 
 async def test_exact_repeat_is_unchanged() -> None:
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot())
-    result = await _record(repo, _snapshot(availability=_ts(20)))
+    population = _population()
+    await _record(repo, _consistent_snapshot(population), population=population)
+    result = await _record(
+        repo, _consistent_snapshot(population, availability=_ts(20)), population=population
+    )
     assert result.outcome is ForecastPerformanceSnapshotOutcome.UNCHANGED
     assert len(repo.snapshots["test-snapshot"]) == 1
 
 
 async def test_out_of_order_availability_is_rejected() -> None:
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot(availability=_ts(20)))
+    population = _population()
+    await _record(
+        repo, _consistent_snapshot(population, availability=_ts(20)), population=population
+    )
     with pytest.raises(OutOfOrderForecastPerformanceSnapshotError):
-        await _record(repo, _snapshot(availability=_ts(15)))
+        await _record(
+            repo, _consistent_snapshot(population, availability=_ts(15)), population=population
+        )
 
 
 async def test_different_membership_under_same_basis_raises_determinism_error() -> None:
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot())
-    population = _population(
+    population_a = _population()
+    await _record(repo, _consistent_snapshot(population_a), population=population_a)
+
+    population_b = _population(
         members=(
             _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
             _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
@@ -378,11 +386,8 @@ async def test_different_membership_under_same_basis_raises_determinism_error() 
     with pytest.raises(ForecastPerformanceSnapshotDeterminismError):
         await _record(
             repo,
-            _snapshot(
-                availability=_ts(20),
-                members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
-            ),
-            population=population,
+            _consistent_snapshot(population_b, availability=_ts(20)),
+            population=population_b,
         )
 
 
@@ -392,8 +397,10 @@ async def test_different_knowledge_cutoff_mints_a_new_basis_not_an_error() -> No
     determinism conflict (Section 16: a legitimate data change always
     mints a new, distinct basis)."""
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot())
-    population = _population(
+    population_a = _population()
+    await _record(repo, _consistent_snapshot(population_a), population=population_a)
+
+    population_b = _population(
         members=(
             _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
             _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
@@ -402,33 +409,34 @@ async def test_different_knowledge_cutoff_mints_a_new_basis_not_an_error() -> No
     )
     result = await _record(
         repo,
-        _snapshot(
-            availability=_ts(23),
-            knowledge_cutoff=_ts(23),
-            members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
-        ),
-        population=population,
+        _consistent_snapshot(population_b, availability=_ts(23)),
+        population=population_b,
     )
     assert result.outcome is ForecastPerformanceSnapshotOutcome.REVISION_ADDED
 
 
 async def test_changed_exclusions_under_same_basis_also_raises() -> None:
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot())
+    population_a = _population()
+    await _record(repo, _consistent_snapshot(population_a), population=population_a)
+
+    population_b = _population(
+        exclusions=(("eval-z", ForecastPerformanceExclusionReason.KNOWN_DUPLICATE_SYNDICATED),)
+    )
     with pytest.raises(ForecastPerformanceSnapshotDeterminismError):
         await _record(
             repo,
-            _snapshot(
-                availability=_ts(20),
-                exclusions=(("eval-z", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE),),
-            ),
+            _consistent_snapshot(population_b, availability=_ts(20)),
+            population=population_b,
         )
 
 
 async def test_failed_determinism_check_writes_nothing_new() -> None:
     repo = FakeForecastPerformanceRepository()
-    await _record(repo, _snapshot())
-    population = _population(
+    population_a = _population()
+    await _record(repo, _consistent_snapshot(population_a), population=population_a)
+
+    population_b = _population(
         members=(
             _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
             _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
@@ -437,18 +445,18 @@ async def test_failed_determinism_check_writes_nothing_new() -> None:
     with pytest.raises(ForecastPerformanceSnapshotDeterminismError):
         await _record(
             repo,
-            _snapshot(
-                availability=_ts(20),
-                members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
-            ),
-            population=population,
+            _consistent_snapshot(population_b, availability=_ts(20)),
+            population=population_b,
         )
     assert len(repo.snapshots["test-snapshot"]) == 1
 
 
 async def test_dry_run_does_not_persist() -> None:
     repo = FakeForecastPerformanceRepository()
-    result = await _record(repo, _snapshot(), dry_run=True)
+    population = _population()
+    result = await _record(
+        repo, _consistent_snapshot(population), population=population, dry_run=True
+    )
     assert result.outcome is ForecastPerformanceSnapshotOutcome.CREATED
     assert "test-snapshot" not in repo.snapshots
 
@@ -458,7 +466,10 @@ async def test_dry_run_does_not_persist() -> None:
 
 async def test_h3_snapshot_after_all_required_inputs_is_accepted() -> None:
     repo = FakeForecastPerformanceRepository()
-    result = await _record(repo, _snapshot(availability=_ts(14)))
+    population = _population()
+    result = await _record(
+        repo, _consistent_snapshot(population, availability=_ts(14)), population=population
+    )
     assert result.outcome is ForecastPerformanceSnapshotOutcome.CREATED
 
 
@@ -468,37 +479,30 @@ async def test_h3_snapshot_predating_cohort_definition_is_rejected() -> None:
     population = _population(cohort=cohort)
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
         await _record(
-            repo,
-            _snapshot(availability=_ts(14), cohort_key=cohort.cohort_key),
-            population=population,
+            repo, _consistent_snapshot(population, availability=_ts(14)), population=population
         )
 
 
 async def test_h3_snapshot_predating_methodology_definition_is_rejected() -> None:
     repo = FakeForecastPerformanceRepository()
     methodology = _methodology(availability=_ts(20))
+    population = _population()
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
-        await _record(repo, _snapshot(availability=_ts(14)), methodology=methodology)
+        await _record(
+            repo,
+            _consistent_snapshot(population, availability=_ts(14)),
+            methodology=methodology,
+            population=population,
+        )
 
 
 async def test_h3_snapshot_predating_benchmark_version_is_rejected() -> None:
     repo = FakeForecastPerformanceRepository()
     benchmark = _benchmark(availability=_ts(20))
-    snapshot = _snapshot(
-        availability=_ts(14),
-        benchmark_comparison=ForecastPerformanceBenchmarkComparison(
-            status=ForecastPerformanceBenchmarkComparisonStatus.COMPARED,
-            benchmark_key=benchmark.benchmark_key,
-            benchmark_version_sequence=benchmark.version_sequence,
-            paired_count=1,
-            source_mean_absolute_error=Decimal("0.5"),
-            benchmark_mean_absolute_error=Decimal("0.6"),
-            mean_absolute_error_difference=Decimal("-0.1"),
-            relative_mae_improvement=Decimal("0.1"),
-        ),
-    )
+    population = _population()
+    snapshot = _consistent_snapshot(population, availability=_ts(14), benchmark=benchmark)
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
-        await _record(repo, snapshot, benchmark=benchmark)
+        await _record(repo, snapshot, benchmark=benchmark, population=population)
 
 
 async def test_h3_snapshot_predating_selected_evaluation_vintage_is_rejected() -> None:
@@ -507,7 +511,9 @@ async def test_h3_snapshot_predating_selected_evaluation_vintage_is_rejected() -
         members=(_population_member("eval-a", "outcome-a", evaluation_availability=_ts(20)),)
     )
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
-        await _record(repo, _snapshot(availability=_ts(14)), population=population)
+        await _record(
+            repo, _consistent_snapshot(population, availability=_ts(14)), population=population
+        )
 
 
 async def test_h3_snapshot_predating_authentication_review_is_rejected() -> None:
@@ -523,7 +529,9 @@ async def test_h3_snapshot_predating_authentication_review_is_rejected() -> None
         )
     )
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
-        await _record(repo, _snapshot(availability=_ts(14)), population=population)
+        await _record(
+            repo, _consistent_snapshot(population, availability=_ts(14)), population=population
+        )
 
 
 async def test_h3_rejected_snapshot_produces_no_write() -> None:
@@ -532,9 +540,7 @@ async def test_h3_rejected_snapshot_produces_no_write() -> None:
     population = _population(cohort=cohort)
     with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
         await _record(
-            repo,
-            _snapshot(availability=_ts(14), cohort_key=cohort.cohort_key),
-            population=population,
+            repo, _consistent_snapshot(population, availability=_ts(14)), population=population
         )
     assert "test-snapshot" not in repo.snapshots
 
@@ -547,7 +553,7 @@ async def test_h3_historical_cutoff_valid_only_visible_after_actual_recording() 
     repo = FakeForecastPerformanceRepository()
     population = _population(knowledge_cutoff=_ts(5))
     result = await _record(
-        repo, _snapshot(availability=_ts(14), knowledge_cutoff=_ts(5)), population=population
+        repo, _consistent_snapshot(population, availability=_ts(14)), population=population
     )
     assert result.outcome is ForecastPerformanceSnapshotOutcome.CREATED
 
@@ -563,18 +569,23 @@ async def test_h3_historical_cutoff_valid_only_visible_after_actual_recording() 
 
 async def test_h3_identity_mismatch_between_candidate_and_population_cohort_is_rejected() -> None:
     repo = FakeForecastPerformanceRepository()
+    population = _population()
     mismatched_population = _population(cohort=_cohort(cohort_key="a-different-cohort"))
     with pytest.raises(ForecastPerformanceSnapshotIdentityMismatchError):
-        await _record(repo, _snapshot(), population=mismatched_population)
+        await _record(repo, _consistent_snapshot(population), population=mismatched_population)
 
 
 async def test_h3_later_evaluation_correction_does_not_mutate_earlier_persisted_snapshot() -> None:
     """A later evaluation correction, surfaced as a DIFFERENT payload
     under the SAME basis, is refused by the determinism check -- and
     the ALREADY-persisted snapshot must remain byte-identical to what
-    was first recorded, never silently mutated."""
+    was first recorded, never silently mutated (FX-66H.1's own H2
+    requirement, mirroring FX-66H's own H3)."""
     repo = FakeForecastPerformanceRepository()
-    original_result = await _record(repo, _snapshot())
+    population_a = _population()
+    original_result = await _record(
+        repo, _consistent_snapshot(population_a), population=population_a
+    )
     original_snapshot = original_result.snapshot
 
     corrected_population = _population(
@@ -586,10 +597,7 @@ async def test_h3_later_evaluation_correction_does_not_mutate_earlier_persisted_
     with pytest.raises(ForecastPerformanceSnapshotDeterminismError):
         await _record(
             repo,
-            _snapshot(
-                availability=_ts(20),
-                members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
-            ),
+            _consistent_snapshot(corrected_population, availability=_ts(20)),
             population=corrected_population,
         )
 
@@ -603,7 +611,7 @@ async def test_h3_production_and_retrospective_snapshot_visibility_remain_distin
         cohort=_cohort(evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED),
         members=(_population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),),
     )
-    snapshot = _snapshot(evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED)
+    snapshot = _consistent_snapshot(production_population)
     await _record(repo, snapshot, population=production_population)
 
     research_read = await repo.latest_snapshot_as_of_for_research("test-snapshot", _ts(20))
@@ -612,3 +620,157 @@ async def test_h3_production_and_retrospective_snapshot_visibility_remain_distin
     assert research_read is not None  # research reads see EITHER mode
     assert production_read is not None
     assert production_read.evaluation_mode is ForecastProvenanceMode.PRODUCTION_OBSERVED
+
+
+# --- FX-66H.1 (H2/F66-05): binding the payload to the authoritative population
+
+
+async def test_h2_valid_complete_snapshot_with_benchmark_is_accepted() -> None:
+    repo = FakeForecastPerformanceRepository()
+    benchmark = _benchmark()
+    population = _population(
+        members=(
+            _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
+            _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
+        )
+    )
+    snapshot = _consistent_snapshot(population, benchmark=benchmark)
+    result = await _record(repo, snapshot, population=population, benchmark=benchmark)
+    assert result.outcome is ForecastPerformanceSnapshotOutcome.CREATED
+
+
+async def test_h2_missing_accepted_member_rejected() -> None:
+    """A member swapped for one not in the population at all --
+    domain-level cardinality (`len(members) == diagnostics.accepted_
+    count`) still holds, but content no longer matches."""
+    repo = FakeForecastPerformanceRepository()
+    population = _population(
+        members=(
+            _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
+            _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
+        )
+    )
+    snapshot = _consistent_snapshot(population)
+    tampered = replace(snapshot, members=(snapshot.members[0], _member("eval-z", "outcome-z")))
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert "members" in exc_info.value.mismatched_fields
+
+
+async def test_h2_extra_member_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    small_population = _population()
+    larger_population = _population(
+        members=(
+            _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
+            _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
+        )
+    )
+    padded_snapshot = _consistent_snapshot(larger_population)
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, padded_snapshot, population=small_population)
+    assert "members" in exc_info.value.mismatched_fields
+
+
+async def test_h2_modified_mae_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    assert snapshot.numeric_summary is not None
+    tampered = replace(
+        snapshot,
+        numeric_summary=replace(snapshot.numeric_summary, mean_absolute_error=Decimal("99.99")),
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert "numeric_summary" in exc_info.value.mismatched_fields
+
+
+async def test_h2_modified_signed_mean_error_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    assert snapshot.numeric_summary is not None
+    tampered = replace(
+        snapshot,
+        numeric_summary=replace(snapshot.numeric_summary, mean_signed_error=Decimal("-99.99")),
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert "numeric_summary" in exc_info.value.mismatched_fields
+
+
+async def test_h2_modified_diagnostic_count_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    tampered = replace(
+        snapshot, diagnostics=replace(snapshot.diagnostics, unique_forecast_issue_count=999)
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert "diagnostics" in exc_info.value.mismatched_fields
+
+
+async def test_h2_different_knowledge_cutoff_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    tampered = replace(snapshot, knowledge_cutoff=_ts(5, day=9))
+    with pytest.raises(ForecastPerformanceSnapshotIdentityMismatchError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert exc_info.value.field == "knowledge_cutoff"
+
+
+async def test_h2_changed_evaluation_mode_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    tampered = replace(snapshot, evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED)
+    with pytest.raises(ForecastPerformanceSnapshotIdentityMismatchError) as exc_info:
+        await _record(repo, tampered, population=population)
+    assert exc_info.value.field == "evaluation_mode"
+
+
+async def test_h2_wrong_benchmark_result_rejected() -> None:
+    repo = FakeForecastPerformanceRepository()
+    benchmark = _benchmark()
+    population = _population()
+    snapshot = _consistent_snapshot(population, benchmark=benchmark)
+    assert (
+        snapshot.benchmark_comparison.status
+        is ForecastPerformanceBenchmarkComparisonStatus.COMPARED
+    )
+    tampered = replace(
+        snapshot,
+        benchmark_comparison=replace(
+            snapshot.benchmark_comparison, benchmark_mean_absolute_error=Decimal("0.01")
+        ),
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError) as exc_info:
+        await _record(repo, tampered, benchmark=benchmark, population=population)
+    assert "benchmark_comparison" in exc_info.value.mismatched_fields
+
+
+async def test_h2_valid_identical_rerun_remains_unchanged() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    await _record(repo, _consistent_snapshot(population), population=population)
+    result = await _record(
+        repo, _consistent_snapshot(population, availability=_ts(20)), population=population
+    )
+    assert result.outcome is ForecastPerformanceSnapshotOutcome.UNCHANGED
+
+
+async def test_h2_rejected_recording_leaves_no_partial_write() -> None:
+    repo = FakeForecastPerformanceRepository()
+    population = _population()
+    snapshot = _consistent_snapshot(population)
+    assert snapshot.numeric_summary is not None
+    tampered = replace(
+        snapshot,
+        numeric_summary=replace(snapshot.numeric_summary, mean_absolute_error=Decimal("99.99")),
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError):
+        await _record(repo, tampered, population=population)
+    assert "test-snapshot" not in repo.snapshots

@@ -16896,3 +16896,62 @@ complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## 2026-10-15 — FX-66H.1: historical snapshot determinism & evidence binding
+
+**Decision: corrective-only, `fx66_v1` preserved, starting commit
+`9405837`, no schema migration.** Three further findings fixed.
+
+**F66-04 (fully PIT-reproducible historical diagnostics)**:
+`BuildForecastPerformancePopulationAsOf` dropped the unbounded
+repository read it still used for `raw_candidate_count` and the
+`NOT_YET_AVAILABLE` exclusion -- that read could discover a key FTA
+did not know about at the cutoff, leaking future knowledge into a
+historical result. The population is now computed purely from the
+as-of-bounded read, making it fully PIT-reproducible for a fixed
+cutoff. The retired pending-revision diagnostic moved to a new,
+separate, explicitly-administrative `InspectForecastPerformance
+PendingRevisions` use case (reuses the population builder twice, no
+new repository method), never consulted when building or persisting
+a snapshot.
+
+**F66-05 (bind the snapshot payload to the authoritative population)**:
+`RecordForecastPerformanceSnapshot` validated `candidate.availability`
+(FX-66H's own H3) but still trusted the candidate's own membership/
+exclusions/diagnostics/summaries/benchmark comparison merely because
+they referenced valid identifiers. Now reconstructs every one of
+those fields from the authoritative `population` via the SAME
+existing `AssessForecastPerformanceEvidence`/`CalculateForecastPerformance`
+services, rejecting the candidate if any field differs. Two new
+structural checks (`evaluation_mode`, `knowledge_cutoff` must match
+the population) close gaps that were never checked at all.
+
+**F66-06 (read-only repository methods no longer commit)**: every
+pure-read method FX-66 added to `SqlAlchemyForecastPerformance
+Repository` (and the two evaluation-repository FX-66H additions) no
+longer calls `session.commit()` -- only write methods still do. A
+mid-call read (such as F66-05's own reconstruction step, sharing a
+session with its eventual write) can no longer prematurely flush a
+caller's pending transaction.
+
+**Regression.** 22 new/changed tests. Full suite: 3294 passed (up
+from 3272). `ruff`/`ruff format`/`mypy` (705 files)/`pre-commit` all
+clean. The real pilot re-verified post-fix: fully idempotent, still
+`INSUFFICIENT_DATA`, MAE/RMSE unchanged at 0.50 percentage points.
+Real-data table counts unchanged against the FX-66H baseline, no
+leaked test data.
+
+**Explicitly confirmed NOT done**: no redesign of performance cohorts,
+statistical metrics, or evaluation protocols; no change to FX-64/65
+semantics, FX-65H.2/H.3 outcome identity, or FX-62/63 historical
+source evidence; no change to existing metric formulas; no new
+providers, source reputation scores, statistical-significance
+machinery, trading weights, or source-driven signals; no FX-67
+dashboard or Decision/Risk Engine integration.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-66H.1 entry; `docs/adr/0014-
+historical-forecast-performance.md`'s own FX-66H.1 addendum is the
+complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

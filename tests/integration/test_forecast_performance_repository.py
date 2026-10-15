@@ -10,22 +10,31 @@ current head)."""
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from forex_agent.application.use_cases.assess_forecast_performance_evidence import (
+    AssessForecastPerformanceEvidence,
+)
 from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
     ForecastPerformancePopulation,
     ForecastPerformancePopulationMember,
+)
+from forex_agent.application.use_cases.calculate_forecast_performance import (
+    CalculateForecastPerformance,
 )
 from forex_agent.application.use_cases.define_forecast_performance_cohort import (
     DefineForecastPerformanceCohort,
 )
 from forex_agent.application.use_cases.record_forecast_performance_snapshot import (
+    ForecastPerformanceSnapshotConsistencyError,
+    ForecastPerformanceSnapshotTemporalIntegrityError,
     RecordForecastPerformanceSnapshot,
 )
 from forex_agent.application.use_cases.record_source_identity_vintage import (
@@ -85,6 +94,7 @@ from forex_agent.domain.structured_forecast_vintage import StructuredForecastVin
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.forecast_performance_repository import (
     SqlAlchemyForecastPerformanceRepository,
+    _cohort_row_values,
 )
 from forex_agent.infrastructure.db.models.forecast_performance_cohort import (
     ForecastPerformanceCohortRow,
@@ -382,6 +392,60 @@ def _snapshot(**overrides: object) -> ForecastPerformanceSnapshot:
     return ForecastPerformanceSnapshot(**defaults)  # type: ignore[arg-type]
 
 
+def _consistent_snapshot(
+    population: ForecastPerformancePopulation,
+    *,
+    snapshot_key: str = f"{TEST_SNAPSHOT_PREFIX}1",
+    methodology_key: str,
+    methodology_version_sequence: int = 0,
+    algorithm_version: str = "fx66_v1",
+    availability: UtcTimestamp | None = None,
+    **overrides: object,
+) -> ForecastPerformanceSnapshot:
+    """FX-66H.1 (H2/F66-05): mirrors `test_record_forecast_performance_
+    snapshot.py`'s own helper of the same name -- every derived field
+    is computed from `population` via the SAME real services
+    `RecordForecastPerformanceSnapshot` now validates a candidate
+    against, so a snapshot built this way is consistent by
+    construction."""
+    availability = availability or _ts(14)
+    numeric_summary, categorical_summary, comparison = CalculateForecastPerformance()(population)
+    diagnostics = AssessForecastPerformanceEvidence()(
+        population, benchmark_paired_count=comparison.paired_count
+    )
+    members = tuple(
+        ForecastPerformanceSnapshotMember(
+            evaluation_key=m.evaluation.evaluation_key,
+            evaluation_revision_sequence=m.evaluation.revision_sequence,
+            forecast_claim_key=m.evaluation.forecast_claim_key,
+            forecast_revision_sequence=m.evaluation.forecast_revision_sequence,
+            outcome_key=m.evaluation.outcome_key,
+            outcome_revision_sequence=m.evaluation.outcome_revision_sequence,
+        )
+        for m in population.accepted
+    )
+    defaults: dict[str, object] = {
+        "snapshot_key": snapshot_key,
+        "revision_sequence": 0,
+        "methodology_key": methodology_key,
+        "methodology_version_sequence": methodology_version_sequence,
+        "cohort_key": population.cohort.cohort_key,
+        "cohort_version_sequence": population.cohort.version_sequence,
+        "evaluation_mode": population.cohort.evaluation_mode,
+        "members": members,
+        "exclusions": population.exclusions,
+        "benchmark_comparison": comparison,
+        "diagnostics": diagnostics,
+        "knowledge_cutoff": population.knowledge_cutoff,
+        "availability": availability,
+        "algorithm_version": algorithm_version,
+        "numeric_summary": numeric_summary,
+        "categorical_summary": categorical_summary,
+    }
+    defaults.update(overrides)
+    return ForecastPerformanceSnapshot(**defaults)  # type: ignore[arg-type]
+
+
 async def test_cohort_fk_requires_existing_protocol(
     registry_repo: SqlAlchemySourceRegistryRepository,
     performance_repo: SqlAlchemyForecastPerformanceRepository,
@@ -423,14 +487,11 @@ async def test_snapshot_persists_members_and_exclusions_relationally(
     await DefineForecastPerformanceCohort(performance_repo)(cohort)
     methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
 
-    snapshot = _snapshot(
-        members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
-        exclusions=(("eval-z", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE),),
-    )
     population = _population(
         cohort,
         exclusions=(("eval-z", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE),),
     )
+    snapshot = _consistent_snapshot(population, methodology_key=methodology.methodology_key)
     result = await RecordForecastPerformanceSnapshot(performance_repo)(
         snapshot, population=population, methodology=methodology
     )
@@ -471,6 +532,78 @@ async def test_snapshot_persists_members_and_exclusions_relationally(
     assert fetched == snapshot
 
 
+async def test_h2_membership_mismatch_rejected_with_no_write_real_postgres(
+    session: AsyncSession,
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    performance_repo: SqlAlchemyForecastPerformanceRepository,
+) -> None:
+    """FX-66H.1 (H2/F66-05), real-Postgres: a candidate whose own
+    `members` do not match what is independently derived from the
+    authoritative `population` is rejected, and makes NO database
+    changes -- against a real Postgres session, not just a fake."""
+    await _ensure_publisher_registered(registry_repo)
+    cohort = _cohort(
+        cohort_key=f"{TEST_COHORT_PREFIX}h2",
+        protocol_key="boc-rate-fad-protocol",
+        protocol_version_sequence=0,
+    )
+    await DefineForecastPerformanceCohort(performance_repo)(cohort)
+    methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+
+    population = _population(cohort)
+    snapshot = _consistent_snapshot(
+        population,
+        snapshot_key=f"{TEST_SNAPSHOT_PREFIX}h2",
+        methodology_key=methodology.methodology_key,
+    )
+    tampered = replace(
+        snapshot, members=(snapshot.members[0], _member("eval-tampered", "outcome-tampered"))
+    )
+    with pytest.raises(ForecastPerformanceSnapshotConsistencyError):
+        await RecordForecastPerformanceSnapshot(performance_repo)(
+            tampered, population=population, methodology=methodology
+        )
+
+    fetched = await performance_repo.latest_snapshot_vintage(tampered.snapshot_key)
+    assert fetched is None
+
+
+async def test_h3_temporal_rejection_makes_no_write_real_postgres(
+    session: AsyncSession,
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    performance_repo: SqlAlchemyForecastPerformanceRepository,
+) -> None:
+    """FX-66H.1 (critical temporal case), real-Postgres: a candidate
+    whose own `availability` predates the authoritative cohort's own
+    `availability` is rejected, and makes NO database changes -- the
+    use case's own temporal-integrity check, against a real Postgres
+    session."""
+    await _ensure_publisher_registered(registry_repo)
+    cohort = _cohort(
+        cohort_key=f"{TEST_COHORT_PREFIX}h3temporal",
+        protocol_key="boc-rate-fad-protocol",
+        protocol_version_sequence=0,
+        availability=_ts(20),
+    )
+    await DefineForecastPerformanceCohort(performance_repo)(cohort)
+    methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+
+    population = _population(cohort)
+    snapshot = _consistent_snapshot(
+        population,
+        snapshot_key=f"{TEST_SNAPSHOT_PREFIX}h3temporal",
+        methodology_key=methodology.methodology_key,
+        availability=_ts(14),
+    )
+    with pytest.raises(ForecastPerformanceSnapshotTemporalIntegrityError):
+        await RecordForecastPerformanceSnapshot(performance_repo)(
+            snapshot, population=population, methodology=methodology
+        )
+
+    fetched = await performance_repo.latest_snapshot_vintage(snapshot.snapshot_key)
+    assert fetched is None
+
+
 async def test_h1_pending_revision_count_round_trips_through_postgres(
     session: AsyncSession,
     registry_repo: SqlAlchemySourceRegistryRepository,
@@ -479,22 +612,27 @@ async def test_h1_pending_revision_count_round_trips_through_postgres(
     """FX-66H (H1): `pending_revision_count` is a real column
     (`diag_pending_revision_count`), not just a transient build-time
     value -- a non-zero value must survive a genuine Postgres write and
-    read back unchanged, exactly like every sibling diagnostic field."""
+    read back unchanged, exactly like every sibling diagnostic field.
+
+    FX-66H.1 retired this field from `AssessForecastPerformanceEvidence`'s
+    own active computation (always `0` going forward, enforced by
+    `RecordForecastPerformanceSnapshot`'s own new H2 consistency check,
+    which would now reject any candidate claiming a non-zero value) --
+    so this test exercises the REPOSITORY's own column round-trip
+    directly, bypassing that use case, to prove the schema/row-mapping
+    itself has not silently regressed."""
     await _ensure_publisher_registered(registry_repo)
     cohort = _cohort(protocol_key="boc-rate-fad-protocol", protocol_version_sequence=0)
     await DefineForecastPerformanceCohort(performance_repo)(cohort)
-    methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+    await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
 
     members = (_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b"))
     snapshot = _snapshot(
         members=members,
         diagnostics=_diagnostics(len(members), pending_revision_count=1),
     )
-    population = _population(cohort)
-    result = await RecordForecastPerformanceSnapshot(performance_repo)(
-        snapshot, population=population, methodology=methodology
-    )
-    assert result.outcome.value == "CREATED"
+    write_result = await performance_repo.add_snapshot_vintage(snapshot)
+    assert write_result.inserted is True
 
     fetched = await performance_repo.latest_snapshot_vintage(snapshot.snapshot_key)
     assert fetched is not None
@@ -627,6 +765,43 @@ async def test_concurrent_duplicate_snapshot_recording(
     assert sorted(results) == [False, True]
     fetched = await performance_repo.list_vintages_for_snapshot(snapshot.snapshot_key)
     assert len(fetched) == 1
+
+
+async def test_read_only_lookups_do_not_commit_unrelated_pending_writes(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    performance_repo: SqlAlchemyForecastPerformanceRepository,
+    session: AsyncSession,
+) -> None:
+    """FX-66H.1 (H3/F66-06): `latest_cohort_version`/`list_cohort_
+    versions`/`latest_methodology_version`/`list_methodology_versions`/
+    `latest_snapshot_vintage`/`list_vintages_for_snapshot` must be
+    genuinely read-only -- an uncommitted INSERT pending on the SAME
+    session must remain uncommitted (invisible to an independent
+    session) after every one of these lookups executes against it."""
+    await _ensure_publisher_registered(registry_repo)
+    pending_cohort = _cohort(
+        cohort_key=f"{TEST_COHORT_PREFIX}pending",
+        protocol_key="boc-rate-fad-protocol",
+        protocol_version_sequence=0,
+    )
+    await session.execute(
+        insert(ForecastPerformanceCohortRow).values(_cohort_row_values(pending_cohort))
+    )
+
+    await performance_repo.latest_cohort_version(pending_cohort.cohort_key)
+    await performance_repo.list_cohort_versions(pending_cohort.cohort_key)
+    await performance_repo.latest_methodology_version(f"{pending_cohort.cohort_key}-methodology")
+    await performance_repo.list_methodology_versions(f"{pending_cohort.cohort_key}-methodology")
+    await performance_repo.latest_snapshot_vintage(f"{TEST_SNAPSHOT_PREFIX}pending")
+    await performance_repo.list_vintages_for_snapshot(f"{TEST_SNAPSHOT_PREFIX}pending")
+
+    other_session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+    async with other_session_factory() as other_session:
+        other_repo = SqlAlchemyForecastPerformanceRepository(other_session)
+        visible = await other_repo.latest_cohort_version(pending_cohort.cohort_key)
+        assert visible is None
+
+    await session.rollback()
 
 
 async def _insert_methodology_row(

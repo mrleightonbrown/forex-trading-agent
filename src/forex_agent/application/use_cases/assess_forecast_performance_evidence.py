@@ -32,7 +32,20 @@ conservative of the available uniqueness diagnostics -- and caps at
 comparison; this certifies neither statistical independence nor
 forecasting skill. `INFERENCE_SUPPORTED` remains defined on `Forecast
 PerformanceSampleAdequacy` ONLY for forward compatibility -- reserved,
-and never emitted by this version's own classification rule."""
+and never emitted by this version's own classification rule.
+
+**FX-66H.1 (F66-04) correction -- `pending_revision_count` is retired
+from active computation.** It previously derived from `population.
+pending_revision_evaluation_keys`, which required an UNBOUNDED
+repository read that leaked future knowledge into an otherwise PIT-
+reproducible historical result (fixed in `BuildForecastPerformance
+PopulationAsOf`'s own module docstring). That field no longer exists
+on `ForecastPerformancePopulation`, so this diagnostic is now always
+`0` -- a historically reproducible constant, never a future-looking
+value. The real diagnostic this used to carry now lives entirely in
+the separate, explicitly-administrative `InspectForecastPerformance
+PendingRevisions` use case, which is never consulted here and never
+persisted as part of any snapshot."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -127,10 +140,6 @@ class AssessForecastPerformanceEvidence:
         sample_adequacy = _classify_sample_adequacy(
             accepted_count, distinct_target_period_count, population.cohort.evaluation_mode
         )
-        pending_revision_count = len(
-            set(population.pending_revision_evaluation_keys)
-            & {m.evaluation.evaluation_key for m in accepted}
-        )
 
         return ForecastPerformanceSampleDiagnostics(
             raw_candidate_count=population.raw_candidate_count,
@@ -148,5 +157,4 @@ class AssessForecastPerformanceEvidence:
             earliest_availability=span.earliest,
             latest_availability=span.latest,
             sample_adequacy=sample_adequacy,
-            pending_revision_count=pending_revision_count,
         )
