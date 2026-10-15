@@ -208,6 +208,7 @@ def _numeric_evaluation(
     signed_error: Decimal,
     availability: UtcTimestamp,
     *,
+    revision_sequence: int = 0,
     protocol_key: str = _PROTOCOL_KEY,
     protocol_version: int = 0,
     definition_key: str = _DEFINITION_KEY,
@@ -215,7 +216,7 @@ def _numeric_evaluation(
 ) -> StructuredForecastEvaluationVintage:
     return StructuredForecastEvaluationVintage(
         evaluation_key=evaluation_key,
-        revision_sequence=0,
+        revision_sequence=revision_sequence,
         forecast_claim_key=claim_key,
         forecast_revision_sequence=0,
         protocol_key=protocol_key,
@@ -335,6 +336,32 @@ class _Repos:
                 mode=mode,
             )
         ]
+
+    def add_evaluation_revision(
+        self,
+        evaluation_key: str,
+        revision_sequence: int,
+        claim_key: str,
+        outcome_key: str,
+        signed_error: Decimal,
+        availability: UtcTimestamp,
+        *,
+        mode: ForecastProvenanceMode = ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+    ) -> None:
+        """Appends a FURTHER revision of an ALREADY-seeded `evaluation_
+        key` -- e.g. a later correction -- referencing the SAME
+        forecast/outcome vintages `seed()` already created."""
+        self.evaluation.vintages[evaluation_key].append(
+            _numeric_evaluation(
+                evaluation_key,
+                claim_key,
+                outcome_key,
+                signed_error,
+                availability,
+                revision_sequence=revision_sequence,
+                mode=mode,
+            )
+        )
 
     def builder(self) -> BuildForecastPerformancePopulationAsOf:
         return BuildForecastPerformancePopulationAsOf(self.evaluation, self.forecast, self.outcome)
@@ -815,7 +842,11 @@ async def test_research_mode_never_exceeds_descriptive_only_regardless_of_size()
     assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.DESCRIPTIVE_ONLY
 
 
-async def test_production_mode_large_sample_supports_inference() -> None:
+async def test_production_mode_large_distinct_sample_caps_at_comparable_sample() -> None:
+    """FX-66H (H2): even 40 accepted PRODUCTION_OBSERVED forecasts,
+    each targeting a genuinely DISTINCT real-world event, never
+    promote past COMPARABLE_SAMPLE -- INFERENCE_SUPPORTED is reserved
+    and never emitted by fx66_v1's own classification rule."""
     repos = _Repos()
     for i in range(40):
         repos.seed(
@@ -834,7 +865,131 @@ async def test_production_mode_large_sample_supports_inference() -> None:
     diagnostics = AssessForecastPerformanceEvidence()(population)
 
     assert diagnostics.accepted_count == 40
-    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.INFERENCE_SUPPORTED
+    assert diagnostics.distinct_target_period_count == 40
+    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.COMPARABLE_SAMPLE
+
+
+async def test_thirty_evaluations_sharing_few_target_events_cannot_support_inference() -> None:
+    """FX-66H (H2) mandatory test: 30 ACCEPTED production evaluations,
+    but spread across only 3 distinct outcome DEFINITIONS/meetings
+    (10 each) -- distinct_target_period_count stays low even though
+    accepted_count is large, so this must NOT reach COMPARABLE_SAMPLE
+    (let alone INFERENCE_SUPPORTED)."""
+    repos = _Repos()
+    meeting_ids = ["M1", "M2", "M3"]
+    for i in range(30):
+        meeting_id = meeting_ids[i % 3]
+        repos.seed(
+            f"claim-{i}",
+            meeting_id,
+            f"outcome-{i}",  # distinct outcome_key per evaluation
+            f"eval-{i}",
+            Decimal("3.75"),
+            Decimal("3.25"),
+            mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        )
+        # Each outcome_key uses its OWN definition_key (a legitimate,
+        # distinct FX-65H.2 identity) but shares the SAME target_period
+        # across its own group of 10 -- simulating several outcome
+        # definitions all keyed to the SAME underlying real-world
+        # meeting, which `distinct_target_period_count` must catch.
+        repos.outcome.vintages[f"outcome-{i}"] = [
+            _numeric_outcome(
+                f"outcome-{i}",
+                meeting_id,
+                Decimal("3.25"),
+                _ts(11),
+                definition_key=f"{_DEFINITION_KEY}-{i}",
+            )
+        ]
+
+    population = await repos.builder()(
+        _cohort(evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED), _ts(13)
+    )
+    diagnostics = AssessForecastPerformanceEvidence()(population)
+
+    assert diagnostics.accepted_count == 30
+    assert diagnostics.distinct_target_period_count == 3
+    # Only 3 genuinely distinct real-world events -- even more
+    # conservative than DESCRIPTIVE_ONLY; certainly never COMPARABLE_
+    # SAMPLE or the reserved INFERENCE_SUPPORTED, despite 30 accepted
+    # observations.
+    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.INSUFFICIENT_DATA
+
+
+async def test_one_hundred_correlated_evaluations_cannot_support_inference() -> None:
+    """FX-66H (H2) mandatory test: 100 accepted production evaluations
+    all sharing the SAME single target_period -- a wholly correlated
+    population -- must never exceed DESCRIPTIVE_ONLY/INSUFFICIENT_DATA."""
+    repos = _Repos()
+    meeting_id = "M1"
+    for i in range(100):
+        repos.seed(
+            f"claim-{i}",
+            meeting_id,
+            f"outcome-{i}",
+            f"eval-{i}",
+            Decimal("3.75"),
+            Decimal("3.25"),
+            mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        )
+        repos.outcome.vintages[f"outcome-{i}"] = [
+            _numeric_outcome(
+                f"outcome-{i}",
+                meeting_id,
+                Decimal("3.25"),
+                _ts(11),
+                definition_key=f"{_DEFINITION_KEY}-{i}",
+            )
+        ]
+
+    population = await repos.builder()(
+        _cohort(evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED), _ts(13)
+    )
+    diagnostics = AssessForecastPerformanceEvidence()(population)
+
+    assert diagnostics.accepted_count == 100
+    assert diagnostics.distinct_target_period_count == 1
+    # A wholly correlated population (100 observations, 1 real event)
+    # stays INSUFFICIENT_DATA -- never COMPARABLE_SAMPLE or the
+    # reserved, never-emitted INFERENCE_SUPPORTED, regardless of size.
+    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.INSUFFICIENT_DATA
+
+
+async def test_incomplete_benchmark_population_does_not_establish_skill() -> None:
+    """FX-66H (H2) mandatory test: even with a benchmark pinned, a
+    small/incomplete paired population leaves sample_adequacy
+    unaffected by the benchmark comparison -- a comparison is
+    descriptive only, never upgrades adequacy."""
+    repos = _Repos()
+    repos.seed("claim-a", "M1", "outcome-a", "eval-a", Decimal("3.75"), Decimal("3.25"))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+    diagnostics = AssessForecastPerformanceEvidence()(population, benchmark_paired_count=1)
+
+    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.INSUFFICIENT_DATA
+    assert diagnostics.benchmark_paired_count == 1
+
+
+async def test_large_synthetic_cohort_remains_descriptive_without_inference_contract() -> None:
+    """FX-66H (H2) mandatory test: a sufficiently large, genuinely
+    distinct-event, RESEARCH-mode cohort still stays DESCRIPTIVE_ONLY
+    -- large size and distinct events alone are not enough; the
+    cohort's own research/production provenance governs the ceiling."""
+    repos = _Repos()
+    for i in range(50):
+        repos.seed(
+            f"claim-{i}", f"M{i}", f"outcome-{i}", f"eval-{i}", Decimal("3.75"), Decimal("3.25")
+        )
+
+    population = await repos.builder()(
+        _cohort(evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH), _ts(13)
+    )
+    diagnostics = AssessForecastPerformanceEvidence()(population)
+
+    assert diagnostics.accepted_count == 50
+    assert diagnostics.distinct_target_period_count == 50
+    assert diagnostics.sample_adequacy is ForecastPerformanceSampleAdequacy.DESCRIPTIVE_ONLY
 
 
 async def test_exclusion_counts_are_reported_in_diagnostics() -> None:
@@ -850,3 +1005,249 @@ async def test_exclusion_counts_are_reported_in_diagnostics() -> None:
     assert (ForecastPerformanceExclusionReason.KNOWN_DUPLICATE_SYNDICATED, 1) in (
         diagnostics.excluded_by_reason
     )
+
+
+# --- FX-66H (H1): PIT-correct per-key revision selection ------------------
+
+
+async def test_h1_single_vintage_evaluation_is_selected() -> None:
+    """Mandatory test 1: one evaluation with only vintage 0."""
+    repos = _Repos()
+    repos.seed("claim-a", "M1", "outcome-a", "eval-a", Decimal("3.75"), Decimal("3.25"))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert {m.evaluation.evaluation_key for m in population.accepted} == {"eval-a"}
+    assert population.accepted[0].evaluation.revision_sequence == 0
+
+
+async def test_h1_earlier_revision_selected_when_latest_is_too_new() -> None:
+    """Mandatory test 2 -- THE core FX-66H bug fix: vintage 0 before
+    cutoff, vintage 1 after cutoff. Must select vintage 0, never
+    exclude the whole key merely because a later revision exists."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-0.75"), _ts(20))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert {m.evaluation.evaluation_key for m in population.accepted} == {"eval-a"}
+    selected = population.accepted[0].evaluation
+    assert selected.revision_sequence == 0
+    assert selected.result.signed_error == Decimal("-0.50")
+    assert population.exclusions == ()
+
+
+async def test_h1_both_vintages_before_cutoff_selects_latest_eligible() -> None:
+    """Mandatory test 3: both vintages before cutoff -- select the
+    latest ELIGIBLE one (revision 1), not revision 0."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(5),
+    )
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-0.75"), _ts(10))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert len(population.accepted) == 1
+    selected = population.accepted[0].evaluation
+    assert selected.revision_sequence == 1
+    assert selected.result.signed_error == Decimal("-0.75")
+
+
+async def test_h1_both_vintages_after_cutoff_excludes_from_population() -> None:
+    """Mandatory test 4: both vintages after cutoff -- exclude from
+    the historical population entirely."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(20),
+    )
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-0.75"), _ts(21))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert population.accepted == ()
+    assert ("eval-a", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE) in population.exclusions
+
+
+async def test_h1_revision_availability_exactly_equals_cutoff_is_included() -> None:
+    """Mandatory test 5: availability == as_of is INCLUSIVE."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(13),
+    )
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert {m.evaluation.evaluation_key for m in population.accepted} == {"eval-a"}
+
+
+async def test_h1_same_availability_deterministic_revision_ordering() -> None:
+    """Mandatory test 6: two revisions sharing the EXACT SAME
+    availability -- the higher revision_sequence wins deterministically
+    (sort key is `(availability, revision_sequence)`), on both the
+    unbounded and the as-of-bounded reads."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-0.75"), _ts(10))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    assert len(population.accepted) == 1
+    assert population.accepted[0].evaluation.revision_sequence == 1
+
+
+async def test_h1_future_correction_does_not_alter_prior_cohort_metrics() -> None:
+    """Mandatory test 7: building the population AGAIN at the SAME
+    historical cutoff, after a future correction has since been
+    appended, must reproduce the EXACT SAME metrics."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+    population_before = await repos.builder()(_cohort(), cutoff)
+    numeric_before, _, _ = CalculateForecastPerformance()(population_before)
+
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    population_after = await repos.builder()(_cohort(), cutoff)
+    numeric_after, _, _ = CalculateForecastPerformance()(population_after)
+
+    assert numeric_before is not None and numeric_after is not None
+    assert numeric_before.mean_absolute_error == numeric_after.mean_absolute_error
+    assert numeric_before.mean_signed_error == numeric_after.mean_signed_error
+    assert {m.evaluation.evaluation_key for m in population_before.accepted} == {
+        m.evaluation.evaluation_key for m in population_after.accepted
+    }
+
+
+async def test_h1_future_correction_does_not_alter_prior_snapshot_membership() -> None:
+    """Mandatory test 8: re-recording a snapshot at the SAME historical
+    cutoff after a future correction reproduces IDENTICAL membership
+    and reports UNCHANGED, never a silently different REVISION_ADDED."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(10),
+    )
+    cutoff = _ts(13)
+
+    population_before = await repos.builder()(_cohort(), cutoff)
+    before_keys = {m.evaluation.evaluation_key for m in population_before.accepted}
+    diagnostics_before = AssessForecastPerformanceEvidence()(population_before)
+    assert diagnostics_before.accepted_count == 1
+
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    population_after = await repos.builder()(_cohort(), cutoff)
+    after_keys = {m.evaluation.evaluation_key for m in population_after.accepted}
+
+    assert before_keys == after_keys == {"eval-a"}
+
+
+async def test_h1_multiple_evaluation_keys_with_independently_revised_histories() -> None:
+    """Mandatory test 9: two evaluation_keys, each independently
+    revised at different times -- each must select its OWN correct
+    PIT-eligible revision, unaffected by the other's own history."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        availability=_ts(5),
+    )
+    repos.add_evaluation_revision("eval-a", 1, "claim-a", "outcome-a", Decimal("-9.99"), _ts(20))
+
+    repos.seed(
+        "claim-b",
+        "M2",
+        "outcome-b",
+        "eval-b",
+        Decimal("1.00"),
+        Decimal("1.50"),
+        availability=_ts(6),
+    )
+    repos.add_evaluation_revision("eval-b", 1, "claim-b", "outcome-b", Decimal("0.75"), _ts(9))
+
+    population = await repos.builder()(_cohort(), _ts(13))
+
+    by_key = {m.evaluation.evaluation_key: m.evaluation for m in population.accepted}
+    assert set(by_key) == {"eval-a", "eval-b"}
+    assert by_key["eval-a"].revision_sequence == 0  # revision 1 is too new
+    assert by_key["eval-b"].revision_sequence == 1  # revision 1 is eligible
+
+
+async def test_h1_production_and_retrospective_selection_remain_separate() -> None:
+    """Mandatory test 10: a cohort pinned to one evaluation_mode only
+    ever sees evaluations of that mode, even when the AS-OF-bounded
+    selection logic is exercised."""
+    repos = _Repos()
+    repos.seed(
+        "claim-a",
+        "M1",
+        "outcome-a",
+        "eval-a",
+        Decimal("3.75"),
+        Decimal("3.25"),
+        mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+
+    research_population = await repos.builder()(
+        _cohort(evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH), _ts(13)
+    )
+    production_population = await repos.builder()(
+        _cohort(evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED), _ts(13)
+    )
+
+    assert research_population.accepted == ()
+    assert research_population.raw_candidate_count == 0
+    assert {m.evaluation.evaluation_key for m in production_population.accepted} == {"eval-a"}

@@ -9,7 +9,19 @@ RESEARCH evaluation through an ordinary production query.
 FX-66 addition: `list_latest_evaluations_for_protocol` -- a purely
 additive, administrative read (no existing method's own behavior
 changes). See its own docstring for why it is deliberately UNBOUNDED
-by any PIT instant."""
+by any PIT instant.
+
+FX-66H (H1) addition: `list_latest_evaluations_for_protocol_as_of` --
+the CORRECT per-key, PIT-bounded selection `BuildForecastPerformance
+PopulationAsOf` actually needs for historical population membership.
+The original FX-66 design used the unbounded method above plus a
+manual `availability <= as_of` check on the OVERALL latest revision,
+which incorrectly excluded an entire evaluation_key whenever ANY
+later revision existed beyond the cutoff, even when an EARLIER
+revision was genuinely available at that cutoff -- this new method
+selects the correct per-key revision directly, so a later correction
+can never substitute for, or exclude, what was actually known as of
+an earlier historical instant."""
 
 from dataclasses import dataclass
 from typing import Protocol
@@ -96,10 +108,28 @@ class ForecastEvaluationRepository(Protocol):
         `protocol_key` AND `evaluation_mode`, each reduced to its own
         latest vintage by `(availability, revision_sequence)` --
         deliberately UNBOUNDED by any PIT instant, mirroring `latest_
-        outcome_vintage`'s own "administrative, unbounded; the caller
-        applies its own PIT check" convention. `BuildForecastPerformance
-        PopulationAsOf` is the one caller: fetching unbounded and
-        filtering `availability <= as_of` itself lets a too-new
-        evaluation be classified `NOT_YET_AVAILABLE` in the audit
-        trail, rather than silently never being fetched at all."""
+        outcome_vintage`'s own "administrative, unbounded" convention.
+        `BuildForecastPerformancePopulationAsOf` uses this ONLY to
+        discover which `evaluation_key`s exist at all (for `raw_
+        candidate_count`) and to flag, purely informationally, that a
+        revision newer than the one actually selected exists (FX-66H
+        H1's own "separate administrative diagnostic" requirement) --
+        it is NEVER used to pick which revision enters the historical
+        population; see `list_latest_evaluations_for_protocol_as_of`
+        for that."""
+        ...
+
+    async def list_latest_evaluations_for_protocol_as_of(
+        self, protocol_key: str, evaluation_mode: ForecastProvenanceMode, as_of: UtcTimestamp
+    ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        """FX-66H (H1): every DISTINCT `evaluation_key` ever recorded
+        under `protocol_key` AND `evaluation_mode`, each reduced to
+        its own latest vintage with `availability <= as_of` -- the
+        CORRECT, PIT-bounded selection for historical population
+        membership. A key with NO vintage available by `as_of` is
+        simply absent from the result (never substituted with a
+        later, not-yet-available revision); a key with ONLY an
+        earlier revision available by `as_of` returns THAT revision,
+        never the later one, even if a newer revision has since been
+        recorded."""
         ...

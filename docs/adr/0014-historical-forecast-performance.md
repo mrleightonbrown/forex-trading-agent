@@ -214,3 +214,198 @@ performance inspection/dashboard) remains unauthorized.
 
 Commits: starting `b4bfb32` (FX-65H.3) -> resulting FX-66 commit (see
 `docs/DECISIONS.md`'s own FX-66 entry for the exact hash).
+
+## Addendum: FX-66H (Historical Performance Integrity Hardening)
+
+Corrective-only hardening on top of the FX-66 commit above (starting
+commit `5affdd1`), fixing three integrity findings. `fx66_v1` is
+preserved -- no contract change was necessary.
+
+**F66-01 (H1) -- PIT-correct per-key revision selection.**
+`BuildForecastPerformancePopulationAsOf` previously fetched every
+evaluation key's OVERALL-LATEST revision (unbounded), then excluded
+the WHOLE key as `NOT_YET_AVAILABLE` if that overall-latest revision's
+own `availability` was later than the requested `as_of` cutoff -- even
+when an EARLIER, eligible revision of the same key already existed and
+was itself available by that cutoff. A later correction to an
+evaluation could silently erase a key from a historical population
+that had already legitimately included it.
+
+Fix: a new repository method, `ForecastEvaluationRepository.
+list_latest_evaluations_for_protocol_as_of(protocol_key, evaluation_
+mode, as_of)`, selects the latest revision PER KEY that was ACTUALLY
+AVAILABLE by `as_of` directly (a `WHERE availability <= as_of` clause
+feeding the same shared `_latest_per_key` grouping helper the existing
+unbounded method already used -- one shared helper, not a second
+population-selection algorithm). `BuildForecastPerformancePopulationAsOf`
+now calls BOTH methods: the unbounded read supplies `raw_candidate_
+count` and detects keys with a pending (too-new) revision; the as-of-
+bounded read supplies the actual eligible evaluation per key used for
+population membership and metrics. A detected pending revision is
+recorded as a purely informational `pending_revision_evaluation_keys`
+diagnostic (and `ForecastPerformanceSampleDiagnostics.pending_revision_
+count` downstream) -- it is NEVER consulted when deciding membership,
+and a key is never wholly excluded merely because a newer revision
+exists. 10 unit tests (`test_h1_*` in `test_forecast_performance_
+pipeline.py`) plus one real-Postgres integration test (`test_list_
+latest_evaluations_for_protocol_as_of_selects_pit_correct_revision`)
+cover: single-vintage selection, earlier-revision-selected-when-latest-
+is-too-new, both-vintages-before/after cutoff, boundary equality,
+deterministic tie-break, and -- critically -- that appending a future
+correction never alters a prior cohort's metrics or a prior snapshot's
+membership.
+
+**F66-02 (H2) -- sample adequacy can never imply inferential skill.**
+`_classify_sample_adequacy` previously thresholded on `accepted_count`
+alone (5/20/30), so 30+ accepted PRODUCTION observations automatically
+returned `INFERENCE_SUPPORTED` regardless of independence, benchmark
+pairing, or selection bias -- a single syndicated/correlated source
+repeated 30 times would have "supported inference" exactly as readily
+as 30 genuinely independent events.
+
+Fix: `INFERENCE_SUPPORTED` is never returned by any code path in
+`fx66_v1`. The enum member itself is RETAINED (reserved, documented as
+unemitted, for forward compatibility -- removing it would be a more
+invasive, unrequested breaking change). The classifier now gates on
+`distinct_target_period_count` -- the most conservative of the
+existing diagnostics, since it counts genuinely distinct real-world
+target periods/meetings rather than `accepted_count` (which inflates
+under duplicate/syndicated issues) or `unique_target_event_count`
+(which inflates when multiple outcome definitions share one underlying
+period). Below 5 accepted OR 5 distinct periods: `INSUFFICIENT_DATA`.
+`RETROSPECTIVE_RESEARCH` mode, or fewer than 20 distinct periods:
+`DESCRIPTIVE_ONLY`. Otherwise: `COMPARABLE_SAMPLE` -- the CEILING this
+function ever returns, and its docstring is explicit that it certifies
+compatibility for DESCRIPTIVE COMPARISON only, never independence,
+skill, or a forecasting-ability claim. No new arbitrary threshold
+replaces the old one; the only added rule (retrospective-research mode
+cannot exceed `DESCRIPTIVE_ONLY`) is narrowly scoped and never makes an
+inferential claim from sample count alone. 7 unit tests cover: large
+accepted-but-correlated samples capped at `COMPARABLE_SAMPLE` (never
+`INFERENCE_SUPPORTED`), 30 evaluations sharing few target periods
+(`INSUFFICIENT_DATA`), 100 correlated evaluations (`INSUFFICIENT_DATA`),
+incomplete benchmark pairing not establishing skill, and a large
+synthetic cohort remaining descriptive.
+
+**F66-03 (H3) -- snapshot temporal integrity.** A recorded snapshot's
+`availability` is now validated, BEFORE any repository write, to be no
+earlier than the actual FTA availability of every piece of evidence
+necessary to construct it: the cohort definition, the methodology
+definition, the benchmark definition (when `COMPARED`), every selected
+evaluation's own `availability`, both the forecast's and the outcome's
+own authentication-review `reviewed_at`, and the requested `knowledge_
+cutoff` itself. `knowledge_cutoff` (the historical input cutoff being
+analyzed) and `availability` (the actual recording instant) remain
+distinct fields -- a historical cutoff can never justify backdating a
+snapshot's own availability.
+
+Rather than trusting a caller-supplied `availability` merely because it
+is structurally valid, `RecordForecastPerformanceSnapshot.__call__` now
+REQUIRES the caller to pass the SAME authoritative `population`/
+`methodology`/`benchmark` objects it must already have obtained from
+repository reads, and computes the required minimum availability
+directly from their own real timestamp fields (reusing existing
+objects, never a second population-selection algorithm). Identity-
+mismatch checks (candidate vs. supplied cohort/methodology/benchmark
+key+version) run first, as defense-in-depth against computing a bound
+from evidence that does not even claim to belong to the snapshot. Both
+the identity-mismatch check and the temporal-integrity check raise
+BEFORE any repository access, so a rejected recording attempt makes
+zero database changes -- verified directly by `test_h3_rejected_
+snapshot_produces_no_write`. 11 unit tests plus one real-Postgres
+integration test (`test_concurrent_duplicate_snapshot_recording`, two
+sessions racing `ON CONFLICT DO NOTHING` on the identical row) cover
+every evidence category, out-of-order validation precedence (identity
+before temporal), and that a later evaluation correction never mutates
+an earlier, already-persisted snapshot.
+
+**Migration `0072c7c74f86`.** The only schema change in FX-66H, and a
+narrow, justified exception to this story's own "no migration unless
+required" default: H1's new `pending_revision_count` diagnostic is one
+field of `ForecastPerformanceSampleDiagnostics`, and every OTHER field
+of that same object already has its own persisted `diag_*` column
+(`diag_accepted_count`, `diag_unique_target_event_count`, ...) rather
+than being recomputed at read time. Leaving this one new field
+unpersisted would have silently discarded the H1 audit trail on every
+real-Postgres round trip, defeating the "separate administrative
+diagnostic" requirement's own purpose once a snapshot is actually
+persisted. Adds exactly one column, `diag_pending_revision_count`
+(backfilled to `0` for existing rows -- not a guess, since no row
+written before FX-66H ever had this diagnostic computed for it -- then
+set `NOT NULL`), with a guarded `downgrade()` matching this codebase's
+established "refuse while non-empty" precedent. Verified with a new
+real-Postgres round-trip test, `test_h1_pending_revision_count_round_
+trips_through_postgres`.
+
+**Horizon-mixing risk (existing limitation, newly analyzed, no code
+restriction proposed).** `horizon_category` remains a free-form,
+author-asserted label (Section 4's own design) with NO independent
+validation against any FX-64 forecast field -- `StructuredForecast
+Vintage` carries no horizon/lead-time field at all, and `INCOMPATIBLE_
+HORIZON` remains unreachable by construction (unchanged from FX-66).
+
+The precise risk: a cohort's only PER-FORECAST timing control is
+`issue_window_start`/`issue_window_end`, a single ABSOLUTE calendar
+window shared across the WHOLE cohort -- not a RELATIVE lead-time
+window computed per target event. A cohort spanning multiple target
+events (meetings) at different calendar dates has no structural
+guarantee that every accepted forecast was issued at a comparable lead
+time relative to ITS OWN event; two forecasts issued at genuinely
+different horizons (e.g. one three days before its meeting, one
+six weeks before a different meeting) can both satisfy the same
+absolute window and the same self-asserted `horizon_category` label,
+and be pooled into one descriptive statistic with no flag raised
+anywhere in the pipeline. Since forecast difficulty generically
+increases with horizon, the resulting MAE/RMSE/accuracy would blend
+two different difficulty regimes into one number that LOOKS like a
+single internally consistent descriptive statistic but is not one --
+and nothing currently emitted (no exclusion, no diagnostic) would
+reveal the mixture.
+
+Proposed narrowest safe restriction (NOT implemented in FX-66H --
+documented per this codebase's "document the issue, explain the
+proposed change, stop before implementing an architectural change"
+rule, since any real fix requires either a new FX-64 structural field
+or a new per-event relative-window concept, both outside this story's
+scope restrictions): require a cohort's `issue_window_start`/`end`,
+when set, to be interpreted and RE-VALIDATED per accepted member
+relative to that member's own resolved target period (not as one
+absolute calendar range), and/or add a new, narrowly-scoped diagnostic
+counting how many distinct `(target_period, issue lead-time bucket)`
+combinations are present in an accepted population -- surfaced
+alongside `distinct_target_period_count`, never silently implying
+comparability was checked when it was not. Until either change is
+authorized, cohort authors remain solely responsible for ensuring every
+forecast accepted into a cohort was issued at a genuinely comparable
+horizon relative to its own target event; this ADR does not claim the
+system verifies that for them.
+
+**Regression.** 28 new/changed tests (10 H1 unit, 1 H1 integration, 7
+H2 unit, 11 H3 unit, 1 H3 integration, 1 H1-persistence integration;
+some pre-existing tests updated in place rather than counted as new).
+Full suite: 3272 passed (up from the FX-66 baseline of 3244), 10
+deselected (pre-existing, unrelated `live_source`-marked tests).
+`ruff`/`ruff format`/`mypy` (704 source files)/`pre-commit` all clean.
+The real BoC pilot re-verified three times post-fix and once more after
+the migration -- fully idempotent, `sample_adequacy` still correctly
+`INSUFFICIENT_DATA` (never `INFERENCE_SUPPORTED`), MAE/RMSE unchanged at
+0.50 percentage points. Real-data table counts unchanged and reconciled
+against the FX-66 baseline: FX-62-65 tables unchanged (12 source
+identities, 34 operational observations, 7 structured forecasts, 1
+outcome vintage, 1 evaluation vintage, 6 claims, 1 outcome definition,
+1 identity binding, 1 protocol); FX-66 tables unchanged (1 cohort, 1
+methodology, 0 benchmarks, 1 snapshot, 1 member, 0 exclusions).
+
+**Explicitly confirmed NOT done.** No FX-64 forecast-history change; no
+FX-65 evaluation-semantics change; no change to existing source
+identities, operational observations, or numeric/categorical metric
+formulas; no change to the FX-65H.2/H.3 outcome-identity-binding
+architecture; no provider adapters; no generalized statistical
+inference; no source reputation scores, trading signals, or source
+weights; no FX-67 dashboard or Decision/Risk Engine integration.
+
+Commits: starting `5affdd1` (FX-66) -> resulting FX-66H commit (see
+`docs/DECISIONS.md`'s own FX-66H entry for the exact hash).
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

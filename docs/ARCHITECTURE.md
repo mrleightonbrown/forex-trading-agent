@@ -3632,6 +3632,33 @@ readiness (`INSUFFICIENT_DATA`/`DESCRIPTIVE_ONLY`/`COMPARABLE_SAMPLE`/
 `INFERENCE_SUPPORTED`), never a skill verdict. No composite source-
 reputation score exists anywhere in this layer. See ADR 0014.
 
+**FX-66H hardened three integrity gaps in the above, corrective-only,
+with `fx66_v1` preserved.** H1: `BuildForecastPerformancePopulationAsOf`
+now selects the latest revision PER KEY that was actually available by
+`as_of` directly (a new `list_latest_evaluations_for_protocol_as_of`
+repository method), rather than deriving eligibility from each key's
+overall-latest revision's own availability -- a later correction can no
+longer erase an already-eligible earlier revision from a historical
+population; a pending-newer-revision fact is now surfaced as a purely
+informational diagnostic that never influences membership. H2:
+`INFERENCE_SUPPORTED` is now never returned by any `fx66_v1` code path
+(retained only as a reserved, documented-but-unemitted enum member) --
+sample adequacy gates on `distinct_target_period_count`, the most
+conservative of the existing diagnostics, so a large but correlated/
+non-independent sample can reach `COMPARABLE_SAMPLE` at most, never an
+inferential-skill claim. H3: `RecordForecastPerformanceSnapshot` now
+computes the minimum required `availability` itself from the caller-
+supplied authoritative cohort/methodology/benchmark/evaluation objects
+(never trusting a caller-supplied `availability` merely because it is
+structurally valid), rejecting out-of-order recordings before any
+database write. One narrow, justified migration (`0072c7c74f86`) persists
+H1's new diagnostic field, consistent with every sibling diagnostic
+column. See ADR 0014's own FX-66H addendum, which also analyzes a
+horizon-mixing risk in the existing cohort model (free-form, author-
+asserted `horizon_category` with no independent per-forecast
+validation) and proposes, without implementing, the narrowest safe
+restriction.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

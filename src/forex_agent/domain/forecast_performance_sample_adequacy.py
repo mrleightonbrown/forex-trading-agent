@@ -11,8 +11,10 @@ class ForecastPerformanceSampleAdequacy(Enum):
     methodology could select to flatter a result."""
 
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
-    """Too few unique target events (or zero accepted members) to
-    describe even a basic distribution of outcomes."""
+    """Too few accepted members, or too few DISTINCT target periods
+    (the more conservative of the two uniqueness diagnostics -- see
+    `distinct_target_period_count`), to describe even a basic
+    distribution of outcomes."""
 
     DESCRIPTIVE_ONLY = "DESCRIPTIVE_ONLY"
     """Enough members to report descriptive metrics (MAE, accuracy,
@@ -24,11 +26,22 @@ class ForecastPerformanceSampleAdequacy(Enum):
 
     COMPARABLE_SAMPLE = "COMPARABLE_SAMPLE"
     """A genuinely comparable, production-observed population large
-    enough to support benchmark-relative DESCRIPTIVE comparison, but
-    still short of the inference threshold."""
+    enough (by `distinct_target_period_count`, the most conservative
+    available uniqueness diagnostic -- never `accepted_count` alone)
+    to support benchmark-relative DESCRIPTIVE comparison. This is the
+    CEILING `fx66_v1` ever assigns -- it certifies neither statistical
+    independence nor forecasting skill, and must never be read as
+    "large enough for inference" (FX-66H's own H2 correction: sample
+    SIZE alone, even 30 or 100 accepted observations, previously
+    promoted to `INFERENCE_SUPPORTED` below regardless of
+    independence, benchmark pairing, uncertainty, or selection bias)."""
 
     INFERENCE_SUPPORTED = "INFERENCE_SUPPORTED"
-    """Large enough, clean enough, and production-observed -- the ONLY
-    tier where a bounded statistical-uncertainty calculation (Section
-    12) is methodologically defensible. Still never implies
-    `SKILLED`/`TRUSTWORTHY`/any inferential verdict by itself."""
+    """RESERVED for forward compatibility ONLY -- `fx66_v1`'s own
+    classification rule (`AssessForecastPerformanceEvidence`) NEVER
+    returns this value (FX-66H's own H2 correction). A future version
+    may emit it only once a separately authorized, genuinely
+    independence-aware inference contract exists; until then, no
+    sample size by itself justifies it. Still never implies
+    `SKILLED`/`TRUSTWORTHY`/any inferential verdict by itself even if
+    a future version does emit it."""

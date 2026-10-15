@@ -31,6 +31,12 @@ class ForecastPerformanceSampleDiagnostics:
     earliest_availability: UtcTimestamp | None
     latest_availability: UtcTimestamp | None
     sample_adequacy: ForecastPerformanceSampleAdequacy
+    pending_revision_count: int = 0
+    """FX-66H (H1): how many ACCEPTED members have a strictly newer
+    evaluation revision beyond `knowledge_cutoff` -- a purely
+    informational audit count (Section 6's own "preserve that
+    information in a separate administrative diagnostic" rule). Never
+    influences `sample_adequacy` or any accepted/excluded decision."""
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -42,9 +48,12 @@ class ForecastPerformanceSampleDiagnostics:
             ("benchmark_paired_count", self.benchmark_paired_count),
             ("production_count", self.production_count),
             ("research_count", self.research_count),
+            ("pending_revision_count", self.pending_revision_count),
         ):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a non-negative int, got {value!r}")
+        if self.pending_revision_count > self.accepted_count:
+            raise ValueError("pending_revision_count must not exceed accepted_count")
         if self.accepted_count > self.raw_candidate_count:
             raise ValueError("accepted_count must not exceed raw_candidate_count")
         if sum(count for _, count in self.excluded_by_reason) + self.accepted_count != (

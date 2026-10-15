@@ -15,7 +15,24 @@ merely to produce PASS results"), never a configurable methodology
 parameter a caller could tune to flatter a result. `RETROSPECTIVE_
 RESEARCH` populations are capped at `DESCRIPTIVE_ONLY` regardless of
 size (Section 13's own "a retrospective corpus must never imply the
-system could have acted on it")."""
+system could have acted on it").
+
+**FX-66H (H2) correction -- `INFERENCE_SUPPORTED` is never emitted.**
+The original rule promoted to `INFERENCE_SUPPORTED` purely from
+`accepted_count`, which let 30+ accepted forecasts automatically be
+labelled suitable for statistical inference regardless of
+independence, benchmark pairing, uncertainty, or selection bias --
+and regardless of how many of those accepted forecasts actually
+targeted DISTINCT real-world events (`accepted_count` can be large
+while `distinct_target_period_count` stays small, e.g. several
+outcome DEFINITIONS all keyed to the SAME underlying meeting/period).
+`fx66_v1` now gates on `distinct_target_period_count` -- the most
+conservative of the available uniqueness diagnostics -- and caps at
+`COMPARABLE_SAMPLE`: compatible observations exist for DESCRIPTIVE
+comparison; this certifies neither statistical independence nor
+forecasting skill. `INFERENCE_SUPPORTED` remains defined on `Forecast
+PerformanceSampleAdequacy` ONLY for forward compatibility -- reserved,
+and never emitted by this version's own classification rule."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -37,21 +54,27 @@ from forex_agent.domain.timestamps import UtcTimestamp
 
 _INSUFFICIENT_BELOW = 5
 _COMPARABLE_AT_LEAST = 20
-_INFERENCE_AT_LEAST = 30
 
 
 def _classify_sample_adequacy(
-    accepted_count: int, evaluation_mode: ForecastProvenanceMode
+    accepted_count: int,
+    distinct_target_period_count: int,
+    evaluation_mode: ForecastProvenanceMode,
 ) -> ForecastPerformanceSampleAdequacy:
-    if accepted_count < _INSUFFICIENT_BELOW:
+    """FX-66H (H2): gated on `distinct_target_period_count`, NOT
+    `accepted_count` alone -- the latter can be inflated by multiple
+    outcome definitions all keyed to the SAME underlying real-world
+    period, which `distinct_target_period_count` catches and
+    `accepted_count`/`unique_target_event_count` would not. Capped at
+    `COMPARABLE_SAMPLE`; `INFERENCE_SUPPORTED` is never returned by
+    this rule (see module docstring)."""
+    if accepted_count < _INSUFFICIENT_BELOW or distinct_target_period_count < _INSUFFICIENT_BELOW:
         return ForecastPerformanceSampleAdequacy.INSUFFICIENT_DATA
     if evaluation_mode is ForecastProvenanceMode.RETROSPECTIVE_RESEARCH:
         return ForecastPerformanceSampleAdequacy.DESCRIPTIVE_ONLY
-    if accepted_count < _COMPARABLE_AT_LEAST:
+    if distinct_target_period_count < _COMPARABLE_AT_LEAST:
         return ForecastPerformanceSampleAdequacy.DESCRIPTIVE_ONLY
-    if accepted_count < _INFERENCE_AT_LEAST:
-        return ForecastPerformanceSampleAdequacy.COMPARABLE_SAMPLE
-    return ForecastPerformanceSampleAdequacy.INFERENCE_SUPPORTED
+    return ForecastPerformanceSampleAdequacy.COMPARABLE_SAMPLE
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +125,11 @@ class AssessForecastPerformanceEvidence:
 
         span = _evaluation_availability_span(population)
         sample_adequacy = _classify_sample_adequacy(
-            accepted_count, population.cohort.evaluation_mode
+            accepted_count, distinct_target_period_count, population.cohort.evaluation_mode
+        )
+        pending_revision_count = len(
+            set(population.pending_revision_evaluation_keys)
+            & {m.evaluation.evaluation_key for m in accepted}
         )
 
         return ForecastPerformanceSampleDiagnostics(
@@ -121,4 +148,5 @@ class AssessForecastPerformanceEvidence:
             earliest_availability=span.earliest,
             latest_availability=span.latest,
             sample_adequacy=sample_adequacy,
+            pending_revision_count=pending_revision_count,
         )

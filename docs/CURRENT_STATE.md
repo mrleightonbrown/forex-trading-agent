@@ -3454,6 +3454,36 @@ _Last updated: 2026-09-27 (FX-54V)_
   correctly reports `INSUFFICIENT_DATA` and reproduces its own known
   MAE of 0.50pp, with no skill claim made.
   **Stop after FX-66 — do not begin FX-67.**
+- **FX-66H: historical performance integrity hardening (complete)**.
+  Corrective-only, `fx66_v1` preserved, starting commit `5affdd1`. H1:
+  fixed `BuildForecastPerformancePopulationAsOf` selecting a key's
+  OVERALL-LATEST revision and excluding the whole key if that revision
+  was too new, even when an earlier eligible revision existed -- a new
+  `list_latest_evaluations_for_protocol_as_of` repository method now
+  selects the latest revision per key actually available by `as_of`
+  directly; a pending-newer-revision fact is a purely informational
+  diagnostic (`pending_revision_count`), never influencing membership.
+  H2: `_classify_sample_adequacy` no longer ever returns
+  `INFERENCE_SUPPORTED` (retained only as a reserved, unemitted enum
+  member) -- gates on `distinct_target_period_count`, the most
+  conservative diagnostic, so a large correlated sample caps at
+  `COMPARABLE_SAMPLE` (descriptive-comparison-only, never a skill
+  claim). H3: `RecordForecastPerformanceSnapshot` now computes the
+  minimum required snapshot `availability` itself from caller-supplied
+  authoritative cohort/methodology/benchmark/evaluation objects (never
+  trusting a caller-supplied `availability`), rejecting out-of-order
+  recordings before any database write. One narrow migration
+  (`0072c7c74f86`) persists H1's new diagnostic column, matching every
+  sibling diagnostic field's own existing pattern. 28 new/changed
+  tests; full suite 3272 passed (up from 3244). `ruff`/`mypy` (704
+  files)/`pre-commit` all clean. Real pilot re-verified post-fix and
+  post-migration: fully idempotent, still `INSUFFICIENT_DATA`, MAE
+  unchanged at 0.50pp. Real-data table counts unchanged, no leaked
+  test data. ADR 0014's own FX-66H addendum also analyzes a horizon-
+  mixing risk (free-form, author-asserted `horizon_category` with no
+  independent per-forecast validation) and proposes, without
+  implementing, the narrowest safe restriction.
+  **Stop after FX-66H — do not begin FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

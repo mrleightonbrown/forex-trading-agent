@@ -124,6 +124,7 @@ class ForecastPerformanceSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     diag_distinct_target_period_count: Mapped[int] = mapped_column(Integer, nullable=False)
     diag_production_count: Mapped[int] = mapped_column(Integer, nullable=False)
     diag_research_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    diag_pending_revision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     diag_missing_outcome_rate: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     diag_earliest_availability: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

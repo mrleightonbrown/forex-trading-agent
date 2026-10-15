@@ -2,6 +2,7 @@
 Mirrors `SqlAlchemyStructuredForecastRepository`'s own `_select_latest`
 and production-vs-research filtering conventions exactly."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
@@ -45,6 +46,29 @@ class MalformedForecastEvaluationRowError(Exception):
 
 def _dt(value: datetime | None) -> UtcTimestamp | None:
     return None if value is None else UtcTimestamp(value)
+
+
+def _latest_per_key(
+    rows: Sequence[StructuredForecastEvaluationVintageRow],
+) -> list[StructuredForecastEvaluationVintageRow]:
+    """Reduces `rows` (already filtered by the caller to whichever
+    `availability` bound applies) to one row per `evaluation_key` --
+    the latest by `(availability, revision_sequence)` among the rows
+    actually passed in. Shared by `list_latest_evaluations_for_
+    protocol` (unbounded) and `list_latest_evaluations_for_protocol_
+    as_of` (FX-66H H1's own PIT-bounded selection) so the two can
+    never silently diverge in HOW "latest" is computed, only in WHICH
+    rows are eligible to compete for it."""
+    latest_by_key: dict[str, StructuredForecastEvaluationVintageRow] = {}
+    for row in rows:
+        current = latest_by_key.get(row.evaluation_key)
+        candidate_sort_key = (row.availability, row.revision_sequence)
+        if current is None or candidate_sort_key > (
+            current.availability,
+            current.revision_sequence,
+        ):
+            latest_by_key[row.evaluation_key] = row
+    return list(latest_by_key.values())
 
 
 class SqlAlchemyForecastEvaluationRepository:
@@ -146,17 +170,19 @@ class SqlAlchemyForecastEvaluationRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         await self._session.commit()
+        return tuple(_evaluation_row_to_domain(row) for row in _latest_per_key(rows))
 
-        latest_by_key: dict[str, StructuredForecastEvaluationVintageRow] = {}
-        for row in rows:
-            current = latest_by_key.get(row.evaluation_key)
-            candidate_sort_key = (row.availability, row.revision_sequence)
-            if current is None or candidate_sort_key > (
-                current.availability,
-                current.revision_sequence,
-            ):
-                latest_by_key[row.evaluation_key] = row
-        return tuple(_evaluation_row_to_domain(row) for row in latest_by_key.values())
+    async def list_latest_evaluations_for_protocol_as_of(
+        self, protocol_key: str, evaluation_mode: ForecastProvenanceMode, as_of: UtcTimestamp
+    ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        stmt = select(StructuredForecastEvaluationVintageRow).where(
+            StructuredForecastEvaluationVintageRow.protocol_key == protocol_key,
+            StructuredForecastEvaluationVintageRow.evaluation_mode == evaluation_mode.value,
+            StructuredForecastEvaluationVintageRow.availability <= as_of.value,
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+        return tuple(_evaluation_row_to_domain(row) for row in _latest_per_key(rows))
 
     async def _select_latest(
         self, conditions: list[ColumnElement[bool]]

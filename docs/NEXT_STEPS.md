@@ -7221,3 +7221,49 @@ historical-forecast-performance.md` is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## FX-66H: historical performance integrity hardening (complete)
+
+Corrective-only hardening of FX-66, `fx66_v1` preserved, starting
+commit `5affdd1`. H1 fixed `BuildForecastPerformancePopulationAsOf`
+selecting a key's overall-latest revision and excluding the whole key
+if that revision was too new -- even when an earlier eligible revision
+existed -- via a new `list_latest_evaluations_for_protocol_as_of`
+repository method that selects the latest revision per key actually
+available by `as_of` directly; a pending-newer-revision fact is now a
+purely informational diagnostic that never influences membership. H2
+made `_classify_sample_adequacy` never return `INFERENCE_SUPPORTED`
+(reserved, documented, unemitted), gating instead on `distinct_target_
+period_count` (the most conservative diagnostic) so a large but
+correlated sample caps at `COMPARABLE_SAMPLE` -- descriptive-
+comparison-only, never an independence or skill claim. H3 made
+`RecordForecastPerformanceSnapshot` compute the minimum required
+snapshot `availability` itself from caller-supplied authoritative
+cohort/methodology/benchmark/evaluation objects, rejecting out-of-
+order recordings before any database write rather than trusting a
+caller-supplied `availability`. One narrow migration (`0072c7c74f86`)
+persists H1's new diagnostic column, matching every sibling
+diagnostic field's own existing pattern.
+
+ADR 0014's own FX-66H addendum also analyzes a horizon-mixing risk
+left unaddressed by FX-66's cohort model (`horizon_category` is a
+free-form, author-asserted label with no independent per-forecast
+validation; the only timing control is one absolute calendar window
+shared cohort-wide, not a per-event relative lead-time window) and
+proposes, without implementing, the narrowest safe restriction --
+implementing it needs either a new FX-64 structural field or a new
+per-event relative-window concept, both outside this story's scope.
+
+28 new/changed tests; full suite 3272 passed (up from 3244).
+`ruff`/`ruff format`/`mypy` (704 files)/`pre-commit` all clean. The
+real pilot re-verified post-fix and post-migration: fully idempotent,
+`sample_adequacy` still `INSUFFICIENT_DATA`, MAE/RMSE unchanged at
+0.50 percentage points. Real-data table counts unchanged against the
+FX-66 baseline.
+
+Full details in `docs/DECISIONS.md`'s FX-66H entry; `docs/adr/0014-
+historical-forecast-performance.md`'s own FX-66H addendum is the
+complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

@@ -90,15 +90,31 @@ class FakeForecastEvaluationRepository:
     async def list_latest_evaluations_for_protocol(
         self, protocol_key: str, evaluation_mode: ForecastProvenanceMode
     ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        return tuple(self._latest_per_key(protocol_key, evaluation_mode, as_of=None).values())
+
+    async def list_latest_evaluations_for_protocol_as_of(
+        self, protocol_key: str, evaluation_mode: ForecastProvenanceMode, as_of: UtcTimestamp
+    ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        return tuple(self._latest_per_key(protocol_key, evaluation_mode, as_of=as_of).values())
+
+    def _latest_per_key(
+        self,
+        protocol_key: str,
+        evaluation_mode: ForecastProvenanceMode,
+        *,
+        as_of: UtcTimestamp | None,
+    ) -> dict[str, StructuredForecastEvaluationVintage]:
         latest_by_key: dict[str, StructuredForecastEvaluationVintage] = {}
         for vintages in self.vintages.values():
             matching = [
                 v
                 for v in vintages
-                if v.protocol_key == protocol_key and v.evaluation_mode is evaluation_mode
+                if v.protocol_key == protocol_key
+                and v.evaluation_mode is evaluation_mode
+                and (as_of is None or v.availability.value <= as_of.value)
             ]
             if not matching:
                 continue
             latest = max(matching, key=_sort_key)
             latest_by_key[latest.evaluation_key] = latest
-        return tuple(latest_by_key.values())
+        return latest_by_key

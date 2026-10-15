@@ -582,6 +582,7 @@ def _snapshot_row_values(snapshot: ForecastPerformanceSnapshot) -> dict[str, obj
         "diag_distinct_target_period_count": diagnostics.distinct_target_period_count,
         "diag_production_count": diagnostics.production_count,
         "diag_research_count": diagnostics.research_count,
+        "diag_pending_revision_count": diagnostics.pending_revision_count,
         "diag_missing_outcome_rate": diagnostics.missing_outcome_rate,
         "diag_earliest_availability": (
             diagnostics.earliest_availability.value if diagnostics.earliest_availability else None
@@ -714,6 +715,7 @@ def _snapshot_row_to_domain(
         benchmark_paired_count=row.benchmark_paired_count,
         production_count=row.diag_production_count,
         research_count=row.diag_research_count,
+        pending_revision_count=row.diag_pending_revision_count,
         missing_outcome_rate=Decimal(row.diag_missing_outcome_rate),
         earliest_availability=_dt(row.diag_earliest_availability),
         latest_availability=_dt(row.diag_latest_availability),

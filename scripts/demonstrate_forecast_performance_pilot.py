@@ -243,7 +243,9 @@ async def main(dry_run: bool) -> None:
             categorical_summary=categorical_summary,
         )
         record_snapshot = RecordForecastPerformanceSnapshot(performance_repo)
-        snapshot_result = await record_snapshot(snapshot_candidate)
+        snapshot_result = await record_snapshot(
+            snapshot_candidate, population=population, methodology=_methodology()
+        )
         print(f"{_SNAPSHOT_KEY}: {snapshot_result.outcome.value}")
 
         get_as_of = GetForecastPerformanceSnapshotAsOf(performance_repo)

@@ -18,6 +18,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
+    ForecastPerformancePopulation,
+    ForecastPerformancePopulationMember,
+)
 from forex_agent.application.use_cases.define_forecast_performance_cohort import (
     DefineForecastPerformanceCohort,
 )
@@ -27,7 +31,14 @@ from forex_agent.application.use_cases.record_forecast_performance_snapshot impo
 from forex_agent.application.use_cases.record_source_identity_vintage import (
     RecordSourceIdentityVintage,
 )
+from forex_agent.domain.evidence_authentication_review import EvidenceAuthenticationReview
+from forex_agent.domain.forecast_attribution import ForecastAttribution
 from forex_agent.domain.forecast_attribution_kind import ForecastAttributionKind
+from forex_agent.domain.forecast_evaluation_metric import ForecastEvaluationMetric
+from forex_agent.domain.forecast_evaluation_result import ForecastEvaluationResult
+from forex_agent.domain.forecast_evidence_kind import ForecastEvidenceKind
+from forex_agent.domain.forecast_evidence_reference import ForecastEvidenceReference
+from forex_agent.domain.forecast_outcome_vintage import ForecastOutcomeVintage
 from forex_agent.domain.forecast_performance_benchmark_comparison import (
     ForecastPerformanceBenchmarkComparison,
 )
@@ -61,10 +72,16 @@ from forex_agent.domain.forecast_performance_snapshot import (
     ForecastPerformanceSnapshotMember,
 )
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
+from forex_agent.domain.forecast_target_period import ForecastTargetPeriod
+from forex_agent.domain.forecast_target_period_kind import ForecastTargetPeriodKind
 from forex_agent.domain.forecast_type import ForecastType
 from forex_agent.domain.intelligence_source_kind import IntelligenceSourceKind
 from forex_agent.domain.source_evidence_kind import SourceEvidenceKind
 from forex_agent.domain.source_provenance_evidence import SourceProvenanceEvidence
+from forex_agent.domain.structured_forecast_evaluation_vintage import (
+    StructuredForecastEvaluationVintage,
+)
+from forex_agent.domain.structured_forecast_vintage import StructuredForecastVintage
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.forecast_performance_repository import (
     SqlAlchemyForecastPerformanceRepository,
@@ -208,9 +225,101 @@ def _member(evaluation_key: str, outcome_key: str) -> ForecastPerformanceSnapsho
     )
 
 
+def _population_member(
+    evaluation_key: str, outcome_key: str, *, evaluation_availability: UtcTimestamp
+) -> ForecastPerformancePopulationMember:
+    period = ForecastTargetPeriod(
+        period_kind=ForecastTargetPeriodKind.POLICY_MEETING, policy_meeting_identifier="M1"
+    )
+    evidence = ForecastEvidenceReference(
+        evidence_kind=ForecastEvidenceKind.EXTERNAL_DOCUMENT_REFERENCE,
+        description="test",
+        document_identifier=f"{evaluation_key}-doc",
+    )
+    review = EvidenceAuthenticationReview(
+        reviewed_by="tester", review_method="synthetic", reviewed_at=evaluation_availability
+    )
+    forecast_vintage = StructuredForecastVintage(
+        claim_key=f"{evaluation_key}-claim",
+        revision_sequence=0,
+        availability=evaluation_availability,
+        algorithm_version="test_v1",
+        forecast_type=ForecastType.NUMERIC_POINT,
+        target_key="CA_POLICY_RATE_LEVEL_AFTER_MEETING",
+        target_period=period,
+        attribution=ForecastAttribution(
+            kind=ForecastAttributionKind.AGGREGATE_SURVEY_CONSENSUS,
+            publisher_source_key=TEST_PUBLISHER_KEY,
+        ),
+        provenance_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        evidence=evidence,
+        numeric_value=Decimal("3.75"),
+        unit="PERCENT",
+    )
+    outcome_vintage = ForecastOutcomeVintage(
+        outcome_key=outcome_key,
+        revision_sequence=0,
+        definition_key="test-def",
+        definition_version_sequence=0,
+        availability=evaluation_availability,
+        target_period=period,
+        outcome_type=ForecastType.NUMERIC_POINT,
+        evidence=evidence,
+        authentication_review=review,
+        provenance_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        numeric_value=Decimal("3.25"),
+        unit="PERCENT",
+    )
+    evaluation = StructuredForecastEvaluationVintage(
+        evaluation_key=evaluation_key,
+        revision_sequence=0,
+        forecast_claim_key=forecast_vintage.claim_key,
+        forecast_revision_sequence=0,
+        protocol_key="boc-rate-fad-protocol",
+        protocol_version_sequence=0,
+        outcome_definition_key="test-def",
+        outcome_definition_version_sequence=0,
+        outcome_key=outcome_key,
+        outcome_revision_sequence=0,
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        algorithm_version="fx65_v1",
+        availability=evaluation_availability,
+        result=ForecastEvaluationResult(
+            metric=ForecastEvaluationMetric.NUMERIC_ERROR,
+            signed_error=Decimal("-0.50"),
+            absolute_error=Decimal("0.50"),
+            unit="PERCENT",
+        ),
+        forecast_authentication_review=review,
+    )
+    return ForecastPerformancePopulationMember(evaluation, forecast_vintage, outcome_vintage)
+
+
+def _population(
+    cohort: ForecastPerformanceCohortDefinition,
+    *,
+    members: tuple[ForecastPerformancePopulationMember, ...] | None = None,
+    exclusions: tuple[tuple[str, ForecastPerformanceExclusionReason], ...] = (),
+    knowledge_cutoff: UtcTimestamp | None = None,
+) -> ForecastPerformancePopulation:
+    members = members or (
+        _population_member("eval-a", "outcome-a", evaluation_availability=_ts(10)),
+        _population_member("eval-b", "outcome-b", evaluation_availability=_ts(10)),
+    )
+    return ForecastPerformancePopulation(
+        cohort=cohort,
+        knowledge_cutoff=knowledge_cutoff or _ts(13),
+        raw_candidate_count=len(members) + len(exclusions),
+        accepted=members,
+        exclusions=exclusions,
+    )
+
+
 def _diagnostics(
     accepted_count: int,
     excluded_by_reason: tuple[tuple[ForecastPerformanceExclusionReason, int], ...] = (),
+    *,
+    pending_revision_count: int = 0,
 ) -> ForecastPerformanceSampleDiagnostics:
     raw_candidate_count = accepted_count + sum(count for _, count in excluded_by_reason)
     return ForecastPerformanceSampleDiagnostics(
@@ -223,6 +332,7 @@ def _diagnostics(
         benchmark_paired_count=0,
         production_count=0,
         research_count=accepted_count,
+        pending_revision_count=pending_revision_count,
         missing_outcome_rate=Decimal("0"),
         earliest_availability=_ts(10) if accepted_count else None,
         latest_availability=_ts(10) if accepted_count else None,
@@ -311,13 +421,19 @@ async def test_snapshot_persists_members_and_exclusions_relationally(
     await _ensure_publisher_registered(registry_repo)
     cohort = _cohort(protocol_key="boc-rate-fad-protocol", protocol_version_sequence=0)
     await DefineForecastPerformanceCohort(performance_repo)(cohort)
-    await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+    methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
 
     snapshot = _snapshot(
         members=(_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b")),
         exclusions=(("eval-z", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE),),
     )
-    result = await RecordForecastPerformanceSnapshot(performance_repo)(snapshot)
+    population = _population(
+        cohort,
+        exclusions=(("eval-z", ForecastPerformanceExclusionReason.NOT_YET_AVAILABLE),),
+    )
+    result = await RecordForecastPerformanceSnapshot(performance_repo)(
+        snapshot, population=population, methodology=methodology
+    )
     assert result.outcome.value == "CREATED"
 
     member_rows = (
@@ -352,6 +468,37 @@ async def test_snapshot_persists_members_and_exclusions_relationally(
     assert fetched is not None
     assert len(fetched.members) == 2
     assert len(fetched.exclusions) == 1
+    assert fetched == snapshot
+
+
+async def test_h1_pending_revision_count_round_trips_through_postgres(
+    session: AsyncSession,
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    performance_repo: SqlAlchemyForecastPerformanceRepository,
+) -> None:
+    """FX-66H (H1): `pending_revision_count` is a real column
+    (`diag_pending_revision_count`), not just a transient build-time
+    value -- a non-zero value must survive a genuine Postgres write and
+    read back unchanged, exactly like every sibling diagnostic field."""
+    await _ensure_publisher_registered(registry_repo)
+    cohort = _cohort(protocol_key="boc-rate-fad-protocol", protocol_version_sequence=0)
+    await DefineForecastPerformanceCohort(performance_repo)(cohort)
+    methodology = await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+
+    members = (_member("eval-a", "outcome-a"), _member("eval-b", "outcome-b"))
+    snapshot = _snapshot(
+        members=members,
+        diagnostics=_diagnostics(len(members), pending_revision_count=1),
+    )
+    population = _population(cohort)
+    result = await RecordForecastPerformanceSnapshot(performance_repo)(
+        snapshot, population=population, methodology=methodology
+    )
+    assert result.outcome.value == "CREATED"
+
+    fetched = await performance_repo.latest_snapshot_vintage(snapshot.snapshot_key)
+    assert fetched is not None
+    assert fetched.diagnostics.pending_revision_count == 1
     assert fetched == snapshot
 
 
@@ -443,9 +590,48 @@ async def test_concurrent_duplicate_cohort_registration(
     assert len(fetched) == 1
 
 
+async def test_concurrent_duplicate_snapshot_recording(
+    session: AsyncSession,
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    performance_repo: SqlAlchemyForecastPerformanceRepository,
+) -> None:
+    """FX-66H (H3) mandatory test: two independent Postgres sessions
+    racing to record the IDENTICAL snapshot (same basis AND payload)
+    -- exactly one physically inserts; the other observes `inserted=
+    False` (idempotent), and exactly one row survives."""
+    await _ensure_publisher_registered(registry_repo)
+    cohort = _cohort(
+        cohort_key=f"{TEST_COHORT_PREFIX}snap_concurrent",
+        protocol_key="boc-rate-fad-protocol",
+        protocol_version_sequence=0,
+    )
+    await DefineForecastPerformanceCohort(performance_repo)(cohort)
+    await _insert_methodology_row(session, cohort.cohort_key, cohort.version_sequence)
+
+    snapshot = _snapshot(
+        snapshot_key=f"{TEST_SNAPSHOT_PREFIX}concurrent",
+        cohort_key=cohort.cohort_key,
+        methodology_key=f"{cohort.cohort_key}-methodology",
+        members=(_member("eval-a", "outcome-a"),),
+    )
+    session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+    async def _write() -> bool:
+        async with session_factory() as own_session:
+            own_repo = SqlAlchemyForecastPerformanceRepository(own_session)
+            result = await own_repo.add_snapshot_vintage(snapshot)
+            return result.inserted
+
+    results = await asyncio.gather(_write(), _write())
+
+    assert sorted(results) == [False, True]
+    fetched = await performance_repo.list_vintages_for_snapshot(snapshot.snapshot_key)
+    assert len(fetched) == 1
+
+
 async def _insert_methodology_row(
     session: AsyncSession, cohort_key: str, cohort_version_sequence: int
-) -> None:
+) -> ForecastPerformanceMethodology:
     methodology = ForecastPerformanceMethodology(
         methodology_key=f"{cohort_key}-methodology",
         version_sequence=0,
@@ -457,3 +643,4 @@ async def _insert_methodology_row(
         rationale="integration test methodology",
     )
     await SqlAlchemyForecastPerformanceRepository(session).add_methodology_version(methodology)
+    return methodology

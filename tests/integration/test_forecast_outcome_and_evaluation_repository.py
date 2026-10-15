@@ -10,6 +10,7 @@ current head)."""
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -926,3 +927,77 @@ async def test_inadmissible_evaluation_writes_nothing(
     assert result.admissibility is ForecastEvaluationAdmissibility.UNVERIFIED_SOURCE
     history = await evaluation_repo.list_vintages_for_evaluation(evaluation_key)
     assert history == ()
+
+
+async def test_list_latest_evaluations_for_protocol_as_of_selects_pit_correct_revision(
+    registry_repo: SqlAlchemySourceRegistryRepository,
+    outcome_repo: SqlAlchemyForecastOutcomeRepository,
+    evaluation_repo: SqlAlchemyForecastEvaluationRepository,
+    forecast_repo: SqlAlchemyStructuredForecastRepository,
+) -> None:
+    """FX-66H (H1), real-Postgres: `list_latest_evaluations_for_
+    protocol_as_of` must select revision 0 (available before the
+    cutoff) rather than revision 1 (available after), while the
+    UNBOUNDED `list_latest_evaluations_for_protocol` still reports
+    revision 1 as the overall latest -- exactly the two reads
+    `BuildForecastPerformancePopulationAsOf` relies on to never
+    exclude a key merely because a later revision exists."""
+    await _ensure_publisher_registered(registry_repo)
+    await RecordForecastOutcomeDefinition(outcome_repo)(
+        _definition(definition_key=f"{TEST_DEFINITION_PREFIX}3")
+    )
+    await RecordForecastOutcome(outcome_repo)(
+        _outcome_candidate(
+            outcome_key=f"{TEST_OUTCOME_PREFIX}3", definition_key=f"{TEST_DEFINITION_PREFIX}3"
+        )
+    )
+    protocol_key = f"{TEST_PROTOCOL_PREFIX}3"
+    await RecordForecastEvaluationProtocol(evaluation_repo)(
+        _protocol(protocol_key=protocol_key, outcome_definition_key=f"{TEST_DEFINITION_PREFIX}3")
+    )
+    forecast_result = await RecordStructuredForecast(forecast_repo)(
+        _forecast_candidate(claim_key=f"{TEST_CLAIM_PREFIX}3"), registered_at=_ts(1)
+    )
+    assert forecast_result.vintage is not None
+
+    evaluate = EvaluateStructuredForecast(evaluation_repo, outcome_repo)
+    evaluation_key = f"{TEST_EVALUATION_PREFIX}3"
+    first = await evaluate(
+        evaluation_key=evaluation_key,
+        forecast_vintage=forecast_result.vintage,
+        forecast_authentication_review=_review(),
+        evaluation_mode=ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+        protocol=_protocol(
+            protocol_key=protocol_key, outcome_definition_key=f"{TEST_DEFINITION_PREFIX}3"
+        ),
+        outcome_key=f"{TEST_OUTCOME_PREFIX}3",
+        algorithm_version="fx65_v1",
+        availability=_ts(10),
+    )
+    assert first.vintage is not None
+    assert first.vintage.revision_sequence == 0
+
+    revision_1 = replace(
+        first.vintage,
+        revision_sequence=1,
+        availability=_ts(20),
+        correction_reason="later correction, available only after the cutoff under test",
+    )
+    write_result = await evaluation_repo.add_evaluation_vintage(revision_1)
+    assert write_result.inserted is True
+
+    cutoff = _ts(13)
+    as_of_bounded = await evaluation_repo.list_latest_evaluations_for_protocol_as_of(
+        protocol_key, ForecastProvenanceMode.RETROSPECTIVE_RESEARCH, cutoff
+    )
+    unbounded = await evaluation_repo.list_latest_evaluations_for_protocol(
+        protocol_key, ForecastProvenanceMode.RETROSPECTIVE_RESEARCH
+    )
+
+    assert len(as_of_bounded) == 1
+    assert as_of_bounded[0].evaluation_key == evaluation_key
+    assert as_of_bounded[0].revision_sequence == 0
+
+    assert len(unbounded) == 1
+    assert unbounded[0].evaluation_key == evaluation_key
+    assert unbounded[0].revision_sequence == 1

@@ -16824,3 +16824,75 @@ historical-forecast-performance.md` is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## 2026-10-15 — FX-66H: historical performance integrity hardening
+
+**Decision: corrective-only hardening, `fx66_v1` preserved, starting
+commit `5affdd1`.** Three integrity findings fixed, no contract
+change needed.
+
+**H1 (PIT-correct per-key revision selection)**: added
+`ForecastEvaluationRepository.list_latest_evaluations_for_protocol_
+as_of`, selecting each key's latest revision ACTUALLY available by
+`as_of` directly, rather than deriving eligibility from each key's
+overall-latest revision's own availability. `BuildForecastPerformance
+PopulationAsOf` uses the existing unbounded method only for `raw_
+candidate_count`/pending-revision detection; the new as-of-bounded
+method decides membership. A pending-newer-revision fact is a purely
+informational diagnostic, never influencing membership.
+
+**H2 (sample adequacy can never imply skill)**: `_classify_sample_
+adequacy` never returns `INFERENCE_SUPPORTED` in any `fx66_v1` path
+(the enum member is retained, reserved, documented as unemitted).
+Gates on `distinct_target_period_count` -- the most conservative
+existing diagnostic -- rather than `accepted_count` alone; caps at
+`COMPARABLE_SAMPLE` (descriptive-comparison-only, never an
+independence/skill claim).
+
+**H3 (snapshot temporal integrity)**: `RecordForecastPerformanceSnapshot`
+now requires the caller to pass the authoritative `population`/
+`methodology`/`benchmark` objects and computes the minimum required
+`availability` itself from their own real timestamps, rather than
+trusting a caller-supplied `availability`. Identity-mismatch and
+temporal-integrity checks both raise before any repository access, so
+a rejected attempt makes zero database changes.
+
+**One narrow, justified migration** (`0072c7c74f86`): persists H1's
+new `pending_revision_count` diagnostic as `diag_pending_revision_
+count`, matching every sibling diagnostic field's own existing
+persisted-column pattern -- leaving it unpersisted would have silently
+discarded the H1 audit trail on every real-Postgres round trip.
+
+**Horizon-mixing risk analyzed, no restriction implemented**:
+`horizon_category` remains a free-form, author-asserted label with no
+independent per-forecast validation; a cohort's only timing control
+(`issue_window_start`/`end`) is one absolute calendar window shared
+cohort-wide, not a per-event relative lead-time window, so forecasts
+at genuinely different horizons relative to their own target event can
+be pooled undetected. Documented, with a proposed (not implemented)
+narrowest safe restriction, per ADR 0014's own FX-66H addendum --
+implementing it would require either a new FX-64 structural field or a
+new per-event relative-window concept, both outside this story's scope.
+
+**Regression.** 28 new/changed tests (10 H1 unit, 1 H1 integration, 7
+H2 unit, 11 H3 unit, 1 H3 integration, 1 H1-persistence integration).
+Full suite: 3272 passed (up from 3244). `ruff`/`ruff format`/`mypy`
+(704 files)/`pre-commit` all clean. The real pilot re-verified
+post-fix and post-migration: fully idempotent, `sample_adequacy` still
+`INSUFFICIENT_DATA`, MAE/RMSE unchanged at 0.50 percentage points.
+Real-data table counts unchanged against the FX-66 baseline, no leaked
+test data.
+
+**Explicitly confirmed NOT done**: no FX-64/FX-65 semantic changes; no
+change to existing source identities, operational observations, or
+metric formulas; no change to the outcome-identity-binding
+architecture; no provider adapters, generalized statistical inference,
+source reputation scores, trading signals, or source weights; no
+FX-67 dashboard or Decision/Risk Engine integration.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-66H entry; `docs/adr/0014-
+historical-forecast-performance.md`'s own FX-66H addendum is the
+complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.
