@@ -3430,6 +3430,30 @@ _Last updated: 2026-09-27 (FX-54V)_
   new tests; full suite 3144 passed. Real BoC pilot result (signed
   error -0.50pp) re-verified unchanged.
   **Stop after FX-65H.3 — do not begin FX-66 or FX-67.**
+- **FX-66: historical forecast performance & statistical evidence
+  (complete)**. Measures performance over MULTIPLE evaluations (FX-65
+  measures exactly one) under an explicit, versioned methodology --
+  never infers skill merely from accumulated correct predictions, and
+  introduces NO composite source-reputation score. New registries:
+  `forecast_performance_cohorts` (which population is comparable),
+  `_methodologies` (how it's calculated), `_benchmarks` (what it's
+  compared against: `AUTHENTICATED_SERIES` reusing another real
+  cohort, `NAIVE_CATEGORICAL`, or `NAIVE_NUMERIC`, all explicit,
+  never fabricated), and an immutable `forecast_performance_snapshots`
+  table with proper relational child tables for membership/exclusions
+  (migration `0db892e6639a`). `BuildForecastPerformancePopulationAsOf`
+  fetches candidates unbounded by PIT and applies `as_of` itself, so
+  a too-new evaluation is auditable rather than silently dropped;
+  duplicate forecasts for the same target event (FX-65H.2's own
+  durable `outcome_key`) resolve to the earliest qualifying issue.
+  Sample adequacy (`INSUFFICIENT_DATA`/`DESCRIPTIVE_ONLY`/`COMPARABLE_
+  SAMPLE`/`INFERENCE_SUPPORTED`) is a fixed, documented classification,
+  never a tunable parameter. 62 new tests (plus 38 pre-existing
+  architecture-boundary contract tests auto-covering the new files);
+  full suite 3244 passed. Real pilot (the one real BoC evaluation)
+  correctly reports `INSUFFICIENT_DATA` and reproduces its own known
+  MAE of 0.50pp, with no skill claim made.
+  **Stop after FX-66 — do not begin FX-67.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

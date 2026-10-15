@@ -137,6 +137,27 @@ class SqlAlchemyForecastEvaluationRepository:
             ]
         )
 
+    async def list_latest_evaluations_for_protocol(
+        self, protocol_key: str, evaluation_mode: ForecastProvenanceMode
+    ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        stmt = select(StructuredForecastEvaluationVintageRow).where(
+            StructuredForecastEvaluationVintageRow.protocol_key == protocol_key,
+            StructuredForecastEvaluationVintageRow.evaluation_mode == evaluation_mode.value,
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        await self._session.commit()
+
+        latest_by_key: dict[str, StructuredForecastEvaluationVintageRow] = {}
+        for row in rows:
+            current = latest_by_key.get(row.evaluation_key)
+            candidate_sort_key = (row.availability, row.revision_sequence)
+            if current is None or candidate_sort_key > (
+                current.availability,
+                current.revision_sequence,
+            ):
+                latest_by_key[row.evaluation_key] = row
+        return tuple(_evaluation_row_to_domain(row) for row in latest_by_key.values())
+
     async def _select_latest(
         self, conditions: list[ColumnElement[bool]]
     ) -> StructuredForecastEvaluationVintage | None:

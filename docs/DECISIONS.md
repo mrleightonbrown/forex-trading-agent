@@ -16723,3 +16723,104 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## 2026-10-15 — FX-66: historical forecast performance & statistical evidence
+
+**Scope.** Measures historical forecasting PERFORMANCE over a
+clearly defined, genuinely comparable population of MULTIPLE
+individual FX-65 evaluations, under an explicit, versioned
+methodology -- never infers skill merely from accumulated correct
+predictions, and introduces NO composite source-reputation score
+(FX-67's own, still-unauthorized, future job). Starting commit:
+`b4bfb32` (the FX-65H.3 commit).
+
+**Repository discovery.** The real evaluation corpus is exactly one
+row (confirmed insufficient, as the real pilot demonstration below
+confirms). `StructuredForecastEvaluationVintage.result` already
+carries the computed numeric error or categorical match/mismatch --
+`CalculateForecastPerformance` reuses it directly, never re-deriving.
+No per-forecast structural "horizon"/lead-time field exists in FX-64's
+own schema; `horizon_category` is therefore a cohort-identity/
+documentation dimension only, never checked against forecast data in
+`fx66_v1` -- a limitation surfaced explicitly rather than papered over
+(adding such a field would be a schema change to an existing FX-64
+table, outside this story's own scope). FX-65's own structural
+guarantee that an inadmissible evaluation is never persisted makes a
+"missing outcome" exclusion currently unreachable; the domain enum
+value exists for forward compatibility only. FX-65H.2's own durable
+`outcome_key` <-> measurement-identity binding is reused as the
+"target event" identity throughout (unique target events = distinct
+`outcome_key` among accepted members) -- no new event-identity
+concept was invented.
+
+**Decision: three separate append-only registries (cohort/
+methodology/benchmark) plus one immutable snapshot table with
+relational child tables for membership/exclusions.** A cohort owns
+comparability/eligibility dimensions (originator, target, horizon
+label, protocol+version, evaluation mode, issue window, duplicate
+policy); a methodology owns HOW a pinned cohort is calculated
+(optional benchmark pin, missing-data policy, `algorithm_version`);
+a benchmark is one of three closed kinds -- `AUTHENTICATED_SERIES`
+(reuses another real cohort's own evaluations, paired by shared
+`outcome_key`), `NAIVE_CATEGORICAL`, or `NAIVE_NUMERIC` (both a fixed,
+declared value with its own evidence) -- never a fabricated
+comparison; `BENCHMARK_UNAVAILABLE` is a first-class, expected
+result. A dynamically-computed "no-change" numeric benchmark was
+considered and rejected -- no established historical-input pipeline
+exists for it yet.
+
+**Decision: population building fetches unbounded by PIT, then
+applies `as_of` itself.** Mirrors `latest_outcome_vintage`'s own
+"administrative, unbounded; caller applies its own PIT check"
+convention, specifically so a too-new evaluation is classified
+`NOT_YET_AVAILABLE` in the audit trail rather than silently never
+being fetched. Duplicate/overlap forecasts for the same target event
+are resolved to the earliest qualifying issue (the one implemented
+policy; a fixed-lead-time policy is deliberately deferred).
+
+**Decision: sample-adequacy classification is fixed and hardcoded**
+(`INSUFFICIENT_DATA` below 5 accepted members; `DESCRIPTIVE_ONLY` for
+research mode regardless of size, or 5-19 production members;
+`COMPARABLE_SAMPLE` for 20-29; `INFERENCE_SUPPORTED` for 30+
+production members) -- never a configurable methodology parameter
+that could be tuned to flatter a result. Changing these numbers
+requires a new `algorithm_version`.
+
+**Decision: full-history determinism mirrors `EvaluateStructured
+Forecast`'s own basis/payload split exactly** -- basis = cohort/
+methodology identity + evaluation mode + knowledge cutoff + algorithm
+version; payload = the snapshot's own COMPLETE evidence basis (exact
+membership, exact exclusions, whichever summary shape applies, the
+benchmark comparison, full sample diagnostics), never only a headline
+metric.
+
+**One purely additive port extension**: `ForecastEvaluationRepository.
+list_latest_evaluations_for_protocol` -- the only place this story
+touches an existing FX-65 contract, adding a new read method without
+changing any existing method's behavior.
+
+**Regression.** 62 new tests (13 domain, 21 synthetic-fixture
+pipeline, 13 Define*-use-case, 8 snapshot-determinism, 7 real-
+Postgres integration), plus 38 pre-existing architecture-boundary
+contract tests auto-parametrized over the new files (all passing).
+Full suite: 3244 passed (up from 3144). `ruff`/`ruff format`/`mypy`/
+`pre-commit` all clean. The real pilot (`scripts/demonstrate_forecast_
+performance_pilot.py`) against the one real BoC evaluation correctly
+reports `INSUFFICIENT_DATA`, reproduces the already-known MAE/RMSE of
+0.50 percentage points, reports `BENCHMARK_UNAVAILABLE` honestly, and
+is fully idempotent across repeated real-database runs. All FX-62
+through FX-65H.3 real-data counts are unchanged; the new tables hold
+exactly 1 cohort, 1 methodology, 0 benchmarks, 1 snapshot, 1 member, 0
+exclusions.
+
+**Explicitly confirmed NOT done**: no composite source-reputation
+score; no source ranking, automatic weighting, or source selection
+for trading; no Decision/Risk Engine changes; no new forecast or
+outcome adapters; no change to any existing FX-62/64/65 historical
+table or semantics.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-66 entry; `docs/adr/0014-
+historical-forecast-performance.md` is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

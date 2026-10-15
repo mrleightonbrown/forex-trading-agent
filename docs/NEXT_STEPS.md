@@ -7180,3 +7180,44 @@ addendum is the complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-66 or FX-67.
+
+## FX-66 -- historical forecast performance & statistical evidence (complete)
+
+Measures performance over MULTIPLE FX-65 evaluations under an
+explicit, versioned methodology -- never infers skill merely from
+accumulated correct predictions, and introduces NO composite source-
+reputation score (FX-67, still unauthorized).
+
+Three new append-only registries -- `forecast_performance_cohorts`
+(which population is comparable: originator, target, horizon label,
+protocol+version, evaluation mode, issue window, duplicate policy),
+`_methodologies` (how it's calculated: optional benchmark pin,
+missing-data policy, algorithm version), `_benchmarks` (what it's
+compared against -- `AUTHENTICATED_SERIES` reusing another real
+cohort's own evaluations paired by shared `outcome_key`, `NAIVE_
+CATEGORICAL`, or `NAIVE_NUMERIC`, all explicit and never fabricated)
+-- plus an immutable `forecast_performance_snapshots` table with
+proper relational child tables for membership/exclusions (migration
+`0db892e6639a`). `BuildForecastPerformancePopulationAsOf` fetches
+candidates unbounded by PIT and applies `as_of` itself, so a too-new
+evaluation is auditable as `NOT_YET_AVAILABLE` rather than silently
+dropped; duplicates for the same target event (FX-65H.2's own durable
+`outcome_key`) resolve to the earliest qualifying issue. Sample
+adequacy (`INSUFFICIENT_DATA`/`DESCRIPTIVE_ONLY`/`COMPARABLE_SAMPLE`/
+`INFERENCE_SUPPORTED`) is a fixed, documented classification, never a
+tunable parameter. `RecordForecastPerformanceSnapshot` mirrors
+`EvaluateStructuredForecast`'s own full-history determinism exactly.
+
+62 new tests (plus 38 pre-existing architecture-boundary contract
+tests auto-covering the new files, all passing). Full suite: 3244
+passed. `ruff`/`ruff format`/`mypy`/`pre-commit` all clean. The real
+pilot demonstration against the one real BoC evaluation correctly
+reports `INSUFFICIENT_DATA`, reproduces the already-known MAE/RMSE of
+0.50 percentage points, reports `BENCHMARK_UNAVAILABLE` honestly, and
+is fully idempotent.
+
+Full details in `docs/DECISIONS.md`'s FX-66 entry; `docs/adr/0014-
+historical-forecast-performance.md` is the complete decision record.
+
+**Per this story's own explicit stop instruction**: do not begin
+FX-67.

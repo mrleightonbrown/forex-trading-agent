@@ -86,3 +86,19 @@ class FakeForecastEvaluationRepository:
             if v.availability.value <= research_as_of.value
         ]
         return max(eligible, key=_sort_key) if eligible else None
+
+    async def list_latest_evaluations_for_protocol(
+        self, protocol_key: str, evaluation_mode: ForecastProvenanceMode
+    ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        latest_by_key: dict[str, StructuredForecastEvaluationVintage] = {}
+        for vintages in self.vintages.values():
+            matching = [
+                v
+                for v in vintages
+                if v.protocol_key == protocol_key and v.evaluation_mode is evaluation_mode
+            ]
+            if not matching:
+                continue
+            latest = max(matching, key=_sort_key)
+            latest_by_key[latest.evaluation_key] = latest
+        return tuple(latest_by_key.values())

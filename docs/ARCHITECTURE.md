@@ -3613,6 +3613,25 @@ both the Python and migration-SQL sides, closing a parity break the
 original migration's lossy `to_char(...)` formula had. See ADR 0013's
 own FX-65H.3 addendum.
 
+**FX-66 added historical forecast-performance measurement over
+multiple evaluations, strictly layered on top of FX-65's own
+individual-evaluation registry**: three new append-only registries
+(`forecast_performance_cohorts`/`_methodologies`/`_benchmarks`) define
+WHICH population is comparable, HOW it is calculated, and WHAT it is
+compared against; an immutable `forecast_performance_snapshots` table
+(with proper relational child tables for membership and exclusions)
+records one calculation. `BuildForecastPerformancePopulationAsOf`
+fetches candidates unbounded by PIT and applies an explicit `as_of`
+filter itself, so a too-new evaluation is auditable as `NOT_YET_
+AVAILABLE` rather than silently never fetched; duplicate/overlap
+forecasts for the same target event (identified by FX-65H.2's own
+durable `outcome_key`) are resolved to the earliest qualifying issue.
+Sample-adequacy classification is a fixed, documented rule, never a
+tunable methodology parameter -- performance is reported as evidence-
+readiness (`INSUFFICIENT_DATA`/`DESCRIPTIVE_ONLY`/`COMPARABLE_SAMPLE`/
+`INFERENCE_SUPPORTED`), never a skill verdict. No composite source-
+reputation score exists anywhere in this layer. See ADR 0014.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually
