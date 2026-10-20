@@ -15,6 +15,9 @@ from forex_agent.domain.forecast_performance_benchmark_definition import (
 from forex_agent.domain.forecast_performance_cohort_definition import (
     ForecastPerformanceCohortDefinition,
 )
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
+)
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_snapshot import ForecastPerformanceSnapshot
 from forex_agent.domain.forecast_provenance_mode import ForecastProvenanceMode
@@ -142,15 +145,33 @@ class FakeForecastPerformanceRepository:
         return max(eligible, key=_snapshot_sort_key) if eligible else None
 
     async def list_distinct_snapshot_keys(
-        self, *, cohort_key: str | None, limit: int, after_key: str | None
+        self,
+        *,
+        mode: ForecastPerformanceInspectionMode,
+        as_of: UtcTimestamp,
+        cohort_key: str | None,
+        limit: int,
+        after_key: str | None,
     ) -> tuple[str, ...]:
+        # FX-67H (F67-01): a key qualifies iff AT LEAST ONE of its own
+        # vintages satisfies the row-level filter -- never merely the
+        # overall-latest vintage -- mirroring the real repository's
+        # own SQL semantics exactly (an early qualifying vintage keeps
+        # a key discoverable even if a LATER revision would not
+        # qualify on its own).
         keys: set[str] = set()
         for key, vintages in self.snapshots.items():
-            if not vintages:
-                continue
-            if cohort_key is not None and not any(v.cohort_key == cohort_key for v in vintages):
-                continue
             if after_key is not None and not (key > after_key):
                 continue
-            keys.add(key)
+            qualifies = any(
+                v.availability.value <= as_of.value
+                and (cohort_key is None or v.cohort_key == cohort_key)
+                and (
+                    mode is ForecastPerformanceInspectionMode.RETROSPECTIVE_RESEARCH
+                    or v.evaluation_mode is ForecastProvenanceMode.PRODUCTION_OBSERVED
+                )
+                for v in vintages
+            )
+            if qualifies:
+                keys.add(key)
         return tuple(sorted(keys)[:limit])

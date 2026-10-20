@@ -21,7 +21,6 @@ from forex_agent.application.use_cases.calculate_forecast_performance import (
     CalculateForecastPerformance,
 )
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     InvalidInspectionPageBoundsError,
     UnresolvedEvidenceReference,
 )
@@ -78,6 +77,9 @@ from forex_agent.domain.forecast_performance_duplicate_selection_policy import (
 )
 from forex_agent.domain.forecast_performance_exclusion_reason import (
     ForecastPerformanceExclusionReason,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_missing_data_policy import (
@@ -996,10 +998,273 @@ async def test_f_list_snapshots_pagination_boundaries() -> None:
         )
 
     list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
-    first_page = await list_snapshots(limit=2)
+    first_page = await list_snapshots(_MODE, _ts(20), limit=2)
     assert len(first_page.snapshot_keys) == 2
     assert first_page.next_cursor is not None
 
-    second_page = await list_snapshots(limit=2, after_key=first_page.next_cursor)
+    second_page = await list_snapshots(_MODE, _ts(20), limit=2, after_key=first_page.next_cursor)
     assert len(second_page.snapshot_keys) == 1
     assert second_page.next_cursor is None
+
+
+# --- FX-67H (F67-01): PIT-safe snapshot discovery ---------------------------
+
+_PRODUCTION_MODE = ForecastPerformanceInspectionMode.PRODUCTION
+
+
+async def _record_snapshot(
+    repos: _Repos,
+    *,
+    cohort_key: str,
+    snapshot_key: str,
+    availability: UtcTimestamp,
+    evaluation_mode: ForecastProvenanceMode = ForecastProvenanceMode.RETROSPECTIVE_RESEARCH,
+) -> None:
+    cohort = _cohort(cohort_key=cohort_key, evaluation_mode=evaluation_mode)
+    members = (_population_member(f"eval-{snapshot_key}", f"outcome-{snapshot_key}"),)
+    population = _population(cohort=cohort, members=members)
+    repos.seed_population(population)
+    snapshot = repos.consistent_snapshot(
+        population,
+        snapshot_key=snapshot_key,
+        methodology_key=f"{snapshot_key}-methodology",
+        availability=availability,
+    )
+    await repos.record(
+        snapshot,
+        cohort,
+        _methodology(methodology_key=f"{snapshot_key}-methodology", cohort_key=cohort_key),
+    )
+
+
+async def test_h1_production_snapshot_available_before_cutoff_is_included() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos,
+        cohort_key="prod-cohort",
+        snapshot_key="prod-snapshot",
+        availability=_ts(10),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_PRODUCTION_MODE, _ts(20), limit=10)
+    assert "prod-snapshot" in page.snapshot_keys
+
+
+async def test_h1_production_snapshot_first_recorded_after_cutoff_is_excluded() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos,
+        cohort_key="prod-cohort",
+        snapshot_key="prod-snapshot",
+        availability=_ts(14),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_PRODUCTION_MODE, _ts(10), limit=10)
+    assert "prod-snapshot" not in page.snapshot_keys
+
+
+async def test_h1_research_only_snapshot_excluded_from_production_listing() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos, cohort_key="research-cohort", snapshot_key="research-snapshot", availability=_ts(10)
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_PRODUCTION_MODE, _ts(20), limit=10)
+    assert "research-snapshot" not in page.snapshot_keys
+
+
+async def test_h1_research_snapshot_included_in_research_listing_when_available() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos, cohort_key="research-cohort", snapshot_key="research-snapshot", availability=_ts(10)
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_MODE, _ts(20), limit=10)
+    assert "research-snapshot" in page.snapshot_keys
+
+
+async def test_h1_snapshot_invisible_before_first_recording() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(repos, cohort_key="c", snapshot_key="s", availability=_ts(14))
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_MODE, _ts(10), limit=10)
+    assert "s" not in page.snapshot_keys
+
+
+async def test_h1_snapshot_visible_exactly_at_recording_availability() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(repos, cohort_key="c", snapshot_key="s", availability=_ts(14))
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_MODE, _ts(14), limit=10)
+    assert "s" in page.snapshot_keys
+
+
+async def test_h1_earlier_visible_vintage_remains_discoverable_after_future_revision() -> None:
+    """The CORE F67-01 fix: a snapshot's revision 0 is visible by
+    `_ts(14)`; appending a revision 1 available only on day 2 must NOT
+    make the key disappear from a historical query at `_ts(20)` --
+    visibility is determined by existence of at least one qualifying
+    vintage, never merely the overall-latest one."""
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    cohort = _cohort(cohort_key="c")
+    members = (_population_member("eval-s", "outcome-s"),)
+    population = _population(cohort=cohort, members=members)
+    repos.seed_population(population)
+    revision_0 = repos.consistent_snapshot(
+        population, snapshot_key="s", methodology_key="s-methodology", availability=_ts(14)
+    )
+    await repos.record(
+        revision_0, cohort, _methodology(methodology_key="s-methodology", cohort_key="c")
+    )
+
+    revision_1 = repos.consistent_snapshot(
+        population,
+        snapshot_key="s",
+        methodology_key="s-methodology",
+        availability=_ts(6, day=2),
+        revision_sequence=1,
+    )
+    await repos.performance.add_snapshot_vintage(revision_1)
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_MODE, _ts(20), limit=10)
+    assert "s" in page.snapshot_keys
+
+
+async def test_h1_new_future_snapshot_does_not_alter_historical_discovery_results() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(repos, cohort_key="c1", snapshot_key="s1", availability=_ts(14))
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    before = await list_snapshots(_MODE, _ts(20), limit=10)
+
+    await _record_snapshot(
+        repos, cohort_key="c2", snapshot_key="s2-future", availability=_ts(6, day=2)
+    )
+
+    after = await list_snapshots(_MODE, _ts(20), limit=10)
+    assert before.snapshot_keys == after.snapshot_keys
+
+
+async def test_h1_multiple_snapshot_keys_with_mixed_modes_and_dates() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos,
+        cohort_key="prod-cohort",
+        snapshot_key="prod-snapshot",
+        availability=_ts(10),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+    await _record_snapshot(
+        repos, cohort_key="research-cohort", snapshot_key="research-snapshot", availability=_ts(16)
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+
+    prod_page = await list_snapshots(_PRODUCTION_MODE, _ts(20), limit=10)
+    assert "prod-snapshot" in prod_page.snapshot_keys
+    assert "research-snapshot" not in prod_page.snapshot_keys
+
+    research_page = await list_snapshots(_MODE, _ts(20), limit=10)
+    assert "prod-snapshot" in research_page.snapshot_keys
+    assert "research-snapshot" in research_page.snapshot_keys
+
+    early_research_page = await list_snapshots(_MODE, _ts(12), limit=10)
+    assert "prod-snapshot" in early_research_page.snapshot_keys
+    assert "research-snapshot" not in early_research_page.snapshot_keys
+
+
+async def test_h1_disallowed_records_do_not_consume_page_capacity() -> None:
+    """If filtering happened AFTER `LIMIT` rather than before, the
+    disallowed 'a-snapshot' (lexicographically first, but only
+    available in the future) would wrongly consume one slot of a
+    2-row page, leaving only 1 real result instead of 2."""
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos, cohort_key="cohort-a", snapshot_key="a-snapshot", availability=_ts(6, day=2)
+    )
+    await _record_snapshot(
+        repos, cohort_key="cohort-b", snapshot_key="b-snapshot", availability=_ts(14)
+    )
+    await _record_snapshot(
+        repos, cohort_key="cohort-c", snapshot_key="c-snapshot", availability=_ts(14)
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_MODE, _ts(20), limit=2)
+
+    assert page.snapshot_keys == ("b-snapshot", "c-snapshot")
+
+
+async def test_h1_cohort_filter_combines_with_mode_and_pit_filters() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(
+        repos,
+        cohort_key="cohort-x",
+        snapshot_key="x-snapshot",
+        availability=_ts(14),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+    await _record_snapshot(
+        repos,
+        cohort_key="cohort-y",
+        snapshot_key="y-snapshot",
+        availability=_ts(14),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_PRODUCTION_MODE, _ts(20), cohort_key="cohort-x", limit=10)
+
+    assert page.snapshot_keys == ("x-snapshot",)
+
+
+async def test_h1_empty_page_when_nothing_qualifies() -> None:
+    repos = _Repos()
+    await repos.register_identity(_PUBLISHER, "Test Publisher Org")
+    await _record_snapshot(repos, cohort_key="c", snapshot_key="s", availability=_ts(14))
+
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    page = await list_snapshots(_PRODUCTION_MODE, _ts(20), limit=10)
+
+    assert page.snapshot_keys == ()
+    assert page.next_cursor is None
+
+
+async def test_h1_invalid_limit_rejected() -> None:
+    repos = _Repos()
+    list_snapshots = ListForecastPerformanceSnapshots(repos.performance)
+    with pytest.raises(InvalidInspectionPageBoundsError):
+        await list_snapshots(_MODE, _ts(20), limit=0)
+    with pytest.raises(InvalidInspectionPageBoundsError):
+        await list_snapshots(_MODE, _ts(20), limit=-1)
+
+
+def test_h1_list_snapshots_requires_explicit_mode_and_as_of() -> None:
+    """Section 2's own "no implicit mode or implicit current-time
+    fallback" rule, enforced structurally: `mode`/`as_of` are
+    positional-or-keyword with NO default anywhere in the signature."""
+    import inspect
+
+    params = inspect.signature(ListForecastPerformanceSnapshots.__call__).parameters
+    assert params["mode"].default is inspect.Parameter.empty
+    assert params["as_of"].default is inspect.Parameter.empty

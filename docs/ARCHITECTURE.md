@@ -3705,6 +3705,20 @@ use cases now call mid-transaction (`list_protocol_versions`,
 identity-read methods) still committed, reintroducing the exact bug
 class F66-06 fixed -- all now corrected. See ADR 0015.
 
+**FX-67H closed F67-01, corrective-only.** `ListForecastPerformanceSnapshots`
+(the one method that discovers snapshot keys without an already-known
+key) now requires an explicit `ForecastPerformanceInspectionMode`/
+`as_of` -- no default -- and applies the SAME mode/availability filter
+every other FX-67 read already does, as a row-level `WHERE` clause
+evaluated BEFORE `DISTINCT`/ordering/`LIMIT`, so a disallowed key can
+never consume a page's own limit budget, and visibility is determined
+by existence of at least one qualifying vintage rather than merely the
+overall-latest one. `ForecastPerformanceInspectionMode` itself moved
+from an application use-case module to `domain.forecast_performance_
+inspection_mode` (mirroring `ForecastProvenanceMode`'s own placement),
+since the repository port needed it directly. No schema migration.
+See ADR 0015's own FX-67H addendum.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

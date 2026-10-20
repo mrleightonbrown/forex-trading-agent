@@ -19,6 +19,9 @@ from forex_agent.domain.forecast_performance_benchmark_definition import (
 from forex_agent.domain.forecast_performance_cohort_definition import (
     ForecastPerformanceCohortDefinition,
 )
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
+)
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_snapshot import ForecastPerformanceSnapshot
 from forex_agent.domain.timestamps import UtcTimestamp
@@ -131,15 +134,39 @@ class ForecastPerformanceRepository(Protocol):
         ...
 
     async def list_distinct_snapshot_keys(
-        self, *, cohort_key: str | None, limit: int, after_key: str | None
+        self,
+        *,
+        mode: ForecastPerformanceInspectionMode,
+        as_of: UtcTimestamp,
+        cohort_key: str | None,
+        limit: int,
+        after_key: str | None,
     ) -> tuple[str, ...]:
-        """FX-67: the ONE new read method this story adds -- every
-        OTHER snapshot read above requires an already-known `snapshot_
-        key`, with no way to discover which keys exist at all. Returns
-        up to `limit` DISTINCT `snapshot_key`s (across every vintage/
-        revision), ordered lexicographically, optionally restricted to
-        one `cohort_key`, strictly greater than `after_key` (the
-        previous page's own last key -- a deterministic, unique cursor,
-        never a nonunique timestamp). Read-only; never commits an
-        unrelated pending write on a shared session."""
+        """FX-67H (F67-01) correction: every OTHER snapshot read above
+        requires an already-known `snapshot_key`, with no way to
+        discover which keys exist at all -- this is that discovery
+        method, but it must honor the SAME historical-visibility
+        contract every other snapshot read already does. `mode`/
+        `as_of` are REQUIRED, mirroring `ForecastPerformanceInspection
+        Mode`'s own "no default anywhere" rule: there is no implicit
+        current-time or implicit-mode fallback.
+
+        A `snapshot_key` is included iff AT LEAST ONE of its stored
+        vintages satisfies the SAME row-level filter `latest_
+        production_observed_snapshot_as_of`/`latest_snapshot_as_of_
+        for_research` already apply (`PRODUCTION`: `evaluation_mode ==
+        PRODUCTION_OBSERVED AND availability <= as_of`; `RETROSPECTIVE_
+        RESEARCH`: `availability <= as_of`, either mode) -- determined
+        by applying that filter BEFORE `DISTINCT`, so a key with an
+        early QUALIFYING vintage remains discoverable even if its own
+        OVERALL-LATEST vintage would not qualify (a later revision must
+        never make an earlier-visible snapshot disappear). Returns up
+        to `limit` DISTINCT, qualifying `snapshot_key`s, ordered
+        lexicographically, optionally restricted to one `cohort_key`,
+        strictly greater than `after_key` (the previous page's own
+        last key -- a deterministic, unique cursor, never a nonunique
+        timestamp). The mode/availability filter is applied at the
+        database level, before `DISTINCT`/ordering/pagination/`LIMIT`,
+        so a disallowed row can never consume page capacity. Read-only;
+        never commits an unrelated pending write on a shared session."""
         ...

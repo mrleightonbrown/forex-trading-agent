@@ -25,7 +25,6 @@ from forex_agent.application.ports.structured_forecast_repository import (
     StructuredForecastRepository,
 )
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     UnresolvedEvidenceReference,
     require_valid_limit,
     resolve_snapshot_for_inspection,
@@ -33,6 +32,9 @@ from forex_agent.application.use_cases.forecast_performance_inspection_support i
 from forex_agent.application.use_cases.get_forecast_evaluation_inspection import (
     ForecastEvaluationInspection,
     GetForecastEvaluationInspection,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
 

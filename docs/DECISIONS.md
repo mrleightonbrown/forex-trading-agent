@@ -17020,3 +17020,55 @@ record.
 
 **Per this story's own explicit instruction**: do not begin a new epic
 automatically.
+
+## 2026-10-20 — FX-67H: PIT-safe snapshot discovery
+
+**Decision: corrective-only, `fx67_v1` preserved, starting commit
+`d685927`, no schema migration.** Closed F67-01.
+
+`ListForecastPerformanceSnapshots`'s own `list_distinct_snapshot_keys`
+accepted only `cohort_key`/`limit`/`after_key` -- no `as_of`, no mode
+-- so it could reveal snapshots not yet available, or belonging
+exclusively to the wrong mode, under a query that every OTHER FX-67
+inspection entry point would correctly have refused. Fixed by adding
+`mode: ForecastPerformanceInspectionMode` and `as_of: UtcTimestamp` as
+REQUIRED parameters on the port, the real SQLAlchemy implementation,
+and the fake, with no default anywhere.
+
+The mode/availability filter is now applied as a row-level `WHERE`
+clause BEFORE `DISTINCT`, ordering, and `LIMIT` -- `PRODUCTION`:
+`evaluation_mode = 'PRODUCTION_OBSERVED' AND availability <= as_of`;
+`RETROSPECTIVE_RESEARCH`: `availability <= as_of` (either mode). This
+makes "visibility is determined by existence of at least one
+qualifying vintage, never merely the overall-latest one" true by
+construction, and guarantees a disallowed key can never consume a
+page's own limit budget.
+
+**Architectural correction made along the way**: `ForecastPerformance
+InspectionMode` moved from `application.use_cases.forecast_performance_
+inspection_support` to `domain.forecast_performance_inspection_mode`
+(mirroring `ForecastProvenanceMode`'s own placement) -- the repository
+port needed the type directly, and a port importing from an
+application use-case module would be a backwards layering dependency.
+All 9 existing call sites updated; no backward-compatibility
+re-export.
+
+**Regression.** 17 new/changed tests (14 unit, 1 real-Postgres mixed-
+mode/mixed-availability). Full suite: 3359 passed (up from 3342).
+`ruff`/`ruff format`/`mypy` (721 files)/`pre-commit` all clean. Real
+BoC pilot re-verified unchanged: still `INSUFFICIENT_DATA`, MAE/RMSE
+still 0.50 percentage points. Real-data table counts unchanged, no
+leaked test data.
+
+**Explicitly confirmed NOT done**: no change to exact-version
+evaluation inspection, member/exclusion drill-down, source identity/
+attribution resolution, snapshot metrics/diagnostics, benchmark
+comparisons, evidence limitations, administrative revision inspection,
+or FX-64/65/66 historical semantics.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-67H entry; `docs/adr/0015-
+forecast-performance-evidence-inspection.md`'s own FX-67H addendum is
+the complete decision record.
+
+**Per this story's own explicit instruction**: do not begin another
+epic or introduce trading integration.

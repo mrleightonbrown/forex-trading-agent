@@ -20,9 +20,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from forex_agent.application.use_cases.build_forecast_performance_population_as_of import (
     BuildForecastPerformancePopulationAsOf,
 )
-from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
-)
 from forex_agent.application.use_cases.get_forecast_performance_benchmark_inspection import (
     GetForecastPerformanceBenchmarkInspection,
 )
@@ -46,6 +43,9 @@ from forex_agent.apps.cli.forecast_performance_inspection_report import (
 )
 from forex_agent.apps.cli.forecast_performance_inspection_view import (
     build_forecast_performance_inspection_view,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
 from forex_agent.infrastructure.db.forecast_evaluation_repository import (

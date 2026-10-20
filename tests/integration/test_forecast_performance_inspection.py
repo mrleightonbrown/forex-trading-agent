@@ -38,9 +38,6 @@ from forex_agent.application.use_cases.define_forecast_performance_cohort import
 from forex_agent.application.use_cases.evaluate_structured_forecast import (
     EvaluateStructuredForecast,
 )
-from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
-)
 from forex_agent.application.use_cases.get_forecast_evaluation_inspection import (
     ForecastEvaluationInspection,
 )
@@ -91,6 +88,9 @@ from forex_agent.domain.forecast_performance_cohort_definition import (
 )
 from forex_agent.domain.forecast_performance_duplicate_selection_policy import (
     ForecastPerformanceDuplicateSelectionPolicy,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_missing_data_policy import (
@@ -604,7 +604,7 @@ async def test_read_only_inspection_lookups_do_not_commit_unrelated_pending_writ
     await GetForecastPerformanceInspection(performance_repo, evaluation_repo, registry_repo)(
         snapshot_key, _MODE, _ts(20)
     )
-    await ListForecastPerformanceSnapshots(performance_repo)(limit=50)
+    await ListForecastPerformanceSnapshots(performance_repo)(_MODE, _ts(20), limit=50)
 
     other_session_factory = async_sessionmaker(bind=get_engine(), expire_on_commit=False)
     async with other_session_factory() as other_session:
@@ -620,6 +620,137 @@ async def test_list_snapshots_distinct_keys_real_postgres(session: AsyncSession)
     performance_repo = SqlAlchemyForecastPerformanceRepository(session)
 
     list_snapshots = ListForecastPerformanceSnapshots(performance_repo)
-    page = await list_snapshots(cohort_key=f"{TEST_COHORT_PREFIX}1", limit=50)
+    page = await list_snapshots(_MODE, _ts(20), cohort_key=f"{TEST_COHORT_PREFIX}1", limit=50)
 
     assert snapshot_key in page.snapshot_keys
+
+
+async def test_mixed_mode_mixed_availability_discovery_real_postgres(
+    session: AsyncSession,
+) -> None:
+    """FX-67H Section 4: mixed-mode, mixed-availability discovery
+    using independently persisted records against real Postgres --
+    one RETROSPECTIVE_RESEARCH snapshot and one PRODUCTION_OBSERVED
+    snapshot, built through the SAME production use cases, must each
+    appear only where the historical-visibility contract permits."""
+    research_snapshot_key, _, _ = await _build_pipeline(session)
+
+    outcome_repo = SqlAlchemyForecastOutcomeRepository(session)
+    evaluation_repo = SqlAlchemyForecastEvaluationRepository(session)
+    forecast_repo = SqlAlchemyStructuredForecastRepository(session)
+    performance_repo = SqlAlchemyForecastPerformanceRepository(session)
+
+    # A production evaluation requires BOTH its forecast AND its
+    # outcome to themselves be captured as PRODUCTION_OBSERVED
+    # (FX-65H's own H3 rule) -- a genuinely NEW, independent claim and
+    # outcome, never a promotion of the research-mode evidence above.
+    production_claim_key = f"{TEST_CLAIM_PREFIX}2"
+    production_outcome_key = f"{TEST_OUTCOME_PREFIX}2"
+    production_forecast_result = await RecordStructuredForecast(forecast_repo)(
+        _forecast_candidate(
+            claim_key=production_claim_key,
+            policy_meeting_identifier="FX67-TEST-MEETING-2",
+            provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        ),
+        registered_at=_ts(1),
+    )
+    assert production_forecast_result.vintage is not None
+    await RecordForecastOutcome(outcome_repo)(
+        _outcome_candidate(
+            outcome_key=production_outcome_key,
+            policy_meeting_identifier="FX67-TEST-MEETING-2",
+            provenance_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        )
+    )
+
+    production_evaluation_key = f"{TEST_EVALUATION_PREFIX}2"
+    eval_result = await EvaluateStructuredForecast(evaluation_repo, outcome_repo)(
+        evaluation_key=production_evaluation_key,
+        forecast_vintage=production_forecast_result.vintage,
+        forecast_authentication_review=_review(),
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        protocol=_protocol(),
+        outcome_key=production_outcome_key,
+        algorithm_version="fx65_v1",
+        availability=_ts(13),
+    )
+    assert eval_result.vintage is not None
+
+    production_cohort = _cohort(
+        cohort_key=f"{TEST_COHORT_PREFIX}2",
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+    )
+    await DefineForecastPerformanceCohort(performance_repo)(production_cohort)
+    production_methodology = ForecastPerformanceMethodology(
+        methodology_key=f"{production_cohort.cohort_key}-methodology",
+        version_sequence=0,
+        cohort_key=production_cohort.cohort_key,
+        cohort_version_sequence=0,
+        missing_data_policy=ForecastPerformanceMissingDataPolicy.EXCLUDE_FROM_DENOMINATOR,
+        algorithm_version="fx66_v1",
+        availability=_ts(9),
+        rationale="FX-67H synthetic production methodology",
+    )
+    await performance_repo.add_methodology_version(production_methodology)
+
+    build_population = BuildForecastPerformancePopulationAsOf(
+        evaluation_repo, forecast_repo, outcome_repo
+    )
+    production_population = await build_population(production_cohort, _ts(20))
+    assert len(production_population.accepted) == 1
+
+    numeric, categorical, comparison = CalculateForecastPerformance()(production_population)
+    diagnostics = AssessForecastPerformanceEvidence()(
+        production_population, benchmark_paired_count=comparison.paired_count
+    )
+    members = tuple(
+        ForecastPerformanceSnapshotMember(
+            evaluation_key=m.evaluation.evaluation_key,
+            evaluation_revision_sequence=m.evaluation.revision_sequence,
+            forecast_claim_key=m.evaluation.forecast_claim_key,
+            forecast_revision_sequence=m.evaluation.forecast_revision_sequence,
+            outcome_key=m.evaluation.outcome_key,
+            outcome_revision_sequence=m.evaluation.outcome_revision_sequence,
+        )
+        for m in production_population.accepted
+    )
+    production_snapshot_key = f"{TEST_SNAPSHOT_PREFIX}2"
+    production_snapshot = ForecastPerformanceSnapshot(
+        snapshot_key=production_snapshot_key,
+        revision_sequence=0,
+        methodology_key=production_methodology.methodology_key,
+        methodology_version_sequence=0,
+        cohort_key=production_cohort.cohort_key,
+        cohort_version_sequence=0,
+        evaluation_mode=ForecastProvenanceMode.PRODUCTION_OBSERVED,
+        members=members,
+        exclusions=production_population.exclusions,
+        benchmark_comparison=comparison,
+        diagnostics=diagnostics,
+        knowledge_cutoff=_ts(20),
+        availability=_ts(21),
+        algorithm_version="fx66_v1",
+        numeric_summary=numeric,
+        categorical_summary=categorical,
+    )
+    result = await RecordForecastPerformanceSnapshot(performance_repo)(
+        production_snapshot, population=production_population, methodology=production_methodology
+    )
+    assert result.outcome.value == "CREATED"
+
+    list_snapshots = ListForecastPerformanceSnapshots(performance_repo)
+
+    production_page = await list_snapshots(
+        ForecastPerformanceInspectionMode.PRODUCTION, _ts(1, day=2), limit=50
+    )
+    assert production_snapshot_key in production_page.snapshot_keys
+    assert research_snapshot_key not in production_page.snapshot_keys
+
+    research_page = await list_snapshots(_MODE, _ts(1, day=2), limit=50)
+    assert production_snapshot_key in research_page.snapshot_keys
+    assert research_snapshot_key in research_page.snapshot_keys
+
+    early_production_page = await list_snapshots(
+        ForecastPerformanceInspectionMode.PRODUCTION, _ts(16), limit=50
+    )
+    assert production_snapshot_key not in early_production_page.snapshot_keys

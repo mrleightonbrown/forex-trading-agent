@@ -15,7 +15,6 @@ from forex_agent.application.ports.forecast_performance_repository import (
     ForecastPerformanceRepository,
 )
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     find_exact_version,
     resolve_snapshot_for_inspection,
 )
@@ -27,6 +26,9 @@ from forex_agent.domain.forecast_performance_benchmark_comparison_status import 
 )
 from forex_agent.domain.forecast_performance_benchmark_definition import (
     ForecastPerformanceBenchmarkDefinition,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.forecast_target_definition import ForecastTargetDefinition
 from forex_agent.domain.forecast_target_registry import target_by_key

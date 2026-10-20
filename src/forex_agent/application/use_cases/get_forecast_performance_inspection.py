@@ -28,7 +28,6 @@ from forex_agent.application.ports.forecast_performance_repository import (
 )
 from forex_agent.application.ports.source_registry_repository import SourceRegistryRepository
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     find_exact_version,
     resolve_snapshot_for_inspection,
 )
@@ -44,6 +43,9 @@ from forex_agent.domain.forecast_attribution import ForecastAttribution
 from forex_agent.domain.forecast_evaluation_protocol import ForecastEvaluationProtocol
 from forex_agent.domain.forecast_performance_cohort_definition import (
     ForecastPerformanceCohortDefinition,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_snapshot import ForecastPerformanceSnapshot

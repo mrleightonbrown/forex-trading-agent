@@ -323,3 +323,117 @@ Commits: starting `32fcb35` (FX-66H.1) -> resulting FX-67 commit (see
 
 **Per this story's own explicit stop instruction**: do not begin a new
 epic automatically.
+
+## Addendum: FX-67H (PIT-Safe Snapshot Discovery)
+
+Corrective-only hardening on top of the FX-67 commit above (starting
+commit `d685927`), closing F67-01. `fx67_v1` is preserved; no schema
+migration was needed.
+
+**F67-01 -- root cause.** `ListForecastPerformanceSnapshots`'s own
+`list_distinct_snapshot_keys` accepted only `cohort_key`/`limit`/
+`after_key` -- no `as_of`, no mode. Every OTHER FX-67 inspection entry
+point enforces the historical-visibility contract (a snapshot recorded
+after `as_of` is invisible; `PRODUCTION` sees only `PRODUCTION_
+OBSERVED` vintages available by `as_of`); this ONE method, the only
+way to DISCOVER a `snapshot_key` without already knowing it, enforced
+neither. Fixed by adding `mode: ForecastPerformanceInspectionMode` and
+`as_of: UtcTimestamp` as REQUIRED keyword parameters on both the port
+and the real/fake implementations -- no default, mirroring `Forecast
+PerformanceInspectionMode`'s own "unmissable at every call site" rule
+exactly.
+
+**Architectural correction made along the way**: `ForecastPerformance
+InspectionMode` itself moved from `application.use_cases.forecast_
+performance_inspection_support` to `domain.forecast_performance_
+inspection_mode` (mirroring `ForecastProvenanceMode`'s own placement).
+The repository PORT needed this type for its own new parameter, and a
+port importing a type from an application USE CASE module would be a
+backwards layering dependency (`apps -> application -> domain`, never
+the reverse within `application` itself). Every one of the 9 call
+sites that previously imported it from the support module now imports
+it directly from `domain`; the support module no longer re-exports it
+(no backward-compatibility shim -- a clean, one-time relocation within
+the SAME change that introduced the new dependency).
+
+**Exact SQL selection and visibility rules.** The mode/availability
+filter is applied as a ROW-level `WHERE` clause, evaluated BEFORE
+`.distinct()`, ordering, and `.limit()`:
+
+- `PRODUCTION`: `evaluation_mode = 'PRODUCTION_OBSERVED' AND
+  availability <= as_of`.
+- `RETROSPECTIVE_RESEARCH`: `availability <= as_of` (either mode,
+  matching `latest_snapshot_as_of_for_research`'s own existing
+  semantics exactly).
+
+Applying this filter at the row level, before `DISTINCT`, is what
+makes "visibility determined by existence of at least one qualifying
+vintage, never merely the overall-latest one" true by construction: a
+`snapshot_key` with an early qualifying revision and a later non-
+qualifying (future) revision still has at least one row survive the
+`WHERE` clause, so it still reaches `DISTINCT` and the result set --
+proven directly by `test_h1_earlier_visible_vintage_remains_
+discoverable_after_future_revision`. Because the SAME `WHERE` clause
+also gates which rows are even eligible to be ordered/paginated, a
+disallowed key can never consume a page's own `LIMIT` budget --
+proven by `test_h1_disallowed_records_do_not_consume_page_capacity`
+(a lexicographically-first-but-future-only key no longer silently
+displaces a real result from a 2-row page). The fake repository's own
+`list_distinct_snapshot_keys` mirrors this exactly: a key qualifies
+iff `any()` of its own vintages satisfies the row-level filter, never
+merely its overall-latest one.
+
+**Production versus research handling**: identical to every other
+FX-67 inspection entry point's own mode dispatch -- `PRODUCTION`
+restricts to `PRODUCTION_OBSERVED` vintages; `RETROSPECTIVE_RESEARCH`
+sees either mode. Proven with a real-Postgres test building one
+genuinely independent `PRODUCTION_OBSERVED` evaluation chain
+alongside the existing `RETROSPECTIVE_RESEARCH` one (two distinct
+claims/outcomes/evaluations/cohorts/snapshots, since FX-65H's own H3
+rule requires BOTH a production evaluation's forecast AND its outcome
+to themselves be captured as `PRODUCTION_OBSERVED` -- never a
+promotion of already-captured research-mode evidence).
+
+**Historical reconstruction tests**: `test_h1_earlier_visible_vintage_
+remains_discoverable_after_future_revision` (a future revision never
+hides an already-visible key) and `test_h1_new_future_snapshot_does_
+not_alter_historical_discovery_results` (a brand-new snapshot key
+recorded after the query's own `as_of` never changes what an
+UNRELATED historical query returns).
+
+**Pagination and transaction-isolation tests**: deterministic cursor
+ordering, disallowed-records-don't-consume-capacity, cohort filter
+combined with mode/PIT filters, empty-page behavior, invalid limits
+rejected, and a structural test asserting `mode`/`as_of` carry no
+default in the use case's own call signature (Section 2's own "no
+unbounded fallback" requirement). The existing real-Postgres
+transaction-isolation test (`test_read_only_inspection_lookups_do_not_
+commit_unrelated_pending_writes`) was extended to also exercise the
+corrected `ListForecastPerformanceSnapshots` call.
+
+**Real Bank of Canada inspection rerun**: `scripts/inspect_forecast_
+performance.py` (which never called the changed method directly)
+re-verified unchanged -- still `INSUFFICIENT_DATA`, MAE/RMSE still
+0.50 percentage points, exact aggregate-consensus attribution, horizon
+limitation on every report.
+
+**Regression.** 17 new/changed tests (14 unit against fakes, 1
+real-Postgres mixed-mode/mixed-availability test, plus the existing
+transaction-isolation test extended) plus boundary-contract tests
+auto-parametrized over the new domain module. Full suite: 3359 passed
+(up from 3342). `ruff`/`ruff format`/`mypy` (721 files)/`pre-commit`
+all clean. Real-data table counts unchanged, no leaked test data, no
+schema migration.
+
+**Explicitly confirmed NOT done**: no change to exact-version
+evaluation inspection, member/exclusion drill-down, source identity/
+attribution resolution, snapshot metrics/diagnostics, benchmark
+comparisons, evidence limitations, administrative revision inspection,
+or FX-64/65/66 historical semantics; no new epic; no trading
+integration.
+
+Commits: starting `d685927` (FX-67) -> resulting FX-67H commit (see
+`docs/DECISIONS.md`'s own FX-67H entry for the exact hash).
+
+**Per this story's own explicit stop instruction**: do not begin
+another epic or introduce trading integration.

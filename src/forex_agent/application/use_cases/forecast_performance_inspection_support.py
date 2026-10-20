@@ -6,31 +6,24 @@ answered, so Production/Retrospective-research PIT dispatch (Section
 collections" rule) is implemented exactly once rather than once per
 inspection entry point.
 
-`ForecastPerformanceInspectionMode` makes the mode selection
-UNMISSABLE at every call site (Section 12's own "require an
-unmistakable mode selection" requirement) -- there is no default."""
+**FX-67H correction**: `ForecastPerformanceInspectionMode` moved to
+`domain.forecast_performance_inspection_mode` (mirroring `Forecast
+ProvenanceMode`'s own cross-cutting placement) once `list_distinct_
+snapshot_keys` needed it on the `ForecastPerformanceRepository` PORT
+itself -- a port depending on a type defined in an application USE
+CASE module would be a backwards layering dependency. Every call site
+now imports it directly from `domain`, never from here."""
 
 from dataclasses import dataclass
-from enum import Enum
 
 from forex_agent.application.ports.forecast_performance_repository import (
     ForecastPerformanceRepository,
 )
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
+)
 from forex_agent.domain.forecast_performance_snapshot import ForecastPerformanceSnapshot
 from forex_agent.domain.timestamps import UtcTimestamp
-
-
-class ForecastPerformanceInspectionMode(Enum):
-    PRODUCTION = "PRODUCTION"
-    """Only recorded `PRODUCTION_OBSERVED` snapshots -- resolved via
-    `latest_production_observed_snapshot_as_of`, mirroring FX-66's own
-    production-read boundary exactly."""
-
-    RETROSPECTIVE_RESEARCH = "RETROSPECTIVE_RESEARCH"
-    """Resolved via `latest_snapshot_as_of_for_research`, which sees
-    EITHER evaluation mode (FX-66's own existing research-read
-    semantics) -- named here to make clear this is the RESEARCH view,
-    never implicitly substituted for a production query."""
 
 
 async def resolve_snapshot_for_inspection(

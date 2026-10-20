@@ -63,6 +63,9 @@ from forex_agent.domain.forecast_performance_duplicate_selection_policy import (
 from forex_agent.domain.forecast_performance_exclusion_reason import (
     ForecastPerformanceExclusionReason,
 )
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
+)
 from forex_agent.domain.forecast_performance_methodology import ForecastPerformanceMethodology
 from forex_agent.domain.forecast_performance_missing_data_policy import (
     ForecastPerformanceMissingDataPolicy,
@@ -305,11 +308,31 @@ class SqlAlchemyForecastPerformanceRepository:
         )
 
     async def list_distinct_snapshot_keys(
-        self, *, cohort_key: str | None, limit: int, after_key: str | None
+        self,
+        *,
+        mode: ForecastPerformanceInspectionMode,
+        as_of: UtcTimestamp,
+        cohort_key: str | None,
+        limit: int,
+        after_key: str | None,
     ) -> tuple[str, ...]:
-        # FX-67: read-only -- no commit, mirroring every other pure-
-        # read method in this file (FX-66H.1's own F66-06 correction).
-        conditions: list[ColumnElement[bool]] = []
+        # FX-67H (F67-01): read-only -- no commit, mirroring every
+        # other pure-read method in this file (FX-66H.1's own F66-06
+        # correction). The mode/availability filter below is applied
+        # at the ROW level, BEFORE `.distinct()`/ordering/`.limit()`,
+        # so (a) a key with only a future or wrong-mode vintage never
+        # reaches DISTINCT at all, (b) a key with an earlier QUALIFYING
+        # vintage remains discoverable even when its own overall-
+        # latest vintage would not qualify, and (c) a disallowed row
+        # can never consume the page's own LIMIT budget.
+        conditions: list[ColumnElement[bool]] = [
+            ForecastPerformanceSnapshotRow.availability <= as_of.value
+        ]
+        if mode is ForecastPerformanceInspectionMode.PRODUCTION:
+            conditions.append(
+                ForecastPerformanceSnapshotRow.evaluation_mode
+                == ForecastProvenanceMode.PRODUCTION_OBSERVED.value
+            )
         if cohort_key is not None:
             conditions.append(ForecastPerformanceSnapshotRow.cohort_key == cohort_key)
         if after_key is not None:

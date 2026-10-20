@@ -19,12 +19,14 @@ from forex_agent.application.ports.forecast_performance_repository import (
     ForecastPerformanceRepository,
 )
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     require_valid_limit,
     resolve_snapshot_for_inspection,
 )
 from forex_agent.domain.forecast_performance_exclusion_reason import (
     ForecastPerformanceExclusionReason,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
 

@@ -19,13 +19,15 @@ from forex_agent.application.ports.forecast_performance_repository import (
     ForecastPerformanceRepository,
 )
 from forex_agent.application.use_cases.forecast_performance_inspection_support import (
-    ForecastPerformanceInspectionMode,
     find_exact_version,
     resolve_snapshot_for_inspection,
 )
 from forex_agent.application.use_cases.inspect_forecast_performance_pending_revisions import (
     ForecastPerformancePendingRevisionReport,
     InspectForecastPerformancePendingRevisions,
+)
+from forex_agent.domain.forecast_performance_inspection_mode import (
+    ForecastPerformanceInspectionMode,
 )
 from forex_agent.domain.timestamps import UtcTimestamp
 

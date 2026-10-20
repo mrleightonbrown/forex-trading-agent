@@ -3542,6 +3542,26 @@ _Last updated: 2026-09-27 (FX-54V)_
   table counts unchanged, no leaked test data, no schema migration.
   **Per this story's own explicit instruction: do not begin a new
   epic automatically.**
+- **FX-67H: PIT-safe snapshot discovery (complete)**. Corrective-only,
+  `fx67_v1` preserved, starting commit `d685927`, no schema migration.
+  Closed F67-01: `ListForecastPerformanceSnapshots` discovered every
+  snapshot key unconditionally, honoring neither historical
+  availability nor the production/research mode boundary every OTHER
+  FX-67 inspection entry point already enforced. Now requires an
+  explicit `ForecastPerformanceInspectionMode`/`as_of` with no
+  default, and applies that filter as a row-level `WHERE` clause
+  BEFORE `DISTINCT`/ordering/`LIMIT`, so a disallowed key can never
+  consume page capacity and a key with an early qualifying vintage
+  stays discoverable even after a later, non-qualifying revision is
+  appended. `ForecastPerformanceInspectionMode` moved from an
+  application use case module to `domain.forecast_performance_
+  inspection_mode` (the port needed it directly). 17 new/changed
+  tests; full suite 3359 passed (up from 3342). `ruff`/`mypy` (721
+  files)/`pre-commit` all clean. Real BoC pilot re-verified unchanged:
+  still `INSUFFICIENT_DATA`, MAE/RMSE still 0.50pp. Real-data table
+  counts unchanged, no leaked test data.
+  **Per this story's own explicit instruction: do not begin another
+  epic or introduce trading integration.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

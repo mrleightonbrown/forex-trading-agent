@@ -7339,3 +7339,30 @@ record.
 
 **Per this story's own explicit instruction**: do not begin a new
 epic automatically.
+
+## FX-67H: PIT-safe snapshot discovery (complete)
+
+Corrective-only, `fx67_v1` preserved, starting commit `d685927`, no
+schema migration. Closed F67-01: `ListForecastPerformanceSnapshots`
+discovered every snapshot key unconditionally, honoring neither
+historical availability nor the production/research mode boundary.
+Now requires explicit `ForecastPerformanceInspectionMode`/`as_of` with
+no default, applying that filter as a row-level `WHERE` clause BEFORE
+`DISTINCT`/ordering/`LIMIT` -- a disallowed key can never consume page
+capacity, and a key with an early qualifying vintage stays
+discoverable after a later, non-qualifying revision is appended.
+`ForecastPerformanceInspectionMode` moved to `domain.forecast_
+performance_inspection_mode` (the port needed it directly).
+
+17 new/changed tests; full suite 3359 passed (up from 3342).
+`ruff`/`ruff format`/`mypy` (721 files)/`pre-commit` all clean. Real
+BoC pilot re-verified unchanged: still `INSUFFICIENT_DATA`, MAE/RMSE
+still 0.50 percentage points. Real-data table counts unchanged, no
+leaked test data.
+
+Full details in `docs/DECISIONS.md`'s FX-67H entry; `docs/adr/0015-
+forecast-performance-evidence-inspection.md`'s own FX-67H addendum is
+the complete decision record.
+
+**Per this story's own explicit instruction**: do not begin another
+epic or introduce trading integration.
