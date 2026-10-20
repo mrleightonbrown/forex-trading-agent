@@ -140,3 +140,17 @@ class FakeForecastPerformanceRepository:
             if s.availability.value <= research_as_of.value
         ]
         return max(eligible, key=_snapshot_sort_key) if eligible else None
+
+    async def list_distinct_snapshot_keys(
+        self, *, cohort_key: str | None, limit: int, after_key: str | None
+    ) -> tuple[str, ...]:
+        keys: set[str] = set()
+        for key, vintages in self.snapshots.items():
+            if not vintages:
+                continue
+            if cohort_key is not None and not any(v.cohort_key == cohort_key for v in vintages):
+                continue
+            if after_key is not None and not (key > after_key):
+                continue
+            keys.add(key)
+        return tuple(sorted(keys)[:limit])

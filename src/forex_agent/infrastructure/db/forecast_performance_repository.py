@@ -304,6 +304,26 @@ class SqlAlchemyForecastPerformanceRepository:
             ]
         )
 
+    async def list_distinct_snapshot_keys(
+        self, *, cohort_key: str | None, limit: int, after_key: str | None
+    ) -> tuple[str, ...]:
+        # FX-67: read-only -- no commit, mirroring every other pure-
+        # read method in this file (FX-66H.1's own F66-06 correction).
+        conditions: list[ColumnElement[bool]] = []
+        if cohort_key is not None:
+            conditions.append(ForecastPerformanceSnapshotRow.cohort_key == cohort_key)
+        if after_key is not None:
+            conditions.append(ForecastPerformanceSnapshotRow.snapshot_key > after_key)
+        stmt = (
+            select(ForecastPerformanceSnapshotRow.snapshot_key)
+            .where(*conditions)
+            .distinct()
+            .order_by(ForecastPerformanceSnapshotRow.snapshot_key.asc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return tuple(rows)
+
     async def _select_latest_snapshot(
         self, conditions: list[ColumnElement[bool]]
     ) -> ForecastPerformanceSnapshot | None:

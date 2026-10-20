@@ -16955,3 +16955,68 @@ complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## 2026-10-19 — FX-67: forecast performance evidence inspection
+
+**Decision: read-only inspection layer, no new tables, one new
+read-only repository method.** Starting commit `32fcb35`.
+
+`list_distinct_snapshot_keys` is the only new repository method
+(`ForecastPerformanceRepository`) -- a `SELECT DISTINCT snapshot_key`
+over the existing table, needed because every other FX-66 read
+requires an already-known key.
+
+Eight read-only use cases (`GetForecastPerformanceInspection`/
+`ListForecastPerformanceSnapshots`/`GetForecastPerformanceMembers`/
+`GetForecastPerformanceExclusions`/`GetForecastEvaluationInspection`/
+`GetForecastPerformanceBenchmarkInspection`/`GetForecastPerformance
+Limitations`/`GetForecastPerformanceRevisionInspection`) resolve EXACT
+pinned evidence versions only -- never "latest" -- and require an
+explicit `ForecastPerformanceInspectionMode` (PRODUCTION/
+RETROSPECTIVE_RESEARCH) at every call site, with no default.
+`GetForecastPerformanceRevisionInspection` reuses FX-66H.1's own
+`InspectForecastPerformancePendingRevisions` completely unchanged.
+
+**Presentation**: a new `apps/cli/` surface (pure JSON/human-readable
+builders over already-fetched evidence, mirroring `apps/api/
+view_models/`'s own convention) plus `scripts/inspect_forecast_
+performance.py` -- no new web route, no new UI framework, per the
+story's own "a thin CLI is sufficient" guidance and the architect's own
+final note that exact evidence matters more than presentation.
+
+**Significant finding**: implementing this exposed that FX-66H.1's own
+F66-06 transaction-isolation fix was incomplete -- it was scoped only
+to FX-66's own new repository methods, but FX-67's new use cases call
+several PRE-EXISTING FX-62/64/65 read methods mid-transaction
+(`list_protocol_versions`, `get_claim`/`list_vintages_for_claim`,
+`latest_outcome_definition`/`list_vintages_for_outcome`, and
+`SourceRegistryRepository`'s own identity-read methods), and those
+still committed -- reintroducing the exact bug class in a sibling
+repository. All now corrected; the registry's own unrelated
+Attribution section (news-item roles) was deliberately left untouched
+since FX-67 never calls it.
+
+**Regression.** 39 new tests (32 unit against fakes, 7 real-Postgres
+integration) plus boundary-contract tests auto-parametrized over the
+new files. Full suite: 3342 passed (up from 3294). `ruff`/`ruff
+format`/`mypy` (720 files)/`pre-commit` all clean. The real BoC pilot
+inspection correctly shows `INSUFFICIENT_DATA` as a successful
+analytical result (never a failure state), exact aggregate-consensus
+attribution (the Bank of Canada survey median is never shown as the
+Bank's own forecast), and the forecast-horizon-comparability
+limitation on every single report. Real-data table counts unchanged,
+no leaked test data, no schema migration.
+
+**Explicitly confirmed NOT done**: no new forecast/outcome capture,
+provider adapters, evaluation protocols, or performance calculations;
+no recomputed snapshots or modified membership; no new statistical-
+inference methods; no forecast rankings, composite source-reputation
+scores, source weighting, or trading signals; no Decision/Risk Engine
+integration; no new web framework.
+
+Full details in `docs/NEXT_STEPS.md`'s FX-67 entry; `docs/adr/0015-
+forecast-performance-evidence-inspection.md` is the complete decision
+record.
+
+**Per this story's own explicit instruction**: do not begin a new epic
+automatically.

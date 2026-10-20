@@ -71,13 +71,16 @@ class SqlAlchemySourceRegistryRepository:
     # --- Identity -------------------------------------------------------
 
     async def get_source(self, source_key: str) -> IntelligenceSource | None:
+        # FX-67: read-only -- no commit (Section 16's own "read-only
+        # repository methods must not commit unrelated pending work"
+        # rule; this pre-existing FX-62 method is now also called
+        # mid-call by FX-67's own inspection use cases' peers).
         row = await self._select_one_source(source_key)
-        await self._session.commit()
         return None if row is None else _source_row_to_domain(row)
 
     async def list_sources(self) -> tuple[IntelligenceSource, ...]:
+        # FX-67: read-only -- see `get_source`'s own note.
         rows = (await self._session.execute(select(IntelligenceSourceRow))).scalars().all()
-        await self._session.commit()
         return tuple(_source_row_to_domain(row) for row in rows)
 
     async def register_source_with_first_identity_vintage(
@@ -145,6 +148,7 @@ class SqlAlchemySourceRegistryRepository:
     async def latest_identity_vintage_for_source(
         self, source_key: str
     ) -> SourceIdentityVintage | None:
+        # FX-67: read-only -- see `get_source`'s own note.
         stmt = (
             select(SourceIdentityVintageRow)
             .where(SourceIdentityVintageRow.source_key == source_key)
@@ -155,12 +159,14 @@ class SqlAlchemySourceRegistryRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _identity_vintage_row_to_domain(row)
 
     async def latest_identity_vintage_as_of(
         self, source_key: str, as_of: UtcTimestamp
     ) -> SourceIdentityVintage | None:
+        # FX-67: read-only -- see `get_source`'s own note. Called
+        # directly by `ResolveSourceIdentityAsOf`, now exercised
+        # mid-call by every FX-67 attribution-resolution path.
         stmt = (
             select(SourceIdentityVintageRow)
             .where(
@@ -174,17 +180,16 @@ class SqlAlchemySourceRegistryRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _identity_vintage_row_to_domain(row)
 
     async def list_identity_vintages_for_source(
         self, source_key: str
     ) -> tuple[SourceIdentityVintage, ...]:
+        # FX-67: read-only -- see `get_source`'s own note.
         stmt = select(SourceIdentityVintageRow).where(
             SourceIdentityVintageRow.source_key == source_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_identity_vintage_row_to_domain(row) for row in rows)
 
     async def add_identity_vintage(

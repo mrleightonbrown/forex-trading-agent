@@ -3511,6 +3511,37 @@ _Last updated: 2026-09-27 (FX-54V)_
   `INSUFFICIENT_DATA`, MAE unchanged at 0.50pp. Real-data table counts
   unchanged, no leaked test data.
   **Stop after FX-66H.1 — do not begin FX-67.**
+- **FX-67: forecast performance evidence inspection (complete)**.
+  Read-only inspection layer over FX-62 through FX-66H.1's own
+  already-recorded evidence -- no new table, one new read-only
+  repository method (`list_distinct_snapshot_keys`). Eight use cases
+  (`GetForecastPerformanceInspection`/`ListForecastPerformanceSnapshots`/
+  `GetForecastPerformanceMembers`/`GetForecastPerformanceExclusions`/
+  `GetForecastEvaluationInspection`/`GetForecastPerformanceBenchmark
+  Inspection`/`GetForecastPerformanceLimitations`/`GetForecastPerformance
+  RevisionInspection`) resolve EXACT pinned evidence versions (never
+  "latest"), require an explicit production/retrospective-research
+  mode with no default, and reuse FX-66H.1's own `InspectForecast
+  PerformancePendingRevisions` unchanged for the administrative
+  revision view. New `apps/cli/` presentation surface (pure JSON/
+  human-readable builders over already-fetched evidence, mirroring
+  `apps/api/view_models/`) plus `scripts/inspect_forecast_performance.py`
+  -- no new web route, no new UI framework. While implementing this,
+  found and fixed an incomplete prior transaction-isolation fix:
+  several pre-existing FX-62/64/65 read methods FX-67's own use cases
+  now call mid-transaction (`list_protocol_versions`, `get_claim`/
+  `list_vintages_for_claim`, outcome-definition/vintage reads, source-
+  identity reads) still committed, reintroducing the exact bug class
+  FX-66H.1's own F66-06 fix addressed in a sibling repository. 39 new
+  tests (plus boundary-contract tests auto-parametrized over the new
+  files); full suite 3342 passed (up from 3294). `ruff`/`mypy` (720
+  files)/`pre-commit` all clean. Real BoC pilot inspection correctly
+  shows `INSUFFICIENT_DATA` as a successful analytical result, exact
+  aggregate-consensus attribution (never the Bank's own forecast), and
+  the horizon-comparability limitation on every report. Real-data
+  table counts unchanged, no leaked test data, no schema migration.
+  **Per this story's own explicit instruction: do not begin a new
+  epic automatically.**
 - `find_gaps` (`forex_agent.domain.candle_gaps`, day-alignment fixed
   FX-26) + `DetectDataGaps` use case: reports missing expected candle
   timestamps in a stored range, now using `candle_boundary` (the same

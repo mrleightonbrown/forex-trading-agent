@@ -7300,3 +7300,42 @@ complete decision record.
 
 **Per this story's own explicit stop instruction**: do not begin
 FX-67.
+
+## FX-67: forecast performance evidence inspection (complete)
+
+Read-only inspection layer over FX-62 through FX-66H.1's own already-
+recorded evidence, starting commit `32fcb35`. No new tables; one new
+read-only repository method (`list_distinct_snapshot_keys`, for
+discovering which snapshot keys exist at all). Eight use cases
+(`GetForecastPerformanceInspection`/`ListForecastPerformanceSnapshots`/
+`GetForecastPerformanceMembers`/`GetForecastPerformanceExclusions`/
+`GetForecastEvaluationInspection`/`GetForecastPerformanceBenchmark
+Inspection`/`GetForecastPerformanceLimitations`/`GetForecastPerformance
+RevisionInspection`) resolve EXACT pinned evidence versions only
+(never "latest"), require an explicit production/retrospective-
+research mode with no default, and reuse FX-66H.1's own `Inspect
+ForecastPerformancePendingRevisions` unchanged for the administrative
+revision view. A new `apps/cli/` presentation surface plus `scripts/
+inspect_forecast_performance.py` provide both a JSON-safe structured
+view and a human-readable report from the SAME fetched data -- no new
+web route, no new UI framework.
+
+Implementing this surfaced that FX-66H.1's own F66-06 transaction-
+isolation fix was incomplete: several pre-existing FX-62/64/65 read
+methods FX-67's own use cases now call mid-transaction still committed,
+reintroducing the exact bug class in a sibling repository -- all now
+corrected.
+
+39 new tests; full suite 3342 passed (up from 3294). `ruff`/`ruff
+format`/`mypy` (720 files)/`pre-commit` all clean. The real BoC pilot
+inspection correctly shows `INSUFFICIENT_DATA` as a successful
+analytical result, exact aggregate-consensus attribution, and the
+forecast-horizon-comparability limitation on every report. Real-data
+table counts unchanged, no leaked test data, no schema migration.
+
+Full details in `docs/DECISIONS.md`'s FX-67 entry; `docs/adr/0015-
+forecast-performance-evidence-inspection.md` is the complete decision
+record.
+
+**Per this story's own explicit instruction**: do not begin a new
+epic automatically.

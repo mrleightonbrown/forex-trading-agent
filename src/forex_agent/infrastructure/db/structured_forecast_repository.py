@@ -60,9 +60,12 @@ class SqlAlchemyStructuredForecastRepository:
         self._session = session
 
     async def get_claim(self, claim_key: str) -> ForecastClaim | None:
+        # FX-67: read-only -- no commit (Section 16's own "read-only
+        # repository methods must not commit unrelated pending work"
+        # rule; this pre-existing FX-64 method is now also called
+        # mid-call by FX-67's own inspection use cases' peers).
         stmt = select(ForecastClaimRow).where(ForecastClaimRow.claim_key == claim_key)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return (
             None if row is None else ForecastClaim(row.claim_key, UtcTimestamp(row.registered_at))
         )
@@ -101,11 +104,11 @@ class SqlAlchemyStructuredForecastRepository:
     async def list_vintages_for_claim(
         self, claim_key: str
     ) -> tuple[StructuredForecastVintage, ...]:
+        # FX-67: read-only -- see `get_claim`'s own note.
         stmt = select(StructuredForecastVintageRow).where(
             StructuredForecastVintageRow.claim_key == claim_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_row_to_domain(row) for row in rows)
 
     async def latest_vintage_for_claim(self, claim_key: str) -> StructuredForecastVintage | None:
@@ -153,9 +156,9 @@ class SqlAlchemyStructuredForecastRepository:
         if window_end is not None:
             conditions.append(StructuredForecastVintageRow.availability <= window_end.value)
 
+        # FX-67: read-only -- see `get_claim`'s own note.
         stmt = select(StructuredForecastVintageRow).where(*conditions)
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
 
         latest_by_claim: dict[str, StructuredForecastVintageRow] = {}
         for row in rows:
@@ -180,8 +183,8 @@ class SqlAlchemyStructuredForecastRepository:
             )
             .limit(1)
         )
+        # FX-67: read-only -- see `get_claim`'s own note.
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _row_to_domain(row)
 
 

@@ -129,3 +129,17 @@ class ForecastPerformanceRepository(Protocol):
         of EITHER evaluation mode -- deliberately named differently
         from the production method above."""
         ...
+
+    async def list_distinct_snapshot_keys(
+        self, *, cohort_key: str | None, limit: int, after_key: str | None
+    ) -> tuple[str, ...]:
+        """FX-67: the ONE new read method this story adds -- every
+        OTHER snapshot read above requires an already-known `snapshot_
+        key`, with no way to discover which keys exist at all. Returns
+        up to `limit` DISTINCT `snapshot_key`s (across every vintage/
+        revision), ordered lexicographically, optionally restricted to
+        one `cohort_key`, strictly greater than `after_key` (the
+        previous page's own last key -- a deterministic, unique cursor,
+        never a nonunique timestamp). Read-only; never commits an
+        unrelated pending write on a shared session."""
+        ...

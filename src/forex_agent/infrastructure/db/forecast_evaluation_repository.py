@@ -76,6 +76,10 @@ class SqlAlchemyForecastEvaluationRepository:
         self._session = session
 
     async def latest_protocol_version(self, protocol_key: str) -> ForecastEvaluationProtocol | None:
+        # FX-67: read-only -- no commit (Section 16's own "read-only
+        # repository methods must not commit unrelated pending work"
+        # rule; this pre-existing FX-65 method is now also called
+        # mid-call by `GetForecastPerformanceInspection`).
         stmt = (
             select(ForecastEvaluationProtocolRow)
             .where(ForecastEvaluationProtocolRow.protocol_key == protocol_key)
@@ -83,17 +87,16 @@ class SqlAlchemyForecastEvaluationRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _protocol_row_to_domain(row)
 
     async def list_protocol_versions(
         self, protocol_key: str
     ) -> tuple[ForecastEvaluationProtocol, ...]:
+        # FX-67: read-only -- see sibling method above.
         stmt = select(ForecastEvaluationProtocolRow).where(
             ForecastEvaluationProtocolRow.protocol_key == protocol_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_protocol_row_to_domain(row) for row in rows)
 
     async def add_protocol_version(
@@ -119,11 +122,11 @@ class SqlAlchemyForecastEvaluationRepository:
     async def list_vintages_for_evaluation(
         self, evaluation_key: str
     ) -> tuple[StructuredForecastEvaluationVintage, ...]:
+        # FX-67: read-only -- see `latest_protocol_version`'s own note.
         stmt = select(StructuredForecastEvaluationVintageRow).where(
             StructuredForecastEvaluationVintageRow.evaluation_key == evaluation_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_evaluation_row_to_domain(row) for row in rows)
 
     async def add_evaluation_vintage(
@@ -202,8 +205,8 @@ class SqlAlchemyForecastEvaluationRepository:
             )
             .limit(1)
         )
+        # FX-67: read-only -- see `latest_protocol_version`'s own note.
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _evaluation_row_to_domain(row)
 
 

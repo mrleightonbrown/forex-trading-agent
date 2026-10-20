@@ -3679,6 +3679,32 @@ mid-call read can no longer prematurely flush a caller's own pending
 transaction. No schema migration was needed. See ADR 0014's own
 FX-66H.1 addendum.
 
+**FX-67 added a read-only forecast-performance evidence-inspection
+layer over FX-62 through FX-66H.1's own already-recorded evidence --
+no new table, one new read-only repository method (`list_distinct_
+snapshot_keys`, for discovering which snapshot keys exist at all).**
+Eight use cases (`GetForecastPerformanceInspection`/`ListForecastPerformance
+Snapshots`/`GetForecastPerformanceMembers`/`GetForecastPerformanceExclusions`/
+`GetForecastEvaluationInspection`/`GetForecastPerformanceBenchmarkInspection`/
+`GetForecastPerformanceLimitations`/`GetForecastPerformanceRevisionInspection`)
+resolve EXACT pinned evidence versions only (never "latest"), gate on
+an explicit, mandatory production/retrospective-research mode (no
+default), and reuse FX-66H.1's own `InspectForecastPerformancePendingRevisions`
+unchanged for the administrative revision view. A new presentation
+surface, `apps/cli/` (mirroring `apps/api/view_models/`'s own "pure
+builder over already-fetched evidence" convention), provides both a
+JSON-safe structured view and a human-readable report from the SAME
+fetched data; `scripts/inspect_forecast_performance.py` is the thin
+CLI entry point -- no new web route, no new UI framework. While
+implementing this, FX-66H.1's own F66-06 fix (removing `session.
+commit()` from pure-read repository methods) was found to be
+incomplete: several PRE-EXISTING FX-62/64/65 read methods FX-67's own
+use cases now call mid-transaction (`list_protocol_versions`,
+`get_claim`/`list_vintages_for_claim`, `latest_outcome_definition`/
+`list_vintages_for_outcome`, and `SourceRegistryRepository`'s own
+identity-read methods) still committed, reintroducing the exact bug
+class F66-06 fixed -- all now corrected. See ADR 0015.
+
 ## Current state
 
 Scaffolding only — see [CURRENT_STATE.md](CURRENT_STATE.md) for what actually

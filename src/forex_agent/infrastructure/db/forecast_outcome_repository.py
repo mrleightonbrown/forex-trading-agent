@@ -56,6 +56,10 @@ class SqlAlchemyForecastOutcomeRepository:
     async def latest_outcome_definition(
         self, definition_key: str
     ) -> ForecastOutcomeDefinition | None:
+        # FX-67: read-only -- no commit (Section 16's own "read-only
+        # repository methods must not commit unrelated pending work"
+        # rule; this pre-existing FX-65 method is now also called
+        # mid-call by FX-67's own inspection use cases' peers).
         stmt = (
             select(ForecastOutcomeDefinitionRow)
             .where(ForecastOutcomeDefinitionRow.definition_key == definition_key)
@@ -63,17 +67,16 @@ class SqlAlchemyForecastOutcomeRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _definition_row_to_domain(row)
 
     async def list_outcome_definition_versions(
         self, definition_key: str
     ) -> tuple[ForecastOutcomeDefinition, ...]:
+        # FX-67: read-only -- see `latest_outcome_definition`'s note.
         stmt = select(ForecastOutcomeDefinitionRow).where(
             ForecastOutcomeDefinitionRow.definition_key == definition_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_definition_row_to_domain(row) for row in rows)
 
     async def add_outcome_definition_version(
@@ -90,6 +93,7 @@ class SqlAlchemyForecastOutcomeRepository:
         return ForecastOutcomeDefinitionWriteResult(inserted=inserted_id is not None)
 
     async def latest_outcome_vintage(self, outcome_key: str) -> ForecastOutcomeVintage | None:
+        # FX-67: read-only -- see `latest_outcome_definition`'s note.
         stmt = (
             select(ForecastOutcomeVintageRow)
             .where(ForecastOutcomeVintageRow.outcome_key == outcome_key)
@@ -100,17 +104,16 @@ class SqlAlchemyForecastOutcomeRepository:
             .limit(1)
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        await self._session.commit()
         return None if row is None else _vintage_row_to_domain(row)
 
     async def list_vintages_for_outcome(
         self, outcome_key: str
     ) -> tuple[ForecastOutcomeVintage, ...]:
+        # FX-67: read-only -- see `latest_outcome_definition`'s note.
         stmt = select(ForecastOutcomeVintageRow).where(
             ForecastOutcomeVintageRow.outcome_key == outcome_key
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        await self._session.commit()
         return tuple(_vintage_row_to_domain(row) for row in rows)
 
     async def claim_outcome_identity_and_add_first_vintage(
